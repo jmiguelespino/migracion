@@ -185,6 +185,10 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 .tag.csharp { background:#ede9fe; color:#5b21b6; }
 .tag.java { background:#ffe4e6; color:#9f1239; }
 pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; font-size:11px; line-height:1.7; overflow-x:auto; font-family:'Courier New',monospace; white-space:pre-wrap; word-break:break-word; }
+.filelist { list-style:none; margin-top:8px; }
+.filelist li { font-size:13px; color:var(--text2); padding:6px 0; border-bottom:1px solid var(--border); }
+.filelist li:last-child { border:none; }
+.filelist code { background:var(--bg3); border:1px solid var(--border); border-radius:4px; padding:1px 6px; font-size:12px; color:var(--ptxt); }
 .ebox { background:var(--rbg); border:1px solid #F09595; border-radius:var(--r); padding:12px 16px; margin-bottom:14px; font-size:13px; color:var(--red); display:none; }
 .ebox.show { display:block; }
 .wbox { background:var(--abg); border:1px solid #E0B872; border-radius:var(--r); padding:10px 14px; margin-bottom:14px; font-size:12px; color:var(--amber); display:none; }
@@ -249,6 +253,9 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
           <option value="C# + .NET + Blazor">C# + .NET + Blazor</option>
           <option value="Java + Spring Boot">Java + Spring Boot</option>
         </select>
+        <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:12px;cursor:pointer;color:var(--text2)">
+          <input type="checkbox" id="demo" onchange="S.demo=this.checked;checkReady()"> 🧪 Modo demo (sin API key · sin tokens)
+        </label>
       </div>
 
       <!-- FASES (aparecen después del análisis) -->
@@ -267,7 +274,6 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
   <main class="main">
     <div class="tbar">
       <h2 id="ttl">Bienvenido</h2>
-      <button class="bsm" id="bcopy" onclick="copyCode()" style="display:none">📋 Copiar</button>
       <button class="bsm ok" id="bdl" onclick="downloadPhase()" style="display:none">⬇ Descargar fase</button>
     </div>
     <div class="content">
@@ -303,41 +309,24 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
         <div class="pgrid" id="pgrid"></div>
       </div>
 
-      <!-- PHASE -->
+      <!-- PHASE: confirmación de descarga (sin renderizar el código) -->
       <div id="vp" style="display:none">
-        <div class="dlbar" id="dlbar">
-          <div class="dli">✅</div>
-          <div><h4>Fase generada y lista</h4><p>Código, tests e instrucciones incluidos</p></div>
-          <div class="dlb">
-            <button class="bsm ok" onclick="downloadPhase()">⬇ Descargar</button>
-            <button class="bsm pr" onclick="nextPhase()">Siguiente ›</button>
-          </div>
-        </div>
-        <div class="tabs">
-          <button class="tb active" onclick="tab(this,'pe')">Explicación</button>
-          <button class="tb" onclick="tab(this,'pc')">Código</button>
-          <button class="tb" onclick="tab(this,'pt')">Tests</button>
-          <button class="tb" onclick="tab(this,'pu')">Interfaz</button>
-        </div>
-        <div class="pane active" id="pe"></div>
-        <div class="pane" id="pc"></div>
-        <div class="pane" id="pt"></div>
-        <div class="pane" id="pu"></div>
+        <div id="dlcard"></div>
       </div>
     </div>
   </main>
 </div>
 
 <script>
-const S = { apiKey:'', file:null, sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null, phases:[], currentPhase:null, currentPhaseData:null, completedPhases:[], generatedFiles:{} };
+const S = { apiKey:'', file:null, demo:false, sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null, phases:[], currentPhase:null, currentPhaseData:null, completedPhases:[], generatedFiles:{} };
 
 function checkReady() {
   const hk = S.apiKey.startsWith('sk-'), hf = !!S.file;
-  document.getElementById('ban').disabled = !(hk && hf);
+  document.getElementById('ban').disabled = !(hf && (hk || S.demo));
   const h = document.getElementById('hint');
-  if (!hk && !hf) h.textContent = 'Completá la API key y subí un ZIP';
-  else if (!hk) h.textContent = 'Falta la API key de Anthropic';
-  else if (!hf) h.textContent = 'Subí el archivo ZIP del sistema';
+  if (!hf) h.textContent = 'Subí el archivo ZIP del sistema';
+  else if (S.demo) h.textContent = '🧪 Modo demo: listo para analizar (sin API)';
+  else if (!hk) h.textContent = 'Falta la API key (o activá Modo demo)';
   else h.textContent = '¡Todo listo! Hacé clic para analizar ↑';
 }
 
@@ -444,6 +433,13 @@ async function analyzeSystem() {
 
   setLoad('Analizando el sistema legacy...', 'Identificando módulos y generando plan de migración');
 
+  if (S.demo) {            // modo demo: sin llamar a Claude
+    mockAnalysis();
+    renderAnalysis(); renderSidebar(); showView('a');
+    showWarn('Modo demo activo: análisis simulado (los conteos son reales del ZIP). No se gastaron tokens.');
+    return;
+  }
+
   const real = zipSummary(S.zipInfo);
   const prompt = `Sos un experto en migración de sistemas legacy. El usuario tiene un sistema ${S.sourceLang} llamado "${S.file.name}" que quiere migrar a ${S.targetLang}.
 
@@ -538,32 +534,38 @@ Respondé SOLO con JSON válido sin backticks ni texto adicional:
 }`;
 
   try {
-    const data = await callClaude(prompt, 8000);
+    const data = S.demo ? mockPhase(phase) : await callClaude(prompt, 16000);
     S.currentPhaseData = data; S.generatedFiles[num] = data;
     if (!S.completedPhases.includes(num)) S.completedPhases.push(num);
-    renderPhase(phase, data); renderSidebar();
+    renderSidebar();
     showView('p');
-    document.getElementById('dlbar').classList.add('show');
-    document.getElementById('bcopy').style.display = 'flex';
     document.getElementById('bdl').style.display = 'flex';
+    renderPhaseDownload(phase, data);
+    await downloadPhase();  // descarga automática del ZIP (no se renderiza el código)
   } catch(e) { showView('a'); showErr('Error al generar: ' + e.message); }
 }
 
-function renderPhase(ph, d) {
-  document.getElementById('pe').innerHTML = `<div class="expl"><h4>${ph.icono} ${esc(ph.titulo)}</h4><p>${esc(d.explicacion||'')}</p>${d.instrucciones?`<div class="ins"><h5>⚙️ Instalación</h5><pre>${esc(d.instrucciones)}</pre></div>`:''}</div>`;
-  document.getElementById('pc').innerHTML = (d.archivos||[]).map(f=>`<div class="cb"><div class="ch"><h4>${esc(f.nombre)}</h4><span class="tag ${esc(f.tipo||'')}">${esc((f.tipo||'').toUpperCase())}</span><span style="font-size:11px;color:var(--text3)">${esc(f.descripcion||'')}</span></div><pre>${esc(f.codigo||'')}</pre></div>`).join('') || '<p style="color:var(--text3)">Sin archivos generados.</p>';
-  document.getElementById('pt').innerHTML = `<div class="cb"><div class="ch"><h4>tests</h4><span class="tag">TESTS</span></div><pre>${esc(d.tests||'')}</pre></div>`;
-  document.getElementById('pu').innerHTML = `<div class="expl"><h4>Interfaz web moderna</h4><p>${esc(d.interfaz_descripcion||'')}</p></div>`;
-  document.querySelectorAll('.tb').forEach(b=>b.classList.remove('active'));
-  document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active'));
-  document.querySelector('.tb').classList.add('active');
-  document.getElementById('pe').classList.add('active');
-}
-
-function tab(btn, id) {
-  document.querySelectorAll('.tb').forEach(b=>b.classList.remove('active'));
-  document.querySelectorAll('.pane').forEach(p=>p.classList.remove('active'));
-  btn.classList.add('active'); document.getElementById(id).classList.add('active');
+// Muestra una confirmación con la lista de archivos del ZIP (no el código).
+function renderPhaseDownload(ph, d) {
+  const zipname = `fase-${ph.numero}-${slug(ph.titulo)}.zip`;
+  const files = (d.archivos||[]).map(f=>`<li><code>src/${esc(f.nombre)}</code> — ${esc(f.descripcion||'')}</li>`).join('');
+  document.getElementById('dlcard').innerHTML = `
+    <div class="dlbar show" style="margin-bottom:16px">
+      <div class="dli">✅</div>
+      <div><h4>Fase ${ph.numero}: ${esc(ph.titulo)} — generada</h4><p>Se descargó <b>${esc(zipname)}</b> con el código, los tests y un README.</p></div>
+      <div class="dlb">
+        <button class="bsm ok" onclick="downloadPhase()">⬇ Descargar de nuevo</button>
+        <button class="bsm pr" onclick="nextPhase()">Siguiente ›</button>
+      </div>
+    </div>
+    <div class="expl">
+      <h4>📦 Contenido del ZIP</h4>
+      <ul class="filelist">
+        ${files || '<li style="color:var(--text3)">(sin archivos generados)</li>'}
+        ${d.tests?'<li><code>tests/…</code> — tests automatizados</li>':''}
+        <li><code>README.md</code> — explicación, lista de archivos e instrucciones de instalación</li>
+      </ul>
+    </div>`;
 }
 
 function nextPhase() {
@@ -574,6 +576,44 @@ function nextPhase() {
 }
 
 function slug(s){return String(s||'fase').trim().replace(/\s+/g,'-').toLowerCase().replace(/[^a-z0-9\-]/g,'')||'fase';}
+
+// ---- MODO DEMO: datos simulados, sin llamar a Claude (no gasta tokens) ----
+function cap(s){s=String(s||'');return s.charAt(0).toUpperCase()+s.slice(1).toLowerCase();}
+function pyType(t){return ({C:'str',M:'str',N:'float',F:'float',B:'float',Y:'float',I:'int',D:'date',T:'datetime',L:'bool'})[t]||'str';}
+
+function mockAnalysis(){
+  const c=(S.zipInfo&&S.zipInfo.counts)||{};
+  const names=((S.zipInfo&&S.zipInfo.tables)||[]).map(t=>t.name);
+  S.systemInfo={ nombre:(S.file?S.file.name.replace(/\.zip$/i,''):'Sistema demo'),
+    descripcion:'(Modo demo) Análisis simulado sin llamar a Claude. Los conteos provienen del ZIP real.',
+    pantallas:c.forms||0, tablas:c.tables||0, reportes:c.reports||0, complejidad:'Alta' };
+  const g=[
+    {t:'Login y autenticación',i:'🔐',c:'purple',m:['Login','Usuarios','Grupos','Permisos']},
+    {t:'Tratamiento de archivos',i:'🗂️',c:'teal',m:['Empresas','Depósitos','Tablas generales']},
+    {t:'Producción',i:'🏭',c:'coral',m:['Recetas','Menúes','Plan maestro']},
+    {t:'Compras',i:'🛒',c:'amber',m:['Proveedores','Órdenes de compra']},
+    {t:'Administración',i:'📊',c:'purple',m:['Clientes','Facturación']},
+  ];
+  S.phases=g.map((x,i)=>({numero:i+1,titulo:x.t,icono:x.i,color:x.c,
+    descripcion:'(Demo) Migración del módulo '+x.t,modulos:x.m,pantallas_legacy:[],
+    tablas:names.slice(i*3,i*3+3),dias_estimados:3+i,prioridad:i<2?'Alta':'Media'}));
+}
+
+function mockPhase(ph){
+  const seen=new Set();
+  const tabs=((S.zipInfo&&S.zipInfo.tables)||[]).filter(t=>(ph.tablas||[]).some(w=>String(w).toLowerCase()===t.name.toLowerCase())).filter(t=>{const k=t.name.toLowerCase();if(seen.has(k))return false;seen.add(k);return true;});
+  const model=tabs.map(t=>`class ${cap(t.name)}(BaseModel):\n`+((t.fields||[]).map(f=>`    ${f.name.toLowerCase()}: ${pyType(f.type)}`).join('\n')||'    pass')).join('\n\n')||'# (sin tablas reales asociadas)';
+  return {
+    explicacion:`(Modo demo) Código de ejemplo para la fase "${ph.titulo}", generado localmente sin llamar a Claude ni gastar tokens. Los modelos reflejan las tablas reales del ZIP.`,
+    archivos:[
+      {nombre:'models.py',tipo:'python',descripcion:'Modelos (demo, desde tablas reales)',codigo:'from pydantic import BaseModel\nfrom datetime import date, datetime\n\n'+model},
+      {nombre:'api.py',tipo:'python',descripcion:'Endpoints (demo)',codigo:'from fastapi import FastAPI\napp = FastAPI()\n\n@app.get("/health")\ndef health():\n    return {"ok": True}\n'},
+    ],
+    tests:'def test_demo():\n    assert True\n',
+    interfaz_descripcion:'(Demo) Interfaz web simulada para esta fase.',
+    instrucciones:'pip install fastapi uvicorn pydantic\nuvicorn api:app --reload'
+  };
+}
 
 async function downloadPhase() {
   if (!S.currentPhaseData||!S.currentPhase) return;
@@ -593,12 +633,6 @@ async function downloadPhase() {
     setTimeout(()=>URL.revokeObjectURL(a.href),1500);
   }catch(e){ showErr('No se pudo generar el ZIP: '+e.message); }
   finally{ if(btn) btn.innerHTML=prev; }
-}
-
-function copyCode() {
-  const d=S.currentPhaseData; if(!d) return;
-  navigator.clipboard.writeText((d.archivos||[]).map(f=>`// ${f.nombre}\n${f.codigo}`).join('\n\n'))
-    .then(()=>{const b=document.getElementById('bcopy');b.innerHTML='✓ Copiado';setTimeout(()=>b.innerHTML='📋 Copiar',2000);});
 }
 
 function showView(n) {
@@ -629,15 +663,48 @@ async function callClaude(prompt, maxTokens) {
   const data=await r.json();
   const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
   const clean=text.replace(/```json|```/g,'').trim();
-  try{
-    return JSON.parse(clean);
-  }catch(e){
-    const m=clean.match(/\{[\s\S]*\}/);
-    if(m){ try{ return JSON.parse(m[0]); }catch(_){} }
-    if(data.stop_reason==='max_tokens')
-      throw new Error('La respuesta se cortó por longitud. Volvé a intentar (o usá una fase más acotada).');
-    throw new Error('Respuesta inesperada del modelo. Intentá de nuevo.');
+  // 1) intento directo
+  try{ return JSON.parse(clean); }catch(_){}
+  // 2) primer bloque {...} completo
+  const m=clean.match(/\{[\s\S]*\}/);
+  if(m){ try{ return JSON.parse(m[0]); }catch(_){} }
+  // 3) si se cortó por longitud, intento reparar el JSON truncado
+  if(data.stop_reason==='max_tokens'){
+    try{
+      const obj=JSON.parse(repairTruncatedJson(clean));
+      showWarn('La respuesta se cortó por longitud: la fase puede estar incompleta. Volvé a generarla para obtenerla completa.');
+      return obj;
+    }catch(_){}
+    throw new Error('La respuesta se cortó por longitud y no se pudo recuperar. Volvé a intentar.');
   }
+  throw new Error('Respuesta inesperada del modelo. Intentá de nuevo.');
+}
+
+// Intenta cerrar un JSON truncado (string/llaves/corchetes abiertos) para
+// recuperar la mayor parte posible de la respuesta.
+function repairTruncatedJson(s){
+  let inStr=false, esc=false; const stack=[];
+  for(let i=0;i<s.length;i++){
+    const c=s[i];
+    if(inStr){
+      if(esc) esc=false;
+      else if(c==='\\') esc=true;
+      else if(c==='"') inStr=false;
+    } else {
+      if(c==='"') inStr=true;
+      else if(c==='{'||c==='[') stack.push(c);
+      else if(c==='}'||c===']') stack.pop();
+    }
+  }
+  let out=s;
+  if(inStr){ if(esc) out=out.slice(0,-1); out+='"'; }
+  out=out.replace(/\s+$/,'');
+  while(/[,:]$/.test(out)){            // limpia coma/dos-puntos colgantes
+    if(out.endsWith(':')){ out+='null'; break; }
+    out=out.slice(0,-1).replace(/\s+$/,'');
+  }
+  for(let i=stack.length-1;i>=0;i--) out += (stack[i]==='{' ? '}' : ']');
+  return out;
 }
 </script>
 </body>
