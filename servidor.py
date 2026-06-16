@@ -101,6 +101,7 @@ def analyze_zip(raw_bytes):
     counts = {}
     forms, reports, programs = [], [], []
     tables = []
+    seen_tables = set()  # evita tablas .dbf duplicadas (mismo nombre en varias carpetas)
     samples = []
 
     # Ordenamos para que el muestreo sea estable entre ejecuciones.
@@ -122,12 +123,14 @@ def analyze_zip(raw_bytes):
             programs.append(base)
 
         # Estructura real de las tablas .dbf (leyendo solo el header).
-        if ext == ".dbf" and len(tables) < MAX_TABLES:
+        tname = os.path.splitext(base)[0].lower()
+        if ext == ".dbf" and len(tables) < MAX_TABLES and tname not in seen_tables:
             try:
                 with zf.open(name) as fp:
                     head = fp.read(32 + 32 * 256)  # suficiente para todos los campos
                 struct = parse_dbf_structure(head)
                 if struct:
+                    seen_tables.add(tname)
                     tables.append({
                         "name": os.path.splitext(base)[0],
                         "records": struct["records"],
