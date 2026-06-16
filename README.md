@@ -1,28 +1,58 @@
-# Fase 5: Administración
+# LegacyMigrator
 
-**Migración:** Visual FoxPro → Python + FastAPI + React
+Agente web que ayuda a empresas con sistemas **legacy** (Visual FoxPro, FoxPro,
+COBOL) a migrarlos a tecnologías modernas de forma asistida por IA (Claude).
 
-(Demo) Migración del módulo Administración
+## Flujo
 
-## Explicación
+1. El usuario sube un ZIP con el sistema legacy completo.
+2. El agente **lee el ZIP de verdad**: cuenta formularios (`.scx`), reportes
+   (`.frx`), programas (`.prg`) y extrae la **estructura real de las tablas
+   `.dbf`** (campos y tipos, leyendo el header DBF sin librerías externas).
+3. Con esos datos reales, Claude propone un plan de migración por fases.
+4. El usuario elige una fase y el agente genera el código moderno
+   (backend + frontend + tests).
+5. El usuario descarga la fase y continúa con la siguiente.
 
-(Modo demo) Código de ejemplo para la fase "Administración", generado localmente sin llamar a Claude ni gastar tokens. Los modelos reflejan las tablas reales del ZIP.
+## Arquitectura
 
-## Archivos generados (carpeta `src/`)
+| Archivo | Rol |
+|---------|-----|
+| `servidor.py` | Servidor local en `http://localhost:8080`. Proxy hacia la API de Anthropic **y** lector del ZIP (`/api/zipinfo`). Solo usa la librería estándar de Python. |
+| `index.html` | Interfaz completa (HTML/CSS/JS en un archivo). |
+| `INICIAR.bat` | Lanzador para Windows. |
+| `iniciar.sh` | Lanzador para macOS / Linux. |
+| `LEEME.txt` | Instrucciones para el usuario final. |
 
-- `models.py` — Modelos (demo, desde tablas reales)
-- `api.py` — Endpoints (demo)
+### Endpoints del servidor
 
-Incluye tests automatizados en `tests/test_fase.py`.
+- `GET  /` → sirve `index.html`
+- `POST /api/key` → guarda la API key en memoria
+- `POST /api/zipinfo` → recibe el ZIP y devuelve el resumen real del sistema
+- `POST /api/claude` → reenvía la consulta a `api.anthropic.com/v1/messages`
+- `POST /api/zip` → arma el ZIP descargable de una fase (código en `src/`,
+  tests en `tests/` y un `README.md` con instrucciones)
 
-## Instrucciones de instalación
+## Cómo correr
 
-pip install fastapi uvicorn pydantic
-uvicorn api:app --reload
+```bash
+python servidor.py
+# luego abrir http://localhost:8080
+```
 
-## Interfaz
+Requisitos: Python 3, conexión a internet y una API key de Anthropic
+(<https://console.anthropic.com>).
 
-(Demo) Interfaz web simulada para esta fase.
+## Notas de la última revisión
 
----
-_Generado por LegacyMigrator._
+- **ZIP real**: el análisis ya no se basa solo en el nombre/tamaño del
+  archivo; lee el contenido y la estructura de las tablas.
+- **`max_tokens`** subido (4000 análisis / 8000 generación) para evitar
+  respuestas truncadas.
+- **Timeout** del proxy ampliado a 180 s.
+- Parseo de JSON más robusto y aviso explícito cuando la respuesta se corta
+  por longitud (`stop_reason: max_tokens`).
+- Lanzador para macOS/Linux además del `.bat` de Windows.
+- **Descarga por fase en ZIP**: al generar una fase se descarga un `.zip` con
+  cada archivo en `src/`, los tests en `tests/` y un `README.md` con las
+  instrucciones (antes era un único `.txt`).
