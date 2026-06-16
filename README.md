@@ -56,3 +56,9 @@ Requisitos: Python 3, conexión a internet y una API key de Anthropic
 - **Descarga por fase en ZIP**: al generar una fase se descarga un `.zip` con
   cada archivo en `src/`, los tests en `tests/` y un `README.md` con las
   instrucciones (antes era un único `.txt`).
+- **Modo demo**: probar el flujo completo sin API key ni tokens (análisis y
+  generación simulados a partir de las tablas reales del ZIP).
+- **Lógica real**: el código fuente de los `.prg` relacionados con cada fase se
+  envía a Claude para portar la lógica de negocio, no solo la estructura.
+- **Estado persistente**: el análisis y las fases se guardan en `localStorage`,
+  así no se pierden al recargar (botón "Nuevo proyecto" para reiniciar).
