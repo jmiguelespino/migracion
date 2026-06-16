@@ -419,6 +419,13 @@ function zipSummary(z) {
   s += '- Conteo por categoría: ' + cats.filter(([k])=>c[k]).map(([k,l])=>`${l}=${c[k]}`).join(', ') + '\n';
   if (z.programs && z.programs.length) s += `- Programas (.prg): ${z.programs.slice(0,40).join(', ')}\n`;
   if (z.forms && z.forms.length) s += `- Formularios (muestra): ${z.forms.slice(0,40).join(', ')}\n`;
+  if (z.forms_detail && z.forms_detail.length) {
+    s += `- CONTROLES REALES de formularios (.scx):\n`;
+    z.forms_detail.slice(0,20).forEach(f => {
+      const ctl = Object.entries(f.controles||{}).map(([k,v])=>`${v} ${k}`).join(', ');
+      s += `  • ${f.name}: ${ctl}\n`;
+    });
+  }
   if (z.tables && z.tables.length) {
     s += `- ESTRUCTURA REAL DE LAS TABLAS (.dbf):\n`;
     z.tables.slice(0,40).forEach(t => {
@@ -442,6 +449,21 @@ function codeForPhase(phase) {
     out += `\n--- ${s.name} ---\n${String(s.content||'').slice(0,2500)}\n`;
   });
   return out;
+}
+
+// Controles reales de los formularios .scx de una fase concreta.
+function formsForPhase(phase) {
+  const fd = (S.zipInfo && S.zipInfo.forms_detail) || [];
+  if (!fd.length) return '';
+  const wanted = (phase.pantallas_legacy||[]).map(p=>String(p).toLowerCase().replace(/\.\w+$/,''));
+  let match = fd.filter(f => wanted.some(w => w && f.name.toLowerCase().includes(w)));
+  if (!match.length) return '';
+  let s = '\nCONTROLES REALES de las pantallas de esta fase (replicalos en la UI moderna):\n';
+  match.slice(0,8).forEach(f => {
+    const ctl = Object.entries(f.controles||{}).map(([k,v])=>`${v} ${k}`).join(', ');
+    s += `• ${f.name}: ${ctl}\n`;
+  });
+  return s;
 }
 
 // Resumen acotado de las tablas que pertenecen a una fase concreta.
@@ -560,8 +582,8 @@ Fase ${phase.numero}: ${phase.titulo} — ${phase.descripcion}
 Módulos: ${(phase.modulos||[]).join(', ')}
 Tablas legacy: ${(phase.tablas||[]).join(', ')}
 Pantallas legacy: ${(phase.pantallas_legacy||[]).join(', ')}
-${tablesForPhase(phase)}${codeForPhase(phase)}
-Generá código real y funcional para ${S.targetLang}, respetando los campos reales de las tablas y portando la lógica de negocio del código fuente original mostrado arriba.
+${tablesForPhase(phase)}${formsForPhase(phase)}${codeForPhase(phase)}
+Generá código real y funcional para ${S.targetLang}, respetando los campos reales de las tablas, replicando los controles de las pantallas originales y portando la lógica de negocio del código fuente mostrado arriba.
 
 Respondé SOLO con JSON válido sin backticks ni texto adicional:
 {
@@ -637,8 +659,10 @@ function mockAnalysis(){
     {t:'Compras',i:'🛒',c:'amber',m:['Proveedores','Órdenes de compra']},
     {t:'Administración',i:'📊',c:'purple',m:['Clientes','Facturación']},
   ];
+  const forms=((S.zipInfo&&S.zipInfo.forms)||[]);
   S.phases=g.map((x,i)=>({numero:i+1,titulo:x.t,icono:x.i,color:x.c,
-    descripcion:'(Demo) Migración del módulo '+x.t,modulos:x.m,pantallas_legacy:[],
+    descripcion:'(Demo) Migración del módulo '+x.t,modulos:x.m,
+    pantallas_legacy:forms.slice(i*3,i*3+3),
     tablas:names.slice(i*3,i*3+3),dias_estimados:3+i,prioridad:i<2?'Alta':'Media'}));
 }
 
@@ -646,6 +670,10 @@ function mockPhase(ph){
   const seen=new Set();
   const tabs=((S.zipInfo&&S.zipInfo.tables)||[]).filter(t=>(ph.tablas||[]).some(w=>String(w).toLowerCase()===t.name.toLowerCase())).filter(t=>{const k=t.name.toLowerCase();if(seen.has(k))return false;seen.add(k);return true;});
   const model=tabs.map(t=>`class ${cap(t.name)}(BaseModel):\n`+((t.fields||[]).map(f=>`    ${f.name.toLowerCase()}: ${pyType(f.type)}`).join('\n')||'    pass')).join('\n\n')||'# (sin tablas reales asociadas)';
+  const fd=((S.zipInfo&&S.zipInfo.forms_detail)||[]).filter(f=>(ph.pantallas_legacy||[]).some(p=>String(p).toLowerCase().replace(/\.\w+$/,'')===f.name.toLowerCase()));
+  const ui=fd.length
+    ? '(Demo) Interfaz basada en los controles reales de las pantallas:\n'+fd.slice(0,4).map(f=>`• ${f.name}: `+Object.entries(f.controles||{}).map(([k,v])=>`${v} ${k}`).join(', ')).join('\n')
+    : '(Demo) Interfaz web simulada para esta fase.';
   return {
     explicacion:`(Modo demo) Código de ejemplo para la fase "${ph.titulo}", generado localmente sin llamar a Claude ni gastar tokens. Los modelos reflejan las tablas reales del ZIP.`,
     archivos:[
@@ -653,7 +681,7 @@ function mockPhase(ph){
       {nombre:'api.py',tipo:'python',descripcion:'Endpoints (demo)',codigo:'from fastapi import FastAPI\napp = FastAPI()\n\n@app.get("/health")\ndef health():\n    return {"ok": True}\n'},
     ],
     tests:'def test_demo():\n    assert True\n',
-    interfaz_descripcion:'(Demo) Interfaz web simulada para esta fase.',
+    interfaz_descripcion:ui,
     instrucciones:'pip install fastapi uvicorn pydantic\nuvicorn api:app --reload'
   };
 }

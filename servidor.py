@@ -30,6 +30,7 @@ MAX_FIELDS_PER_TABLE = 60
 MAX_NAME_LIST = 80       # cuántos nombres de forms/reportes listar
 MAX_SAMPLES = 8          # cuántos .prg pequeños incluir como muestra de código
 MAX_SAMPLE_BYTES = 6000  # tamaño máximo de cada muestra de código
+MAX_FORMS_PARSED = 50    # cuántos formularios .scx analizar (controles)
 
 # Extensiones típicas de sistemas legacy y su categoría.
 EXT_CATEGORY = {
@@ -92,6 +93,60 @@ def parse_dbf_structure(head_bytes):
     return {"records": num_records, "fields": fields}
 
 
+def parse_scx_controls(raw):
+    """Extrae los controles de un formulario VFP .scx (que es una tabla DBF:
+    cada registro es un objeto con su baseclass y objname). Devuelve el conteo
+    de controles por tipo, sin depender de librerías externas."""
+    if len(raw) < 32:
+        return None
+    try:
+        num_records = int.from_bytes(raw[4:8], "little")
+        header_len = int.from_bytes(raw[8:10], "little")
+        rec_len = int.from_bytes(raw[10:12], "little")
+    except Exception:
+        return None
+    if rec_len <= 0 or header_len <= 32:
+        return None
+
+    # Descriptores de campo -> nombre, offset dentro del registro, longitud.
+    region = raw[32:header_len]
+    fmap = {}
+    offset = 1  # primer byte del registro es la marca de borrado
+    i = 0
+    while i + 32 <= len(region):
+        if region[i] == 0x0D:
+            break
+        fname = region[i:i + 11].split(b"\x00")[0].decode("latin-1", "replace").strip().lower()
+        flen = region[i + 16]
+        if fname:
+            fmap[fname] = (offset, flen)
+        offset += flen
+        i += 32
+
+    if "baseclass" not in fmap or "objname" not in fmap:
+        return None
+    bo, bl = fmap["baseclass"]
+    no, nl = fmap["objname"]
+
+    counts = {}
+    controls = []
+    for r in range(num_records):
+        start = header_len + r * rec_len
+        rec = raw[start:start + rec_len]
+        if len(rec) < rec_len:
+            break
+        baseclass = rec[bo:bo + bl].decode("latin-1", "replace").replace("\x00", "").strip().lower()
+        objname = rec[no:no + nl].decode("latin-1", "replace").replace("\x00", "").strip()
+        if not baseclass:
+            continue
+        counts[baseclass] = counts.get(baseclass, 0) + 1
+        if len(controls) < 40:
+            controls.append({"name": objname, "type": baseclass})
+    if not counts:
+        return None
+    return {"counts": counts, "controls": controls, "total": sum(counts.values())}
+
+
 def analyze_zip(raw_bytes):
     """Lee el ZIP en memoria y devuelve un resumen real del sistema legacy."""
     zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
@@ -102,6 +157,7 @@ def analyze_zip(raw_bytes):
     forms, reports, programs = [], [], []
     tables = []
     seen_tables = set()  # evita tablas .dbf duplicadas (mismo nombre en varias carpetas)
+    forms_detail = []    # controles reales de los formularios .scx
     samples = []
 
     # Ordenamos para que el muestreo sea estable entre ejecuciones.
@@ -139,6 +195,20 @@ def analyze_zip(raw_bytes):
             except Exception:
                 pass
 
+        # Controles reales de los formularios .scx (es una tabla DBF).
+        if ext == ".scx" and len(forms_detail) < MAX_FORMS_PARSED:
+            try:
+                with zf.open(name) as fp:
+                    info = parse_scx_controls(fp.read())
+                if info:
+                    forms_detail.append({
+                        "name": os.path.splitext(base)[0],
+                        "controles": info["counts"],
+                        "total": info["total"],
+                    })
+            except Exception:
+                pass
+
         # Muestras de código fuente real (programas pequeños).
         if ext in (".prg", ".cbl", ".cob") and len(samples) < MAX_SAMPLES:
             try:
@@ -160,6 +230,7 @@ def analyze_zip(raw_bytes):
         "counts": counts,
         "tables": tables,
         "forms": forms,
+        "forms_detail": forms_detail,
         "reports": reports,
         "programs": sorted(set(programs))[:MAX_NAME_LIST],
         "samples": samples,
