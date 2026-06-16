@@ -93,23 +93,40 @@ def parse_dbf_structure(head_bytes):
     return {"records": num_records, "fields": fields}
 
 
-def parse_scx_controls(raw):
-    """Extrae los controles de un formulario VFP .scx (que es una tabla DBF:
-    cada registro es un objeto con su baseclass y objname). Devuelve el conteo
-    de controles por tipo, sin depender de librerías externas."""
-    if len(raw) < 32:
+def _read_memo(sct, blocknum, blocksize):
+    """Lee un campo memo de un archivo .sct/.fpt dado su número de bloque."""
+    if not sct or blocknum <= 0:
+        return ""
+    loc = blocknum * blocksize
+    if loc + 8 > len(sct):
+        return ""
+    length = int.from_bytes(sct[loc + 4:loc + 8], "big")  # longitud (big-endian)
+    if length <= 0 or length > 1_000_000:
+        return ""
+    return sct[loc + 8:loc + 8 + length].decode("latin-1", "replace").replace("\x00", "").strip()
+
+
+def parse_scx_controls(scx, sct):
+    """Extrae los controles de un formulario VFP .scx (es una tabla DBF: cada
+    registro es un objeto). En VFP, baseclass y objname son campos MEMO: el .scx
+    guarda un puntero de 4 bytes y el texto vive en el .sct. Por eso necesitamos
+    ambos archivos. Sin dependencias externas."""
+    if len(scx) < 32:
         return None
     try:
-        num_records = int.from_bytes(raw[4:8], "little")
-        header_len = int.from_bytes(raw[8:10], "little")
-        rec_len = int.from_bytes(raw[10:12], "little")
+        num_records = int.from_bytes(scx[4:8], "little")
+        header_len = int.from_bytes(scx[8:10], "little")
+        rec_len = int.from_bytes(scx[10:12], "little")
     except Exception:
         return None
     if rec_len <= 0 or header_len <= 32:
         return None
+    blocksize = int.from_bytes(sct[6:8], "big") if (sct and len(sct) >= 8) else 64
+    if blocksize <= 0:
+        blocksize = 64
 
-    # Descriptores de campo -> nombre, offset dentro del registro, longitud.
-    region = raw[32:header_len]
+    # Descriptores de campo -> nombre: (offset, longitud, tipo).
+    region = scx[32:header_len]
     fmap = {}
     offset = 1  # primer byte del registro es la marca de borrado
     i = 0
@@ -117,26 +134,33 @@ def parse_scx_controls(raw):
         if region[i] == 0x0D:
             break
         fname = region[i:i + 11].split(b"\x00")[0].decode("latin-1", "replace").strip().lower()
+        ftype = chr(region[i + 11]) if region[i + 11] else "?"
         flen = region[i + 16]
         if fname:
-            fmap[fname] = (offset, flen)
+            fmap[fname] = (offset, flen, ftype)
         offset += flen
         i += 32
 
     if "baseclass" not in fmap or "objname" not in fmap:
         return None
-    bo, bl = fmap["baseclass"]
-    no, nl = fmap["objname"]
+    bo, bl, bt = fmap["baseclass"]
+    no, nl, nt = fmap["objname"]
+
+    def field_text(rec, off, ln, typ):
+        raw = rec[off:off + ln]
+        if typ == "M":  # memo: el valor es el nº de bloque (4 bytes LE) en el .sct
+            return _read_memo(sct, int.from_bytes(raw[:4], "little"), blocksize)
+        return raw.decode("latin-1", "replace").replace("\x00", "").strip()
 
     counts = {}
     controls = []
     for r in range(num_records):
         start = header_len + r * rec_len
-        rec = raw[start:start + rec_len]
+        rec = scx[start:start + rec_len]
         if len(rec) < rec_len:
             break
-        baseclass = rec[bo:bo + bl].decode("latin-1", "replace").replace("\x00", "").strip().lower()
-        objname = rec[no:no + nl].decode("latin-1", "replace").replace("\x00", "").strip()
+        baseclass = field_text(rec, bo, bl, bt).lower()
+        objname = field_text(rec, no, nl, nt)
         if not baseclass:
             continue
         counts[baseclass] = counts.get(baseclass, 0) + 1
@@ -151,6 +175,7 @@ def analyze_zip(raw_bytes):
     """Lee el ZIP en memoria y devuelve un resumen real del sistema legacy."""
     zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
     names = [n for n in zf.namelist() if not n.endswith("/")]
+    lower_map = {n.lower(): n for n in names}  # para ubicar el .sct de cada .scx
 
     by_ext = {}
     counts = {}
@@ -195,11 +220,17 @@ def analyze_zip(raw_bytes):
             except Exception:
                 pass
 
-        # Controles reales de los formularios .scx (es una tabla DBF).
+        # Controles reales de los formularios .scx (es una tabla DBF + memo .sct).
         if ext == ".scx" and len(forms_detail) < MAX_FORMS_PARSED:
             try:
                 with zf.open(name) as fp:
-                    info = parse_scx_controls(fp.read())
+                    scx_bytes = fp.read()
+                sct_bytes = b""
+                sct_real = lower_map.get((os.path.splitext(name)[0] + ".sct").lower())
+                if sct_real:
+                    with zf.open(sct_real) as fp2:
+                        sct_bytes = fp2.read()
+                info = parse_scx_controls(scx_bytes, sct_bytes)
                 if info:
                     forms_detail.append({
                         "name": os.path.splitext(base)[0],
