@@ -1,0 +1,62 @@
+╔══════════════════════════════════════════════╗
+║         LEGACYMIGRATOR — Instrucciones        ║
+╚══════════════════════════════════════════════╝
+
+REQUISITOS
+──────────
+• Python 3 (ya viene instalado en Windows 10/11, macOS y Linux)
+• Conexión a internet
+• Una API key de Anthropic (console.anthropic.com)
+
+
+CÓMO INICIAR
+────────────
+Windows:
+  1. Hacé doble clic en:  INICIAR.bat
+
+macOS / Linux:
+  1. Abrí una terminal en esta carpeta
+  2. Ejecutá:  bash iniciar.sh
+
+(o en cualquier sistema:  python servidor.py)
+
+  → Se abre una ventana del servidor — NO la cierres
+  → Abrí tu navegador en:  http://localhost:8080
+
+
+CÓMO USAR EL AGENTE
+────────────────────
+1. Pegá tu API key de Anthropic y hacé clic en OK
+2. Subí el ZIP con el sistema legacy
+3. Elegí el lenguaje origen y la tecnología destino
+4. Hacé clic en "Analizar sistema"
+   → El agente LEE el ZIP de verdad: cuenta los formularios,
+     reportes y programas, y extrae la estructura real de las
+     tablas .dbf (campos y tipos). El análisis ya no es inventado.
+5. Seleccioná una fase para generarla
+6. Descargá el código generado
+
+
+DÓNDE OBTENER LA API KEY
+─────────────────────────
+1. Entrá a https://console.anthropic.com
+2. Creá una cuenta
+3. Menú → API Keys → Create Key
+4. Copiá la clave (empieza con sk-ant-)
+
+
+PARA CERRAR
+───────────
+Cerrá la ventana del servidor o presioná Ctrl+C en ella.
+
+
+SOPORTE
+───────
+Si aparece error de conexión:
+• Verificá que la ventana del servidor esté abierta
+• Verificá que la URL sea http://localhost:8080
+• Verificá tu API key en console.anthropic.com
+
+Si una fase "se corta por longitud": volvé a intentar. El agente
+ahora usa max_tokens alto, pero fases muy grandes pueden requerir
+reintentar o dividirse.

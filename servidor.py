@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+"""
+LegacyMigrator - Servidor local
+
+Actúa como proxy entre el navegador y la API de Anthropic, y además LEE el ZIP
+del sistema legacy (forms, reportes, programas y la estructura real de las
+tablas .dbf) para que el análisis sea preciso y no inventado.
+
+Ejecutar:  python servidor.py
+Abrir:     http://localhost:8080
+
+No requiere dependencias externas: solo Python 3 estándar.
+"""
+
+import http.server
+import io
+import json
+import os
+import sys
+import urllib.error
+import urllib.request
+import zipfile
+
+API_KEY = ""  # Se configura desde el navegador
+PORT = 8080
+
+# Límites para no saturar el prompt (ni la memoria) con sistemas enormes.
+MAX_TABLES = 60          # cuántas tablas .dbf describir con su estructura
+MAX_FIELDS_PER_TABLE = 60
+MAX_NAME_LIST = 80       # cuántos nombres de forms/reportes listar
+MAX_SAMPLES = 8          # cuántos .prg pequeños incluir como muestra de código
+MAX_SAMPLE_BYTES = 6000  # tamaño máximo de cada muestra de código
+
+# Extensiones típicas de sistemas legacy y su categoría.
+EXT_CATEGORY = {
+    ".scx": "forms", ".sct": "forms",
+    ".frx": "reports", ".frt": "reports",
+    ".dbf": "tables",
+    ".dbc": "databases", ".dct": "databases",
+    ".prg": "programs",
+    ".vcx": "classes", ".vct": "classes",
+    ".mnx": "menus", ".mpr": "menus",
+    ".cbl": "programs", ".cob": "programs", ".cpy": "copybooks",
+}
+
+# Tipos de campo DBF -> nombre legible (para enriquecer el prompt).
+DBF_TYPES = {
+    "C": "Character", "N": "Numeric", "F": "Float", "D": "Date",
+    "T": "DateTime", "L": "Logical", "M": "Memo", "G": "General",
+    "B": "Double", "I": "Integer", "Y": "Currency", "P": "Picture",
+}
+
+
+def parse_dbf_structure(head_bytes):
+    """Extrae la estructura (campos) del header de un archivo .dbf.
+
+    No depende de librerías externas: lee el header binario según el formato
+    DBF estándar. Devuelve dict con num_records y fields, o None si falla.
+    """
+    if len(head_bytes) < 32:
+        return None
+    try:
+        num_records = int.from_bytes(head_bytes[4:8], "little")
+        header_len = int.from_bytes(head_bytes[8:10], "little")
+    except Exception:
+        return None
+
+    region = head_bytes[32:]  # los descriptores de campo empiezan en el byte 32
+    fields = []
+    i = 0
+    while i + 32 <= len(region):
+        if region[i] == 0x0D:  # terminador de la lista de campos
+            break
+        raw_name = region[i:i + 11].split(b"\x00")[0]
+        name = raw_name.decode("latin-1", "replace").strip()
+        if not name:
+            break
+        ftype = chr(region[i + 11]) if region[i + 11] else "?"
+        flen = region[i + 16]
+        fields.append({
+            "name": name,
+            "type": ftype,
+            "type_name": DBF_TYPES.get(ftype, ftype),
+            "len": flen,
+        })
+        if len(fields) >= MAX_FIELDS_PER_TABLE:
+            break
+        i += 32
+
+    if not fields:
+        return None
+    return {"records": num_records, "fields": fields}
+
+
+def analyze_zip(raw_bytes):
+    """Lee el ZIP en memoria y devuelve un resumen real del sistema legacy."""
+    zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
+    names = [n for n in zf.namelist() if not n.endswith("/")]
+
+    by_ext = {}
+    counts = {}
+    forms, reports, programs = [], [], []
+    tables = []
+    samples = []
+
+    # Ordenamos para que el muestreo sea estable entre ejecuciones.
+    for name in sorted(names):
+        base = os.path.basename(name)
+        ext = os.path.splitext(base)[1].lower()
+        if not ext:
+            continue
+        by_ext[ext] = by_ext.get(ext, 0) + 1
+        cat = EXT_CATEGORY.get(ext)
+        if cat:
+            counts[cat] = counts.get(cat, 0) + 1
+
+        if cat == "forms" and ext == ".scx" and len(forms) < MAX_NAME_LIST:
+            forms.append(base)
+        elif cat == "reports" and ext == ".frx" and len(reports) < MAX_NAME_LIST:
+            reports.append(base)
+        elif cat == "programs":
+            programs.append(base)
+
+        # Estructura real de las tablas .dbf (leyendo solo el header).
+        if ext == ".dbf" and len(tables) < MAX_TABLES:
+            try:
+                with zf.open(name) as fp:
+                    head = fp.read(32 + 32 * 256)  # suficiente para todos los campos
+                struct = parse_dbf_structure(head)
+                if struct:
+                    tables.append({
+                        "name": os.path.splitext(base)[0],
+                        "records": struct["records"],
+                        "fields": struct["fields"],
+                    })
+            except Exception:
+                pass
+
+        # Muestras de código fuente real (programas pequeños).
+        if ext in (".prg", ".cbl", ".cob") and len(samples) < MAX_SAMPLES:
+            try:
+                info = zf.getinfo(name)
+                if info.file_size <= MAX_SAMPLE_BYTES * 3:
+                    with zf.open(name) as fp:
+                        content = fp.read(MAX_SAMPLE_BYTES + 200)
+                    text = content.decode("latin-1", "replace")
+                    if len(text) > MAX_SAMPLE_BYTES:
+                        text = text[:MAX_SAMPLE_BYTES] + "\n... (truncado)"
+                    samples.append({"name": base, "content": text})
+            except Exception:
+                pass
+
+    return {
+        "total_files": len(names),
+        "size_mb": round(len(raw_bytes) / 1024 / 1024, 1),
+        "by_ext": by_ext,
+        "counts": counts,
+        "tables": tables,
+        "forms": forms,
+        "reports": reports,
+        "programs": sorted(set(programs))[:MAX_NAME_LIST],
+        "samples": samples,
+    }
+
+
+class Handler(http.server.BaseHTTPRequestHandler):
+
+    def log_message(self, fmt, *args):
+        try:
+            print(f"  {args[0]} {args[1]}")
+        except Exception:
+            pass
+
+    # --- helpers de respuesta -------------------------------------------
+    def send_cors(self):
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-API-Key")
+
+    def send_json(self, code, obj):
+        data = json.dumps(obj).encode("utf-8")
+        self.send_response(code)
+        self.send_cors()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def read_body(self):
+        length = int(self.headers.get("Content-Length", 0))
+        return self.rfile.read(length) if length else b""
+
+    # --- métodos HTTP ----------------------------------------------------
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self.send_cors()
+        self.end_headers()
+
+    def do_GET(self):
+        if self.path in ("/", "/index.html"):
+            self.serve_file("index.html", "text/html; charset=utf-8")
+        else:
+            self.send_response(404)
+            self.end_headers()
+
+    def do_POST(self):
+        global API_KEY
+
+        if self.path == "/api/key":
+            try:
+                body = json.loads(self.read_body() or b"{}")
+            except Exception:
+                self.send_json(400, {"ok": False, "error": "JSON inválido"})
+                return
+            API_KEY = (body.get("key") or "").strip()
+            ok = API_KEY.startswith("sk-")
+            if ok:
+                print("\n  ✓ API key configurada correctamente\n")
+            self.send_json(200, {"ok": ok})
+            return
+
+        if self.path == "/api/zipinfo":
+            raw = self.read_body()
+            if not raw:
+                self.send_json(400, {"error": {"message": "No se recibió el archivo ZIP"}})
+                return
+            try:
+                info = analyze_zip(raw)
+                print(f"  ✓ ZIP leído: {info['total_files']} archivos, "
+                      f"{len(info['tables'])} tablas analizadas")
+                self.send_json(200, info)
+            except zipfile.BadZipFile:
+                self.send_json(400, {"error": {"message": "El archivo no es un ZIP válido"}})
+            except Exception as e:
+                self.send_json(500, {"error": {"message": f"Error al leer el ZIP: {e}"}})
+            return
+
+        if self.path == "/api/claude":
+            if not API_KEY:
+                self.send_json(401, {"error": {"message": "API key no configurada"}})
+                return
+
+            body = self.read_body()
+            req = urllib.request.Request(
+                "https://api.anthropic.com/v1/messages",
+                data=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "x-api-key": API_KEY,
+                    "anthropic-version": "2023-06-01",
+                },
+                method="POST",
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=180) as resp:
+                    data = resp.read()
+                self.send_response(200)
+                self.send_cors()
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except urllib.error.HTTPError as e:
+                error_body = e.read()
+                self.send_response(e.code)
+                self.send_cors()
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(error_body)))
+                self.end_headers()
+                self.wfile.write(error_body)
+            except Exception as e:
+                self.send_json(500, {"error": {"message": str(e)}})
+            return
+
+        self.send_response(404)
+        self.end_headers()
+
+    def serve_file(self, filename, content_type):
+        path = os.path.join(os.path.dirname(os.path.abspath(__file__)), filename)
+        try:
+            with open(path, "rb") as f:
+                data = f.read()
+            self.send_response(200)
+            self.send_cors()
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except FileNotFoundError:
+            self.send_response(404)
+            self.end_headers()
+
+
+if __name__ == "__main__":
+    print("\n" + "=" * 50)
+    print("  LegacyMigrator — Servidor local")
+    print("=" * 50)
+    print(f"\n  ► Abrí tu navegador en:  http://localhost:{PORT}")
+    print(f"  ► Para cerrar presioná:  Ctrl+C\n")
+    print("=" * 50 + "\n")
+
+    server = http.server.HTTPServer(("localhost", PORT), Handler)
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\n\n  Servidor cerrado. ¡Hasta luego!\n")
+        sys.exit(0)

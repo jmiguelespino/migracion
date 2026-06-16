@@ -1,0 +1,12 @@
+# Python
+__pycache__/
+*.pyc
+
+# Sistemas/legacy de prueba
+*.zip
+
+# OS / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
