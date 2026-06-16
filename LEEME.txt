@@ -34,7 +34,8 @@ CÓMO USAR EL AGENTE
      reportes y programas, y extrae la estructura real de las
      tablas .dbf (campos y tipos). El análisis ya no es inventado.
 5. Seleccioná una fase para generarla
-6. Descargá el código generado
+6. Descargá la fase: baja un ZIP con cada archivo en la carpeta src/,
+   los tests en tests/ y un README.md con las instrucciones
 
 
 DÓNDE OBTENER LA API KEY

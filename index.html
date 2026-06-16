@@ -573,16 +573,26 @@ function nextPhase() {
   else alert('¡Todas las fases fueron completadas!');
 }
 
-function downloadPhase() {
+function slug(s){return String(s||'fase').trim().replace(/\s+/g,'-').toLowerCase().replace(/[^a-z0-9\-]/g,'')||'fase';}
+
+async function downloadPhase() {
   if (!S.currentPhaseData||!S.currentPhase) return;
-  const ph=S.currentPhase, d=S.currentPhaseData;
-  let t = `LEGACYMIGRATOR — FASE ${ph.numero}: ${ph.titulo}\n${S.sourceLang} → ${S.targetLang}\n${'='.repeat(60)}\n\nEXPLICACIÓN\n\n${d.explicacion||''}\n\nINSTRUCCIONES\n\n${d.instrucciones||''}\n\n${'='.repeat(60)}\n`;
-  (d.archivos||[]).forEach(f=>{t+=`\n\nARCHIVO: ${f.nombre}\n${f.descripcion||''}\n${'─'.repeat(40)}\n${f.codigo||''}\n`;});
-  t+=`\n${'='.repeat(60)}\nTESTS\n\n${d.tests||''}`;
-  const a=document.createElement('a');
-  a.href=URL.createObjectURL(new Blob([t],{type:'text/plain;charset=utf-8'}));
-  a.download=`fase-${ph.numero}-${ph.titulo.replace(/\s+/g,'-').toLowerCase()}.txt`;
-  a.click();
+  const ph=S.currentPhase;
+  const filename=`fase-${ph.numero}-${slug(ph.titulo)}.zip`;
+  const payload={ phase:ph, source:S.sourceLang, target:S.targetLang, data:S.currentPhaseData, filename };
+  const btn=document.getElementById('bdl'); const prev=btn?btn.innerHTML:'';
+  if(btn) btn.innerHTML='⏳ Generando ZIP...';
+  try{
+    const r=await fetch('/api/zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error?.message||('HTTP '+r.status)); }
+    const blob=await r.blob();
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(blob);
+    a.download=filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+  }catch(e){ showErr('No se pudo generar el ZIP: '+e.message); }
+  finally{ if(btn) btn.innerHTML=prev; }
 }
 
 function copyCode() {

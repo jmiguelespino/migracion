@@ -30,6 +30,8 @@ COBOL) a migrarlos a tecnologías modernas de forma asistida por IA (Claude).
 - `POST /api/key` → guarda la API key en memoria
 - `POST /api/zipinfo` → recibe el ZIP y devuelve el resumen real del sistema
 - `POST /api/claude` → reenvía la consulta a `api.anthropic.com/v1/messages`
+- `POST /api/zip` → arma el ZIP descargable de una fase (código en `src/`,
+  tests en `tests/` y un `README.md` con instrucciones)
 
 ## Cómo correr
 
@@ -51,3 +53,6 @@ Requisitos: Python 3, conexión a internet y una API key de Anthropic
 - Parseo de JSON más robusto y aviso explícito cuando la respuesta se corta
   por longitud (`stop_reason: max_tokens`).
 - Lanzador para macOS/Linux además del `.bat` de Windows.
+- **Descarga por fase en ZIP**: al generar una fase se descarga un `.zip` con
+  cada archivo en `src/`, los tests en `tests/` y un `README.md` con las
+  instrucciones (antes era un único `.txt`).
