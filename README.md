@@ -24,12 +24,35 @@ COBOL) a migrarlos a tecnologías modernas de forma asistida por IA (Claude).
 | `iniciar.sh` | Lanzador para macOS / Linux. |
 | `LEEME.txt` | Instrucciones para el usuario final. |
 
+### Motores de IA
+
+El agente puede generar con tres motores (se eligen en la barra lateral):
+
+| Motor | API key | Costo | Cuándo usarlo |
+|-------|---------|-------|---------------|
+| **Claude** | Sí (Anthropic) | Tokens | Mejor calidad de migración |
+| **🆓 Gratis (Ollama)** | **No** | **Gratis, local** | Sin clave ni internet; usa un modelo local de código (p. ej. `qwen2.5-coder`) |
+| **🧪 Demo** | No | Gratis | Solo simula la salida (sin LLM), para probar el flujo |
+
+Para el modo gratuito necesitás [Ollama](https://ollama.com) instalado y un
+modelo descargado:
+
+```bash
+ollama pull qwen2.5-coder   # recomendado para generar código
+```
+
+El servidor detecta los modelos locales automáticamente (`GET /api/ollama/models`).
+Podés cambiar la URL o el modelo por defecto con las variables de entorno
+`OLLAMA_URL` y `OLLAMA_MODEL`.
+
 ### Endpoints del servidor
 
 - `GET  /` → sirve `index.html`
+- `GET  /api/ollama/models` → lista los modelos locales de Ollama (modo gratuito)
 - `POST /api/key` → guarda la API key en memoria
 - `POST /api/zipinfo` → recibe el ZIP y devuelve el resumen real del sistema
 - `POST /api/claude` → reenvía la consulta a `api.anthropic.com/v1/messages`
+- `POST /api/ollama` → genera con un modelo local vía Ollama (sin API key)
 - `POST /api/zip` → arma el ZIP descargable de una fase (código en `src/`,
   tests en `tests/` y un `README.md` con instrucciones)
 
@@ -40,8 +63,10 @@ python servidor.py
 # luego abrir http://localhost:8080
 ```
 
-Requisitos: Python 3, conexión a internet y una API key de Anthropic
-(<https://console.anthropic.com>).
+Requisitos: Python 3 y, según el motor elegido, una API key de Anthropic
+(<https://console.anthropic.com>) **o** [Ollama](https://ollama.com) con un
+modelo de código instalado (modo gratuito, sin clave). El modo demo no
+requiere nada.
 
 ## Notas de la última revisión
 
@@ -56,6 +81,9 @@ Requisitos: Python 3, conexión a internet y una API key de Anthropic
 - **Descarga por fase en ZIP**: al generar una fase se descarga un `.zip` con
   cada archivo en `src/`, los tests en `tests/` y un `README.md` con las
   instrucciones (antes era un único `.txt`).
+- **Modo gratuito (Ollama)**: generación real **sin API key ni tokens** usando
+  un modelo local de código (p. ej. `qwen2.5-coder`). El servidor detecta los
+  modelos instalados y la UI los lista automáticamente.
 - **Modo demo**: probar el flujo completo sin API key ni tokens (análisis y
   generación simulados a partir de las tablas reales del ZIP).
 - **Lógica real**: el código fuente de los `.prg` relacionados con cada fase se
