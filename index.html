@@ -401,6 +401,21 @@ function zipSummary(z) {
   return s;
 }
 
+// Muestras de CÓDIGO REAL (.prg) relevantes para una fase concreta.
+function codeForPhase(phase) {
+  const samples = (S.zipInfo && S.zipInfo.samples) || [];
+  if (!samples.length) return '';
+  const words = [].concat(phase.modulos||[], phase.pantallas_legacy||[], phase.tablas||[])
+    .map(w => String(w).toLowerCase().replace(/\.\w+$/,''));
+  let match = samples.filter(s => words.some(w => w && s.name.toLowerCase().includes(w)));
+  if (!match.length) match = samples.slice(0,2);   // fallback: primeras muestras
+  let out = '\nCÓDIGO FUENTE REAL de programas relacionados (migrá esta lógica de negocio):\n';
+  match.slice(0,3).forEach(s => {
+    out += `\n--- ${s.name} ---\n${String(s.content||'').slice(0,2500)}\n`;
+  });
+  return out;
+}
+
 // Resumen acotado de las tablas que pertenecen a una fase concreta.
 function tablesForPhase(phase) {
   if (!S.zipInfo || !S.zipInfo.tables) return '';
@@ -517,8 +532,8 @@ Fase ${phase.numero}: ${phase.titulo} — ${phase.descripcion}
 Módulos: ${(phase.modulos||[]).join(', ')}
 Tablas legacy: ${(phase.tablas||[]).join(', ')}
 Pantallas legacy: ${(phase.pantallas_legacy||[]).join(', ')}
-${tablesForPhase(phase)}
-Generá código real y funcional para ${S.targetLang}, respetando los campos reales de las tablas indicadas.
+${tablesForPhase(phase)}${codeForPhase(phase)}
+Generá código real y funcional para ${S.targetLang}, respetando los campos reales de las tablas y portando la lógica de negocio del código fuente original mostrado arriba.
 
 Respondé SOLO con JSON válido sin backticks ni texto adicional:
 {
