@@ -274,6 +274,7 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
   <main class="main">
     <div class="tbar">
       <h2 id="ttl">Bienvenido</h2>
+      <button class="bsm" id="bnew" onclick="clearState()" style="display:none">🗑 Nuevo proyecto</button>
       <button class="bsm ok" id="bdl" onclick="downloadPhase()" style="display:none">⬇ Descargar fase</button>
     </div>
     <div class="content">
@@ -319,6 +320,33 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
 
 <script>
 const S = { apiKey:'', file:null, demo:false, sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null, phases:[], currentPhase:null, currentPhaseData:null, completedPhases:[], generatedFiles:{} };
+
+// --- PERSISTENCIA DEL PROYECTO (localStorage) ---
+// No guardamos la API key (seguridad) ni el File. Sí el análisis y las fases,
+// para no perder el trabajo al recargar la página.
+const LS_KEY = 'lm_proyecto';
+function saveState() {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify({
+      sourceLang:S.sourceLang, targetLang:S.targetLang, demo:S.demo,
+      zipInfo:S.zipInfo, systemInfo:S.systemInfo, phases:S.phases, completedPhases:S.completedPhases
+    }));
+  } catch(e) { /* cuota llena u otro: se ignora */ }
+}
+function loadState() {
+  try {
+    const d = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
+    if (!d || !d.systemInfo || !(d.phases||[]).length) return false;
+    Object.assign(S, { sourceLang:d.sourceLang||S.sourceLang, targetLang:d.targetLang||S.targetLang,
+      demo:!!d.demo, zipInfo:d.zipInfo||null, systemInfo:d.systemInfo, phases:d.phases, completedPhases:d.completedPhases||[] });
+    return true;
+  } catch(e) { return false; }
+}
+function clearState() {
+  if (!confirm('¿Empezar un proyecto nuevo? Se borra el análisis guardado.')) return;
+  try { localStorage.removeItem(LS_KEY); } catch(e) {}
+  location.reload();
+}
 
 function checkReady() {
   const hk = S.apiKey.startsWith('sk-'), hf = !!S.file;
@@ -450,7 +478,7 @@ async function analyzeSystem() {
 
   if (S.demo) {            // modo demo: sin llamar a Claude
     mockAnalysis();
-    renderAnalysis(); renderSidebar(); showView('a');
+    renderAnalysis(); renderSidebar(); showView('a'); saveState();
     showWarn('Modo demo activo: análisis simulado (los conteos son reales del ZIP). No se gastaron tokens.');
     return;
   }
@@ -479,7 +507,7 @@ Generá entre 6 y 8 fases lógicas y ordenadas por prioridad de migración, bas�
       if (c.tables) S.systemInfo.tablas = c.tables;
       if (c.reports) S.systemInfo.reportes = c.reports;
     }
-    renderAnalysis(); renderSidebar(); showView('a');
+    renderAnalysis(); renderSidebar(); showView('a'); saveState();
   } catch(e) { showView('w'); showErr('Error al analizar: ' + e.message); }
 }
 
@@ -552,7 +580,7 @@ Respondé SOLO con JSON válido sin backticks ni texto adicional:
     const data = S.demo ? mockPhase(phase) : await callClaude(prompt, 16000);
     S.currentPhaseData = data; S.generatedFiles[num] = data;
     if (!S.completedPhases.includes(num)) S.completedPhases.push(num);
-    renderSidebar();
+    saveState(); renderSidebar();
     showView('p');
     document.getElementById('bdl').style.display = 'flex';
     renderPhaseDownload(phase, data);
@@ -657,6 +685,7 @@ function showView(n) {
   else if(n==='l') document.getElementById('vl').classList.add('show');
   else if(n==='a') document.getElementById('va').style.display='block';
   else if(n==='p') document.getElementById('vp').style.display='block';
+  document.getElementById('bnew').style.display = (n==='a'||n==='p') ? 'flex' : 'none';
 }
 function setLoad(m,s){document.getElementById('lmsg').textContent=m;document.getElementById('lsub').textContent=s;}
 function showErr(m){const b=document.getElementById('ebox');b.textContent='⚠️ '+m;b.classList.add('show');}
@@ -721,6 +750,20 @@ function repairTruncatedJson(s){
   for(let i=stack.length-1;i>=0;i--) out += (stack[i]==='{' ? '}' : ']');
   return out;
 }
+
+// Al cargar la página, restaura el proyecto guardado (si existe).
+(function restoreProject(){
+  if (!loadState()) return;
+  // reflejar la config guardada en los controles
+  const demoEl = document.getElementById('demo'); if (demoEl) demoEl.checked = S.demo;
+  const sel = document.querySelector('select'); if (sel) sel.value = S.targetLang;
+  const map = {'Visual FoxPro':'VFP','FoxPro':'Fox','COBOL':'COBOL'};
+  document.querySelectorAll('.lb').forEach(b => b.classList.toggle('active', b.textContent === map[S.sourceLang]));
+  renderAnalysis(); renderSidebar(); showView('a');
+  document.getElementById('ttl').textContent = 'Análisis del sistema';
+  showWarn('Proyecto anterior restaurado. Para volver a analizar desde cero, subí el ZIP otra vez o tocá "Nuevo proyecto".');
+  checkReady();
+})();
 </script>
 </body>
 </html>
