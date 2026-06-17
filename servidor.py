@@ -505,11 +505,23 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     msg = (f"El modelo '{model}' no está instalado. "
                            f"Ejecutá:  ollama pull {model}")
                 self.send_json(e.code, {"error": {"message": msg or f"Error de Ollama (HTTP {e.code})"}})
-            except urllib.error.URLError:
-                self.send_json(503, {"error": {"message":
-                    f"No se pudo conectar con Ollama en {OLLAMA_URL}. "
-                    f"Instalalo desde https://ollama.com, abrilo y ejecutá:  "
-                    f"ollama pull {model}"}})
+            except TimeoutError:
+                self.send_json(504, {"error": {"message":
+                    f"El modelo local '{model}' tardó demasiado (más de 600 s). "
+                    f"Probá un modelo más liviano y rápido, p. ej.:  "
+                    f"ollama pull qwen2.5-coder:1.5b  (y elegilo en la lista). "
+                    f"En PC sin GPU los modelos grandes pueden ser muy lentos."}})
+            except urllib.error.URLError as e:
+                # Un timeout de lectura puede llegar envuelto en URLError.
+                if isinstance(getattr(e, "reason", None), TimeoutError):
+                    self.send_json(504, {"error": {"message":
+                        f"El modelo local '{model}' tardó demasiado. Probá uno más "
+                        f"liviano:  ollama pull qwen2.5-coder:1.5b"}})
+                else:
+                    self.send_json(503, {"error": {"message":
+                        f"No se pudo conectar con Ollama en {OLLAMA_URL}. "
+                        f"Instalalo desde https://ollama.com, abrilo y ejecutá:  "
+                        f"ollama pull {model}"}})
             except Exception as e:
                 self.send_json(500, {"error": {"message": str(e)}})
             return
@@ -547,6 +559,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_header("Content-Length", str(len(error_body)))
                 self.end_headers()
                 self.wfile.write(error_body)
+            except TimeoutError:
+                self.send_json(504, {"error": {"message":
+                    "La API de Anthropic no respondió a tiempo (timeout de 180 s). "
+                    "Reintentá; si persiste, revisá tu conexión a internet."}})
+            except urllib.error.URLError as e:
+                if isinstance(getattr(e, "reason", None), TimeoutError):
+                    self.send_json(504, {"error": {"message":
+                        "La API de Anthropic no respondió a tiempo (timeout). Reintentá."}})
+                else:
+                    self.send_json(502, {"error": {"message":
+                        f"No se pudo contactar a la API de Anthropic: {e.reason}. "
+                        f"Revisá tu conexión a internet."}})
             except Exception as e:
                 self.send_json(500, {"error": {"message": str(e)}})
             return
@@ -578,7 +602,10 @@ if __name__ == "__main__":
     print(f"  ► Para cerrar presioná:  Ctrl+C\n")
     print("=" * 50 + "\n")
 
-    server = http.server.HTTPServer(("localhost", PORT), Handler)
+    # Multihilo: una llamada larga al modelo no bloquea otras peticiones del
+    # navegador (favicon, recargas, etc.), así la UI sigue respondiendo.
+    server = http.server.ThreadingHTTPServer(("localhost", PORT), Handler)
+    server.daemon_threads = True
     try:
         server.serve_forever()
     except KeyboardInterrupt:
