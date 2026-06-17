@@ -87,14 +87,18 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
 - [x] **Enriquecer todas las tablas** (se quitó el tope de 12): prioriza las que
       tienen señal real (formulario/`.prg`) y enriquece el resto también; tope de
       seguridad 200. Se subió `MAX_SAMPLES` a 40 (más `.prg` para lógica).
-- [ ] Generar pantallas según el **layout real** de los controles `.scx`
-      (posición/orden), no solo la lista de campos.
+- [x] **Layout real de los `.scx`**: se parsea el memo `properties`
+      (`ControlSource`, `Caption`, `Top`) → etiquetas reales, orden de campos por
+      posición y **mapeo exacto formulario→tabla** (no por nombre). El ABM
+      generado refleja el formulario original. (`MAX_SAMPLES`=40, `re` a nivel
+      módulo.)
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
-- [ ] Mapear cada formulario `.scx` ↔ tabla con más precisión (hoy por nombre).
+- [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 - [ ] Probar end-to-end con el ZIP real del usuario (314 archivos, 15 tablas).
 
 ## 🔄 Convención de trabajo
 
 - Desarrollar en `claude/serene-hypatia-kvew2c`, **mergear a `main` vía PR**.
-- Historial: PRs #1–#11 (modo gratuito Ollama, Codespaces, timeouts, multihilo,
-  rendimiento, cobertura total/scaffold, enriquecimiento IA, baja de Demo).
+- Historial: PRs #1–#15 (modo gratuito Ollama, Codespaces, timeouts, multihilo,
+  rendimiento, cobertura total/scaffold, enriquecimiento IA, baja de Demo,
+  validaciones de esquema + reglas ejecutables, layout real de los .scx).

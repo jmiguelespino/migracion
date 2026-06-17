@@ -16,6 +16,7 @@ import http.server
 import io
 import json
 import os
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -193,6 +194,9 @@ def parse_scx_controls(scx, sct):
         return None
     bo, bl, bt = fmap["baseclass"]
     no, nl, nt = fmap["objname"]
+    has_props = "properties" in fmap
+    if has_props:
+        po, pl, pt = fmap["properties"]
 
     def field_text(rec, off, ln, typ):
         raw = rec[off:off + ln]
@@ -200,8 +204,23 @@ def parse_scx_controls(scx, sct):
             return _read_memo(sct, int.from_bytes(raw[:4], "little"), blocksize)
         return raw.decode("latin-1", "replace").replace("\x00", "").strip()
 
+    def parse_props(text):
+        """De un memo 'properties' saca ControlSource, Caption y Top."""
+        cs = re.search(r'ControlSource\s*=\s*([^\r\n]+)', text, re.I)
+        cap = re.search(r'Caption\s*=\s*([^\r\n]+)', text, re.I)
+        top = re.search(r'(?:^|\n)\s*Top\s*=\s*([\d.]+)', text, re.I)
+        src = cs.group(1).strip().strip('"').strip() if cs else ""
+        label = cap.group(1).strip().strip('"').strip() if cap else ""
+        try:
+            tval = float(top.group(1)) if top else 0.0
+        except ValueError:
+            tval = 0.0
+        return src, label, tval
+
     counts = {}
     controls = []
+    campos = []          # controles atados a campos reales (ControlSource)
+    tabla_freq = {}      # frecuencia de tabla referenciada -> para inferir la tabla
     for r in range(num_records):
         start = header_len + r * rec_len
         rec = scx[start:start + rec_len]
@@ -214,9 +233,24 @@ def parse_scx_controls(scx, sct):
         counts[baseclass] = counts.get(baseclass, 0) + 1
         if len(controls) < 40:
             controls.append({"name": objname, "type": baseclass})
+        # Layout real: ControlSource (atadura a campo) y Caption (etiqueta).
+        if has_props:
+            try:
+                src, label, top = parse_props(field_text(rec, po, pl, pt))
+            except Exception:
+                src, label, top = "", "", 0.0
+            if "." in src:
+                pref, _, fld = src.partition(".")
+                pref, fld = pref.strip().lower(), fld.strip()
+                if pref and fld and pref not in ("thisform", "this", "_screen"):
+                    tabla_freq[pref] = tabla_freq.get(pref, 0) + 1
+                    if len(campos) < MAX_FIELDS_PER_TABLE:
+                        campos.append({"field": fld, "label": label or fld, "top": top})
     if not counts:
         return None
-    return {"counts": counts, "controls": controls, "total": sum(counts.values())}
+    tabla = max(tabla_freq, key=tabla_freq.get) if tabla_freq else ""
+    return {"counts": counts, "controls": controls, "total": sum(counts.values()),
+            "campos": campos, "tabla": tabla}
 
 
 def _clean_prompt(s):
@@ -365,6 +399,8 @@ def analyze_zip(raw_bytes):
                         "name": os.path.splitext(base)[0],
                         "controles": info["counts"],
                         "total": info["total"],
+                        "tabla": info.get("tabla", ""),
+                        "campos": info.get("campos", []),
                     })
             except Exception:
                 pass

@@ -110,6 +110,25 @@ def _apply_enrich(tabla, spec):
     tabla["enriquecido"] = True
 
 
+def _forms_index(inventory):
+    """Índice tabla -> {etiquetas reales, orden} a partir del layout de los .scx
+    (ControlSource/Caption/Top). Permite que el ABM se parezca al formulario."""
+    idx = {}
+    for f in inventory.get("forms_detail", []):
+        tabla, campos = f.get("tabla"), f.get("campos") or []
+        if not tabla or not campos:
+            continue
+        d = idx.setdefault(_slug(tabla), {"labels": {}, "order": {}})
+        for rank, c in enumerate(sorted(campos, key=lambda x: x.get("top", 0))):
+            fld = _slug(c.get("field"))
+            if not fld:
+                continue
+            if c.get("label"):
+                d["labels"].setdefault(fld, str(c["label"])[:60])
+            d["order"].setdefault(fld, rank)
+    return idx
+
+
 def build_meta(inventory, title, enrich=None):
     """Arma la metadata para el backend y la SPA a partir del inventario.
 
@@ -118,6 +137,7 @@ def build_meta(inventory, title, enrich=None):
     ayudas y mostrar las reglas de negocio del sistema original.
     """
     enrich = enrich or {}
+    forms_index = _forms_index(inventory)
     tablas, tables_sql, seen = [], {}, set()
     for t in inventory.get("tables", []):
         key = _slug(t.get("name"))
@@ -141,8 +161,17 @@ def build_meta(inventory, title, enrich=None):
         tabla = {
             "key": key, "name": t.get("name"), "registros": t.get("records", 0),
             "titulo": t.get("name"), "descripcion": "", "reglas": [], "validaciones": [],
-            "enriquecido": False, "campos": campos,
+            "enriquecido": False, "origen_formulario": False, "campos": campos,
         }
+        # Layout real del formulario .scx: etiquetas (Caption) y orden (Top).
+        fi = forms_index.get(key)
+        if fi:
+            for c in campos:
+                if c["name"] in fi["labels"]:
+                    c["label"] = fi["labels"][c["name"]]
+            campos.sort(key=lambda c: fi["order"].get(c["name"], 999))
+            tabla["origen_formulario"] = True
+        # La IA (si se usó) puede refinar título/etiquetas/reglas por encima.
         _apply_enrich(tabla, enrich.get(key))
         tablas.append(tabla)
 
