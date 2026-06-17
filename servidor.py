@@ -344,6 +344,16 @@ def build_phase_zip(payload):
 
 class Handler(http.server.BaseHTTPRequestHandler):
 
+    def handle(self):
+        # El navegador a veces corta la conexión a mitad de la respuesta
+        # (recarga, cambia de página o cancela). En Windows eso lanza
+        # ConnectionAbortedError/ConnectionResetError; no es un error real,
+        # así que lo ignoramos para no ensuciar la consola con un traceback.
+        try:
+            super().handle()
+        except ConnectionError:
+            pass
+
     def log_message(self, fmt, *args):
         try:
             print(f"  {args[0]} {args[1]}")
