@@ -13,7 +13,9 @@ REQUISITOS
                         ollama pull qwen2.5-coder:1.5b
                       Más calidad pero lento sin GPU:
                         ollama pull qwen2.5-coder
-  - 🧪 Demo ......... nada (solo simula la salida para probar el flujo)
+
+  La "App completa (cobertura total)" NO requiere ningún motor: funciona
+  siempre, sin API key ni Ollama.
 
 
 CÓMO INICIAR
@@ -36,7 +38,7 @@ CÓMO USAR EL AGENTE
 1. Elegí el motor de IA en "Motor de IA":
    • Claude  → pegá tu API key de Anthropic y hacé clic en OK
    • Gratis  → elegí el modelo local (necesitás Ollama corriendo)
-   • Demo    → no requiere nada
+   (La "App completa" no necesita motor.)
 2. Subí el ZIP con el sistema legacy
 3. Elegí el lenguaje origen y la tecnología destino
 4. Hacé clic en "Analizar sistema"

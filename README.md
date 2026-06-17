@@ -26,13 +26,15 @@ COBOL) a migrarlos a tecnologías modernas de forma asistida por IA (Claude).
 
 ### Motores de IA
 
-El agente puede generar con tres motores (se eligen en la barra lateral):
+El agente puede generar con dos motores (se eligen en la barra lateral):
 
 | Motor | API key | Costo | Cuándo usarlo |
 |-------|---------|-------|---------------|
 | **Claude** | Sí (Anthropic) | Tokens | Mejor calidad de migración |
-| **🆓 Gratis (Ollama)** | **No** | **Gratis, local** | Sin clave ni internet; usa un modelo local de código (p. ej. `qwen2.5-coder`) |
-| **🧪 Demo** | No | Gratis | Solo simula la salida (sin LLM), para probar el flujo |
+| **🆓 Gratis (Ollama)** | **No** | **Gratis, local** | Sin clave ni internet; usa un modelo local de código (p. ej. `qwen2.5-coder:1.5b`) |
+
+> La generación de la **app completa (cobertura total)** es determinística y **no
+> usa ningún motor**: funciona siempre, sin API key ni Ollama.
 
 Para el modo gratuito necesitás [Ollama](https://ollama.com) instalado y un
 modelo descargado:
@@ -112,8 +114,8 @@ modelo de código liviano automáticamente:
 
 Requisitos: Python 3 y, según el motor elegido, una API key de Anthropic
 (<https://console.anthropic.com>) **o** [Ollama](https://ollama.com) con un
-modelo de código instalado (modo gratuito, sin clave). El modo demo no
-requiere nada.
+modelo de código instalado (modo gratuito, sin clave). La **app completa
+(cobertura total)** no requiere ningún motor.
 
 ## Notas de la última revisión
 
@@ -129,10 +131,11 @@ requiere nada.
   cada archivo en `src/`, los tests en `tests/` y un `README.md` con las
   instrucciones (antes era un único `.txt`).
 - **Modo gratuito (Ollama)**: generación real **sin API key ni tokens** usando
-  un modelo local de código (p. ej. `qwen2.5-coder`). El servidor detecta los
-  modelos instalados y la UI los lista automáticamente.
-- **Modo demo**: probar el flujo completo sin API key ni tokens (análisis y
-  generación simulados a partir de las tablas reales del ZIP).
+  un modelo local de código (p. ej. `qwen2.5-coder:1.5b`). El servidor detecta
+  los modelos instalados y la UI los lista automáticamente.
+- **App completa (cobertura total)**: genera de forma determinística (sin IA)
+  una app con TODAS las utilidades del ZIP (ABM por tabla, menús, reportes), con
+  enriquecimiento opcional por IA por pantalla.
 - **Lógica real**: el código fuente de los `.prg` relacionados con cada fase se
   envía a Claude para portar la lógica de negocio, no solo la estructura.
 - **Estado persistente**: el análisis y las fases se guardan en `localStorage`,
