@@ -38,8 +38,42 @@ def _norm(s):
     return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
 
 
-def build_meta(inventory, title):
-    """Arma la metadata para el backend y la SPA a partir del inventario."""
+def _apply_enrich(tabla, spec):
+    """Fusiona el JSON de enriquecimiento de la IA sobre una tabla (in place)."""
+    if not isinstance(spec, dict):
+        return
+    if spec.get("titulo"):
+        tabla["titulo"] = str(spec["titulo"])[:80]
+    if spec.get("descripcion"):
+        tabla["descripcion"] = str(spec["descripcion"])[:400]
+    reglas = spec.get("reglas")
+    if isinstance(reglas, list):
+        tabla["reglas"] = [str(r)[:300] for r in reglas if r][:20]
+    # Mapa por nombre de campo (normalizado) -> mejoras.
+    by_name = {}
+    for c in (spec.get("campos") or []):
+        if isinstance(c, dict) and c.get("name"):
+            by_name[_slug(c["name"])] = c
+    for campo in tabla["campos"]:
+        c = by_name.get(campo["name"])
+        if not c:
+            continue
+        if c.get("label"):
+            campo["label"] = str(c["label"])[:60]
+        if c.get("ayuda"):
+            campo["ayuda"] = str(c["ayuda"])[:200]
+        campo["requerido"] = bool(c.get("requerido"))
+    tabla["enriquecido"] = True
+
+
+def build_meta(inventory, title, enrich=None):
+    """Arma la metadata para el backend y la SPA a partir del inventario.
+
+    `enrich` (opcional) = {claveTabla: {titulo, descripcion, campos[], reglas[]}}
+    producido por la IA; se fusiona para mejorar etiquetas, obligatorios,
+    ayudas y mostrar las reglas de negocio del sistema original.
+    """
+    enrich = enrich or {}
     tablas, tables_sql, seen = [], {}, set()
     for t in inventory.get("tables", []):
         key = _slug(t.get("name"))
@@ -52,15 +86,19 @@ def build_meta(inventory, title):
             if not cn or cn == "id" or cn in [c[0] for c in cols]:
                 continue
             sql, inp = DBF_SQL.get(f.get("type", "C"), ("TEXT", "text"))
-            campos.append({"name": cn, "label": f.get("name"), "type": f.get("type"), "input": inp})
+            campos.append({"name": cn, "label": f.get("name"), "type": f.get("type"),
+                           "input": inp, "requerido": False, "ayuda": ""})
             cols.append([cn, sql])
         if not cols:
             continue
         tables_sql[key] = cols
-        tablas.append({
+        tabla = {
             "key": key, "name": t.get("name"), "registros": t.get("records", 0),
-            "campos": campos,
-        })
+            "titulo": t.get("name"), "descripcion": "", "reglas": [],
+            "enriquecido": False, "campos": campos,
+        }
+        _apply_enrich(tabla, enrich.get(key))
+        tablas.append(tabla)
 
     # Reportes -> intentamos asociarlos a una tabla por nombre.
     table_index = {_norm(x["name"]): x["key"] for x in tablas}
@@ -88,6 +126,7 @@ def build_meta(inventory, title):
             "tablas": len(tablas), "formularios": len(formularios),
             "reportes": len(reportes),
             "items_menu": sum(len(m.get("items", [])) for m in menus),
+            "enriquecidas": sum(1 for t in tablas if t.get("enriquecido")),
         },
     }
     return meta, tables_sql
@@ -103,15 +142,18 @@ def _coverage_md(meta):
         "| Utilidad | Cantidad | Estado |",
         "|----------|---------:|--------|",
         f"| Tablas (ABM funcional) | {s['tablas']} | ✅ generado |",
+        f"| · de ellas, enriquecidas con IA | {s.get('enriquecidas', 0)} | ✨ etiquetas, obligatorios y reglas |",
         f"| Menús (navegación) | {len(meta['menus'])} | ✅ generado |",
         f"| Reportes (vista/consulta) | {s['reportes']} | ✅ generado |",
-        f"| Formularios originales | {s['formularios']} | 🟡 listados (lógica en 2ª etapa) |",
+        f"| Formularios originales | {s['formularios']} | 🟡 listados |",
         "",
         "## Tablas → ABM",
         "",
     ]
     for t in meta["tablas"]:
-        out.append(f"- **{t['name']}** ({len(t['campos'])} campos, {t['registros']} reg.) → `/#/abm/{t['key']}`")
+        mark = " ✨ IA" if t.get("enriquecido") else ""
+        reglas = f", {len(t['reglas'])} reglas" if t.get("reglas") else ""
+        out.append(f"- **{t['name']}** ({len(t['campos'])} campos, {t['registros']} reg.{reglas}) → `/#/abm/{t['key']}`{mark}")
     out += ["", "## Reportes"]
     for r in meta["reportes"]:
         dest = f"tabla `{r['tabla']}`" if r["tabla"] else "sin tabla asociada"
@@ -339,10 +381,13 @@ async function viewAbm(key) {
   let form = `<form class="abm" onsubmit="return saveRow('${key}')">`;
   form += `<input type="hidden" id="f_id">`;
   fields.forEach(f => {
+    const req = (f.requerido && f.input !== 'checkbox') ? 'required' : '';
+    const tip = f.ayuda ? `title="${esc(f.ayuda).replace(/"/g,'&quot;')}"` : '';
+    const star = f.requerido ? ' *' : '';
     const ctl = f.input === 'textarea'
-      ? `<textarea id="f_${f.name}"></textarea>`
-      : `<input id="f_${f.name}" type="${f.input}">`;
-    form += `<label>${esc(f.label || f.name)}${ctl}</label>`;
+      ? `<textarea id="f_${f.name}" ${req} ${tip}></textarea>`
+      : `<input id="f_${f.name}" type="${f.input}" ${req} ${tip}>`;
+    form += `<label>${esc(f.label || f.name)}${star}${ctl}</label>`;
   });
   form += `<div class="full"><button type="submit">Guardar</button>
            <button type="button" class="sec" onclick="clearForm()">Limpiar</button></div></form>`;
@@ -350,8 +395,16 @@ async function viewAbm(key) {
   let body = rows.map(r => '<tr>' + fields.map(f => `<td>${esc(r[f.name])}</td>`).join('') +
     `<td><button class="sec" onclick='editRow(${JSON.stringify(r)})'>✎</button>
      <button class="del" onclick="delRow('${key}',${r.id})">🗑</button></td></tr>`).join('');
-  $('#main').innerHTML = `<h2>${esc(t.name)} <span class="muted">(${rows.length} registros)</span></h2>${form}
+  $('#main').innerHTML = `<h2>${esc(t.titulo || t.name)} <span class="muted">(${rows.length} registros)</span></h2>
+    ${t.descripcion ? `<p class="muted" style="margin-bottom:10px">${esc(t.descripcion)}</p>` : ''}
+    ${reglasHtml(t)}${form}
     <table><thead>${head}</thead><tbody>${body || ''}</tbody></table>`;
+}
+
+function reglasHtml(t) {
+  if (!t.reglas || !t.reglas.length) return '';
+  return `<div class="card"><b>📋 Reglas de negocio (del sistema original)</b>
+    <ul style="margin:6px 0 0 18px">` + t.reglas.map(r => `<li>${esc(r)}</li>`).join('') + `</ul></div>`;
 }
 
 function clearForm(){document.querySelectorAll('form.abm [id^=f_]').forEach(e=>{e.value='';});}
@@ -400,8 +453,9 @@ def build_app_scaffold(payload):
     """payload = {inventory, title}. Devuelve los bytes del ZIP de la app."""
     inventory = payload.get("inventory") or {}
     title = (payload.get("title") or inventory.get("nombre") or "App migrada").strip()
+    enrich = payload.get("enrich") or {}
 
-    meta, tables_sql = build_meta(inventory, title)
+    meta, tables_sql = build_meta(inventory, title, enrich)
 
     app_py = (APP_PY
               .replace("__TABLES__", json.dumps(tables_sql, ensure_ascii=False))

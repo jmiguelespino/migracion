@@ -275,6 +275,7 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
     <div class="sb-bot">
       <button class="ban" id="ban" onclick="analyzeSystem()" disabled>⚡ Analizar sistema (por fases)</button>
       <button class="ban" id="bapp" onclick="generateFullApp()" disabled style="margin-top:8px;background:var(--teal)">📦 Generar app completa</button>
+      <button class="ban" id="bappai" onclick="generateEnrichedApp()" disabled style="margin-top:8px;background:var(--coral)">✨ App completa + IA</button>
       <div class="hint" id="hint">Completá la API key y subí un ZIP</div>
     </div>
 
@@ -429,6 +430,9 @@ function checkReady() {
   // La app completa (cobertura total) es determinística: solo necesita el ZIP.
   const ba = document.getElementById('bapp');
   if (ba) ba.disabled = !hf;
+  // La app + IA necesita además un motor listo (Claude o Ollama).
+  const bai = document.getElementById('bappai');
+  if (bai) bai.disabled = !(hf && ok && S.engine !== 'demo');
   h.textContent = msg;
 }
 
@@ -457,6 +461,68 @@ async function generateFullApp() {
   } catch (e) {
     showView(S.phases && S.phases.length ? 'a' : 'w');
     showErr('No se pudo generar la app completa: ' + e.message);
+  }
+}
+
+// 2ª ETAPA: enriquece cada pantalla con IA (etiquetas, obligatorios, ayuda y
+// reglas de negocio del .prg) y la hornea en el scaffold. Llamadas por tabla,
+// chicas y acotadas; si una falla, esa pantalla queda con el scaffold base.
+function _norm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
+function _slugKey(s){ return String(s||'').replace(/[^a-zA-Z0-9_]/g,'_').replace(/_+/g,'_').replace(/^_|_$/g,'').toLowerCase() || 'tabla'; }
+
+function controlsForTable(name){
+  const fd=(S.zipInfo&&S.zipInfo.forms_detail)||[]; const n=_norm(name);
+  const f=fd.find(x=>{const xn=_norm(x.name);return xn&&(xn.includes(n)||n.includes(xn));});
+  if(!f) return '';
+  return 'Controles del formulario original: '+Object.entries(f.controles||{}).map(([k,v])=>`${v} ${k}`).join(', ')+'\n';
+}
+function codeForTable(name){
+  const sm=(S.zipInfo&&S.zipInfo.samples)||[]; const n=_norm(name);
+  const s=sm.find(x=>{const xn=_norm(x.name);return xn&&(xn.includes(n)||n.includes(xn));});
+  if(!s) return '';
+  return 'Código fuente relacionado (.prg), extraé de acá las reglas de negocio:\n'+String(s.content||'').slice(0,1200)+'\n';
+}
+function buildEnrichPrompt(t){
+  const fields=(t.fields||[]).map(f=>`${f.name} ${f.type}(${f.len})`).join(', ');
+  return `Sos experto en migración de sistemas legacy (${S.sourceLang} → ${S.targetLang}).
+Tabla "${t.name}" del sistema. Campos reales: ${fields}
+${controlsForTable(t.name)}${codeForTable(t.name)}
+Devolvé SOLO JSON válido, sin backticks ni texto extra:
+{"titulo":"Nombre legible de la pantalla","descripcion":"1-2 frases de qué hace","campos":[{"name":"<campo real exacto>","label":"Etiqueta legible","requerido":true,"ayuda":"texto breve"}],"reglas":["regla de negocio 1","regla 2"]}
+Usá EXACTAMENTE los nombres de campo reales en "name". Si no hay reglas claras, devolvé "reglas":[].`;
+}
+
+async function generateEnrichedApp(){
+  if(!S.file){ showErr('Subí un ZIP primero.'); return; }
+  if(S.engine==='demo'){ showErr('El enriquecimiento con IA necesita el motor Claude o Gratis (Ollama).'); return; }
+  hideErr(); hideWarn(); showView('l');
+  document.getElementById('ttl').textContent='App completa + IA';
+  try{
+    if(!S.zipInfo){ setLoad('Leyendo el ZIP...',''); S.zipInfo=await readZip(); }
+    const tables=(S.zipInfo.tables||[]);
+    const cap=Math.min(tables.length, 12);   // acotado: el resto queda con scaffold base
+    const enrich={}; let okc=0;
+    for(let i=0;i<cap;i++){
+      const t=tables[i];
+      setLoad(`Enriqueciendo con IA (${i+1}/${cap})...`, `Pantalla: ${t.name} — en CPU puede tardar`);
+      try{
+        const spec=await callModel(buildEnrichPrompt(t), 1500);
+        if(spec && Array.isArray(spec.campos)){ enrich[_slugKey(t.name)]=spec; okc++; }
+      }catch(_){ /* esa tabla queda con el scaffold base */ }
+    }
+    setLoad('Armando la app...', 'Integrando el enriquecimiento en el scaffold');
+    const title=(S.systemInfo&&S.systemInfo.nombre)||S.file.name.replace(/\.zip$/i,'')||'App migrada';
+    const payload={ inventory:Object.assign({nombre:title},S.zipInfo), enrich, title, filename:'app-migrada.zip' };
+    const r=await fetch('/api/scaffold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
+    if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error?.message||('HTTP '+r.status)); }
+    const blob=await r.blob();
+    const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='app-migrada.zip';
+    document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1500);
+    showView(S.phases&&S.phases.length?'a':'w');
+    showWarn(`✅ App descargada con ${okc}/${cap} pantallas enriquecidas por IA (etiquetas, obligatorios y reglas de negocio) sobre cobertura total. Mirá COBERTURA.md.`);
+  }catch(e){
+    showView(S.phases&&S.phases.length?'a':'w');
+    showErr('No se pudo generar la app con IA: '+e.message);
   }
 }
 
