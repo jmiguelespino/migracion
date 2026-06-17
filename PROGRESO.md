@@ -84,7 +84,9 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       estructuradas (`min`/`max`/`rango`/`regex`), se sanean (anti-inyección) y
       el backend generado las aplica (422). Se muestran en el panel de cada
       pantalla. Las reglas de texto libre siguen como informativas.
-- [ ] Enriquecer **todas** las tablas (hoy tope 12) y/o on-demand por pantalla.
+- [x] **Enriquecer todas las tablas** (se quitó el tope de 12): prioriza las que
+      tienen señal real (formulario/`.prg`) y enriquece el resto también; tope de
+      seguridad 200. Se subió `MAX_SAMPLES` a 40 (más `.prg` para lógica).
 - [ ] Generar pantallas según el **layout real** de los controles `.scx`
       (posición/orden), no solo la lista de campos.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
