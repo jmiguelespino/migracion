@@ -76,9 +76,13 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
 
 ## 📌 Próximos pasos / pendientes
 
+- [x] **Validaciones reales en el backend generado**: derivadas del esquema
+      `.dbf` (tipos numéricos y longitud máxima) + `requerido` que aporta la IA.
+      Devuelven 422 con mensajes claros y la SPA los muestra. _Las reglas de
+      negocio de texto siguen siendo informativas (panel)._
 - [ ] Enriquecer **todas** las tablas (hoy tope 12) y/o on-demand por pantalla.
-- [ ] Aplicar las **reglas de negocio como validaciones reales** en el backend
-      generado (hoy se muestran en un panel informativo).
+- [ ] Convertir las **reglas de negocio de texto** en validaciones estructuradas
+      ejecutables (rango/regex/condiciones), no solo informativas.
 - [ ] Generar pantallas según el **layout real** de los controles `.scx`
       (posición/orden), no solo la lista de campos.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).

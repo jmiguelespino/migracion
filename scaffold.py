@@ -85,9 +85,11 @@ def build_meta(inventory, title, enrich=None):
             cn = _slug(f.get("name"))
             if not cn or cn == "id" or cn in [c[0] for c in cols]:
                 continue
-            sql, inp = DBF_SQL.get(f.get("type", "C"), ("TEXT", "text"))
-            campos.append({"name": cn, "label": f.get("name"), "type": f.get("type"),
-                           "input": inp, "requerido": False, "ayuda": ""})
+            ftype = f.get("type", "C")
+            sql, inp = DBF_SQL.get(ftype, ("TEXT", "text"))
+            maxlen = int(f.get("len") or 0) if ftype in ("C", "M", "G", "P") else 0
+            campos.append({"name": cn, "label": f.get("name"), "type": ftype,
+                           "input": inp, "requerido": False, "ayuda": "", "maxlen": maxlen})
             cols.append([cn, sql])
         if not cols:
             continue
@@ -203,6 +205,35 @@ def init_db():
 app = FastAPI(title=META.get("titulo", "App migrada"))
 init_db()
 
+# Validaciones derivadas del esquema real (.dbf) + lo que aportó la IA.
+NUMERIC = {"N", "F", "B", "Y", "I"}
+VALID = {t["key"]: {c["name"]: c for c in t["campos"]} for t in META.get("tablas", [])}
+
+
+def validate(table, data):
+    """Lista de errores de validación (vacía si todo OK)."""
+    errs = []
+    for name, c in VALID.get(table, {}).items():
+        if name not in data:
+            continue
+        val = data.get(name)
+        empty = val is None or str(val).strip() == ""
+        etq = c.get("label") or name
+        if c.get("requerido") and empty:
+            errs.append("'%s' es obligatorio" % etq)
+            continue
+        if empty:
+            continue
+        if c.get("type") in NUMERIC:
+            try:
+                float(str(val).replace(",", "."))
+            except ValueError:
+                errs.append("'%s' debe ser numérico" % etq)
+        ml = c.get("maxlen") or 0
+        if ml and isinstance(val, str) and len(val) > ml:
+            errs.append("'%s' admite hasta %d caracteres" % (etq, ml))
+    return errs
+
 
 @app.get("/api/_meta")
 def meta():
@@ -224,6 +255,9 @@ async def create_row(table: str, req: Request):
     if table not in TABLES:
         raise HTTPException(404)
     data = await req.json()
+    errs = validate(table, data)
+    if errs:
+        raise HTTPException(422, "; ".join(errs))
     cols = [cn for cn, _ in TABLES[table]]
     use = [c for c in cols if c in data]
     if not use:
@@ -244,6 +278,9 @@ async def update_row(table: str, rid: int, req: Request):
     if table not in TABLES:
         raise HTTPException(404)
     data = await req.json()
+    errs = validate(table, data)
+    if errs:
+        raise HTTPException(422, "; ".join(errs))
     cols = [cn for cn, _ in TABLES[table]]
     use = [c for c in cols if c in data]
     if not use:
@@ -416,7 +453,12 @@ async function saveRow(key) {
   t.campos.forEach(f => { const e = document.getElementById('f_' + f.name); if (e) data[f.name] = e.value; });
   const id = document.getElementById('f_id').value;
   const url = id ? `/api/t/${key}/${id}` : `/api/t/${key}`;
-  await fetch(url, { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  const r = await fetch(url, { method: id ? 'PUT' : 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  if (!r.ok) {
+    const e = await r.json().catch(() => ({}));
+    alert('No se pudo guardar:\n' + (e.detail || ('Error ' + r.status)));
+    return false;
+  }
   viewAbm(key);
   return false;
 }
