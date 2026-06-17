@@ -38,8 +38,13 @@ Para el modo gratuito necesitás [Ollama](https://ollama.com) instalado y un
 modelo descargado:
 
 ```bash
-ollama pull qwen2.5-coder   # recomendado para generar código
+ollama pull qwen2.5-coder:1.5b   # liviano y rápido en CPU (recomendado)
+# ollama pull qwen2.5-coder       # 7B: más calidad, pero lento sin GPU
 ```
+
+> En PC sin GPU usá el modelo **1.5b**: el 7B puede tardar tanto que la
+> generación supere el timeout. La app lista los modelos instalados y prefiere
+> uno de código automáticamente.
 
 El servidor detecta los modelos locales automáticamente (`GET /api/ollama/models`).
 Podés cambiar la URL o el modelo por defecto con las variables de entorno

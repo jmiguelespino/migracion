@@ -27,7 +27,11 @@ PORT = 8080
 # Modo gratuito (sin API key): usa un modelo local vía Ollama (https://ollama.com).
 # No requiere clave ni gasta tokens; corre 100% en la máquina del usuario.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
-OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder")
+# Por defecto un modelo de código LIVIANO: rápido en CPU (sin GPU). Para más
+# calidad y si tenés recursos, usá OLLAMA_MODEL=qwen2.5-coder (7B) o mayor.
+OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:1.5b")
+# Tope de tokens a generar en Ollama: evita que una fase tarde "infinito" en CPU.
+OLLAMA_MAX_PREDICT = int(os.environ.get("OLLAMA_MAX_PREDICT", "6000"))
 
 # Límites para no saturar el prompt (ni la memoria) con sistemas enormes.
 MAX_TABLES = 60          # cuántas tablas .dbf describir con su estructura
@@ -471,12 +475,20 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 num_predict = int(payload.get("num_predict") or 4000)
             except Exception:
                 num_predict = 4000
+            # Tope los tokens a generar: en CPU, pedir 16000 tarda muchísimo.
+            num_predict = min(num_predict, OLLAMA_MAX_PREDICT)
             req_body = json.dumps({
                 "model": model,
                 "prompt": prompt,
                 "stream": False,
-                # temperatura baja: queremos JSON/código determinista, no creatividad.
-                "options": {"num_predict": num_predict, "temperature": 0.2},
+                "options": {
+                    "num_predict": num_predict,
+                    # temperatura baja: queremos JSON/código determinista.
+                    "temperature": 0.2,
+                    # contexto amplio: el prompt incluye tablas/código del ZIP y
+                    # con el default (2-4k) se truncaría y el modelo perdería datos.
+                    "num_ctx": 8192,
+                },
             }).encode("utf-8")
             req = urllib.request.Request(
                 OLLAMA_URL + "/api/generate",
