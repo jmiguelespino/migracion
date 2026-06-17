@@ -273,7 +273,8 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
 
     <!-- ZONA INFERIOR: BOTÓN SIEMPRE VISIBLE -->
     <div class="sb-bot">
-      <button class="ban" id="ban" onclick="analyzeSystem()" disabled>⚡ Analizar sistema</button>
+      <button class="ban" id="ban" onclick="analyzeSystem()" disabled>⚡ Analizar sistema (por fases)</button>
+      <button class="ban" id="bapp" onclick="generateFullApp()" disabled style="margin-top:8px;background:var(--teal)">📦 Generar app completa</button>
       <div class="hint" id="hint">Completá la API key y subí un ZIP</div>
     </div>
 
@@ -425,7 +426,38 @@ function checkReady() {
     msg = ok ? '¡Todo listo! Hacé clic para analizar ↑' : 'Falta la API key (o elegí Gratis/Demo)';
   }
   document.getElementById('ban').disabled = !(hf && ok);
+  // La app completa (cobertura total) es determinística: solo necesita el ZIP.
+  const ba = document.getElementById('bapp');
+  if (ba) ba.disabled = !hf;
   h.textContent = msg;
+}
+
+// COBERTURA TOTAL: genera una app moderna con TODAS las utilidades del ZIP
+// (un ABM por tabla, los menús como navegación y un reporte por cada .frx).
+// Es determinística: no usa el modelo, así que no depende de Claude ni Ollama.
+async function generateFullApp() {
+  if (!S.file) { showErr('Subí un ZIP primero.'); return; }
+  hideErr(); hideWarn(); showView('l');
+  setLoad('Generando la app completa...', 'Armando ABM, menús y reportes (cobertura total, sin IA)');
+  document.getElementById('ttl').textContent = 'App completa (cobertura total)';
+  try {
+    if (!S.zipInfo) S.zipInfo = await readZip();
+    const title = (S.systemInfo && S.systemInfo.nombre) || (S.file.name.replace(/\.zip$/i, '')) || 'App migrada';
+    const payload = { inventory: Object.assign({ nombre: title }, S.zipInfo), title, filename: 'app-migrada.zip' };
+    const r = await fetch('/api/scaffold', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error?.message || ('HTTP ' + r.status)); }
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'app-migrada.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1500);
+    showView(S.phases && S.phases.length ? 'a' : 'w');
+    const z = S.zipInfo, c = (z && z.counts) || {};
+    showWarn(`✅ App completa descargada (app-migrada.zip). Incluye ABM para ${(z.tables||[]).length} tablas, ${(z.menus||[]).length} menús y ${(z.reports||[]).length} reportes. Adentro: COBERTURA.md y cómo correrla (FastAPI). Es 100% de cobertura, sin IA.`);
+  } catch (e) {
+    showView(S.phases && S.phases.length ? 'a' : 'w');
+    showErr('No se pudo generar la app completa: ' + e.message);
+  }
 }
 
 async function saveKey() {

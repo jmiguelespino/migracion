@@ -21,6 +21,8 @@ import urllib.error
 import urllib.request
 import zipfile
 
+import scaffold  # generador determinístico de la app migrada (cobertura total)
+
 API_KEY = ""  # Se configura desde el navegador
 PORT = 8080
 
@@ -217,6 +219,85 @@ def parse_scx_controls(scx, sct):
     return {"counts": counts, "controls": controls, "total": sum(counts.values())}
 
 
+def _clean_prompt(s):
+    """Limpia un PROMPT de menú VFP: saca el marcador de atajo \\< y espacios."""
+    return s.replace("\\<", "").replace("\\", "").strip()
+
+
+def parse_mpr_menu(text):
+    """Extrae la estructura de menú de un .mpr (código generado por VFP).
+
+    Devuelve [{"titulo": <pad>, "items": [{"texto":..,"accion":..}, ...]}].
+    Reconstruye los PAD (menú superior), su POPUP asociado y los BAR (ítems).
+    """
+    import re
+    pads = re.findall(r'DEFINE\s+PAD\s+(\w+)\s+OF\s+\w+\s+PROMPT\s+"([^"]*)"', text, re.I)
+    pad_prompt = {name: _clean_prompt(p) for name, p in pads}
+    # PAD -> POPUP
+    pad_popup = {}
+    for pad, popup in re.findall(r'ON\s+PAD\s+(\w+)\s+OF\s+\w+\s+ACTIVATE\s+POPUP\s+(\w+)', text, re.I):
+        pad_popup[pad] = popup
+    # BARs por popup: DEFINE BAR <num> OF <popup> PROMPT "<texto>"
+    bars = {}
+    for num, popup, prompt in re.findall(r'DEFINE\s+BAR\s+(\d+)\s+OF\s+(\w+)\s+PROMPT\s+"([^"]*)"', text, re.I):
+        bars.setdefault(popup, []).append((int(num), _clean_prompt(prompt)))
+    # acción de cada BAR (DO form / DO prog)
+    bar_action = {}
+    for num, popup, action in re.findall(r'ON\s+SELECTION\s+BAR\s+(\d+)\s+OF\s+(\w+)\s+(.+)', text, re.I):
+        bar_action[(popup, int(num))] = action.strip().splitlines()[0][:120]
+
+    menus = []
+    used_popups = set()
+    for pad, _ in pads:
+        popup = pad_popup.get(pad)
+        items = []
+        for num, prompt in sorted(bars.get(popup, [])):
+            if prompt:
+                items.append({"texto": prompt, "accion": bar_action.get((popup, num), "")})
+        used_popups.add(popup)
+        menus.append({"titulo": pad_prompt.get(pad, pad), "items": items})
+    # popups sueltos (submenús no colgados de un PAD)
+    for popup, items in bars.items():
+        if popup in used_popups:
+            continue
+        its = [{"texto": p, "accion": bar_action.get((popup, n), "")} for n, p in sorted(items) if p]
+        if its:
+            menus.append({"titulo": popup, "items": its})
+    return menus
+
+
+def parse_mnx_menu(head_and_body):
+    """Fallback: extrae los PROMPT de un .mnx (es una tabla DBF) como lista plana."""
+    struct = parse_dbf_structure(head_and_body[:32 + 32 * 64])
+    if not struct:
+        return []
+    # Buscamos el campo "prompt" y leemos su columna en cada registro.
+    try:
+        header_len = int.from_bytes(head_and_body[8:10], "little")
+        rec_len = int.from_bytes(head_and_body[10:12], "little")
+    except Exception:
+        return []
+    offset, length = None, 0
+    pos = 1
+    for f in struct["fields"]:
+        if f["name"].lower() == "prompt":
+            offset, length = pos, f["len"]
+            break
+        pos += f["len"]
+    if offset is None:
+        return []
+    items, n = [], int.from_bytes(head_and_body[4:8], "little")
+    for r in range(min(n, 300)):
+        start = header_len + r * rec_len + offset
+        raw = head_and_body[start:start + length]
+        if len(raw) < length:
+            break
+        txt = _clean_prompt(raw.decode("latin-1", "replace").replace("\x00", ""))
+        if txt:
+            items.append({"texto": txt, "accion": ""})
+    return [{"titulo": "Menú", "items": items}] if items else []
+
+
 def analyze_zip(raw_bytes):
     """Lee el ZIP en memoria y devuelve un resumen real del sistema legacy."""
     zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
@@ -230,6 +311,8 @@ def analyze_zip(raw_bytes):
     seen_tables = set()  # evita tablas .dbf duplicadas (mismo nombre en varias carpetas)
     forms_detail = []    # controles reales de los formularios .scx
     samples = []
+    menus = []           # estructura de menús (.mpr / .mnx)
+    mnx_pending = []     # .mnx a parsear solo si no hubo .mpr
 
     # Ordenamos para que el muestreo sea estable entre ejecuciones.
     for name in sorted(names):
@@ -286,6 +369,19 @@ def analyze_zip(raw_bytes):
             except Exception:
                 pass
 
+        # Menús: .mpr es código generado (texto) y se parsea mejor que el .mnx.
+        if ext == ".mpr":
+            try:
+                with zf.open(name) as fp:
+                    txt = fp.read(400000).decode("latin-1", "replace")
+                for m in parse_mpr_menu(txt):
+                    if m.get("items"):
+                        menus.append(m)
+            except Exception:
+                pass
+        elif ext == ".mnx":
+            mnx_pending.append(name)
+
         # Muestras de código fuente real (programas pequeños).
         if ext in (".prg", ".cbl", ".cob") and len(samples) < MAX_SAMPLES:
             try:
@@ -300,6 +396,16 @@ def analyze_zip(raw_bytes):
             except Exception:
                 pass
 
+    # Si no hubo menús .mpr, intentamos con los .mnx (DBF) como fallback plano.
+    if not menus and mnx_pending:
+        for name in mnx_pending[:5]:
+            try:
+                with zf.open(name) as fp:
+                    body = fp.read(200000)
+                menus.extend(parse_mnx_menu(body))
+            except Exception:
+                pass
+
     return {
         "total_files": len(names),
         "size_mb": round(len(raw_bytes) / 1024 / 1024, 1),
@@ -311,6 +417,7 @@ def analyze_zip(raw_bytes):
         "reports": reports,
         "programs": sorted(set(programs))[:MAX_NAME_LIST],
         "samples": samples,
+        "menus": menus,
     }
 
 
@@ -490,6 +597,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_json(500, {"error": {"message": f"Error al armar el ZIP: {e}"}})
                 return
             fname = safe_name(payload.get("filename"), "fase.zip")
+            self.send_response(200)
+            self.send_cors()
+            self.send_header("Content-Type", "application/zip")
+            self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+            return
+
+        if self.path == "/api/scaffold":
+            # Cobertura total: arma una app completa (FastAPI + SPA) que expone
+            # TODAS las utilidades del ZIP. Determinístico, sin IA.
+            try:
+                payload = json.loads(self.read_body() or b"{}")
+            except Exception:
+                self.send_json(400, {"error": {"message": "JSON inválido"}})
+                return
+            try:
+                data, meta = scaffold.build_app_scaffold(payload)
+            except Exception as e:
+                self.send_json(500, {"error": {"message": f"Error al generar la app: {e}"}})
+                return
+            print(f"  ✓ App generada: {meta['stats']['tablas']} ABM, "
+                  f"{len(meta['menus'])} menús, {meta['stats']['reportes']} reportes")
+            fname = safe_name(payload.get("filename"), "app-migrada.zip")
             self.send_response(200)
             self.send_cors()
             self.send_header("Content-Type", "application/zip")
