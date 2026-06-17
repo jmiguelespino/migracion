@@ -38,6 +38,47 @@ def _norm(s):
     return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
 
 
+def _sanitize_validaciones(items, field_names):
+    """Valida/limpia las reglas ejecutables que propone la IA. Solo deja ops
+    conocidas, campos reales y valores con el tipo correcto (anti-inyección)."""
+    OPS = {"min", "max", "rango", "regex"}
+    out = []
+    for v in items or []:
+        if not isinstance(v, dict):
+            continue
+        campo = _slug(v.get("campo"))
+        op = str(v.get("op", "")).lower().strip()
+        if campo not in field_names or op not in OPS:
+            continue
+        rule = {"campo": campo, "op": op, "mensaje": str(v.get("mensaje") or "")[:200]}
+        val = v.get("valor")
+        if op in ("min", "max"):
+            try:
+                rule["valor"] = float(val)
+            except (TypeError, ValueError):
+                continue
+        elif op == "rango":
+            if not (isinstance(val, (list, tuple)) and len(val) == 2):
+                continue
+            try:
+                rule["valor"] = [float(val[0]), float(val[1])]
+            except (TypeError, ValueError):
+                continue
+        elif op == "regex":
+            pat = str(val or "")[:200]
+            try:
+                re.compile(pat)
+            except re.error:
+                continue
+            if not pat:
+                continue
+            rule["valor"] = pat
+        out.append(rule)
+        if len(out) >= 30:
+            break
+    return out
+
+
 def _apply_enrich(tabla, spec):
     """Fusiona el JSON de enriquecimiento de la IA sobre una tabla (in place)."""
     if not isinstance(spec, dict):
@@ -49,6 +90,9 @@ def _apply_enrich(tabla, spec):
     reglas = spec.get("reglas")
     if isinstance(reglas, list):
         tabla["reglas"] = [str(r)[:300] for r in reglas if r][:20]
+    # Reglas EJECUTABLES (min/max/rango/regex) — saneadas.
+    field_names = {c["name"] for c in tabla["campos"]}
+    tabla["validaciones"] = _sanitize_validaciones(spec.get("validaciones"), field_names)
     # Mapa por nombre de campo (normalizado) -> mejoras.
     by_name = {}
     for c in (spec.get("campos") or []):
@@ -96,7 +140,7 @@ def build_meta(inventory, title, enrich=None):
         tables_sql[key] = cols
         tabla = {
             "key": key, "name": t.get("name"), "registros": t.get("records", 0),
-            "titulo": t.get("name"), "descripcion": "", "reglas": [],
+            "titulo": t.get("name"), "descripcion": "", "reglas": [], "validaciones": [],
             "enriquecido": False, "campos": campos,
         }
         _apply_enrich(tabla, enrich.get(key))
@@ -175,7 +219,7 @@ Correr:
     uvicorn backend.app:app --reload    (desde la carpeta del proyecto)
 Abrir: http://localhost:8000
 """
-import json, os, sqlite3
+import json, os, re, sqlite3
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 
@@ -208,12 +252,15 @@ init_db()
 # Validaciones derivadas del esquema real (.dbf) + lo que aportó la IA.
 NUMERIC = {"N", "F", "B", "Y", "I"}
 VALID = {t["key"]: {c["name"]: c for c in t["campos"]} for t in META.get("tablas", [])}
+VALRULES = {t["key"]: t.get("validaciones", []) for t in META.get("tablas", [])}
 
 
 def validate(table, data):
     """Lista de errores de validación (vacía si todo OK)."""
     errs = []
-    for name, c in VALID.get(table, {}).items():
+    campos = VALID.get(table, {})
+    # 1) Validaciones del esquema real (.dbf) + 'requerido' de la IA.
+    for name, c in campos.items():
         if name not in data:
             continue
         val = data.get(name)
@@ -232,6 +279,31 @@ def validate(table, data):
         ml = c.get("maxlen") or 0
         if ml and isinstance(val, str) and len(val) > ml:
             errs.append("'%s' admite hasta %d caracteres" % (etq, ml))
+    # 2) Reglas de negocio EJECUTABLES (min/max/rango/regex) de la IA.
+    for rule in VALRULES.get(table, []):
+        name = rule.get("campo")
+        if name not in data:
+            continue
+        val = data.get(name)
+        if val is None or str(val).strip() == "":
+            continue
+        etq = (campos.get(name) or {}).get("label") or name
+        op, ref = rule.get("op"), rule.get("valor")
+        msg = rule.get("mensaje")
+        try:
+            if op in ("min", "max", "rango"):
+                num = float(str(val).replace(",", "."))
+                if op == "min" and num < ref:
+                    errs.append(msg or "'%s' debe ser >= %s" % (etq, ref))
+                elif op == "max" and num > ref:
+                    errs.append(msg or "'%s' debe ser <= %s" % (etq, ref))
+                elif op == "rango" and (num < ref[0] or num > ref[1]):
+                    errs.append(msg or "'%s' debe estar entre %s y %s" % (etq, ref[0], ref[1]))
+            elif op == "regex":
+                if not re.search(ref, str(val)):
+                    errs.append(msg or "'%s' tiene un formato inválido" % etq)
+        except (ValueError, re.error):
+            pass
     return errs
 
 
@@ -439,9 +511,13 @@ async function viewAbm(key) {
 }
 
 function reglasHtml(t) {
-  if (!t.reglas || !t.reglas.length) return '';
-  return `<div class="card"><b>📋 Reglas de negocio (del sistema original)</b>
-    <ul style="margin:6px 0 0 18px">` + t.reglas.map(r => `<li>${esc(r)}</li>`).join('') + `</ul></div>`;
+  const r = t.reglas || [], v = t.validaciones || [];
+  if (!r.length && !v.length) return '';
+  let h = `<div class="card"><b>📋 Reglas de negocio (del sistema original)</b>`;
+  if (r.length) h += `<ul style="margin:6px 0 0 18px">` + r.map(x => `<li>${esc(x)}</li>`).join('') + `</ul>`;
+  if (v.length) h += `<div class="muted" style="margin-top:6px">⚙️ Validaciones activas: ` +
+    v.map(x => esc(x.campo + ' ' + x.op + (x.valor !== undefined ? ' ' + JSON.stringify(x.valor) : ''))).join(' · ') + `</div>`;
+  return h + `</div>`;
 }
 
 function clearForm(){document.querySelectorAll('form.abm [id^=f_]').forEach(e=>{e.value='';});}

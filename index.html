@@ -484,8 +484,12 @@ function buildEnrichPrompt(t){
 Tabla "${t.name}" del sistema. Campos reales: ${fields}
 ${controlsForTable(t.name)}${codeForTable(t.name)}
 Devolvé SOLO JSON válido, sin backticks ni texto extra:
-{"titulo":"Nombre legible de la pantalla","descripcion":"1-2 frases de qué hace","campos":[{"name":"<campo real exacto>","label":"Etiqueta legible","requerido":true,"ayuda":"texto breve"}],"reglas":["regla de negocio 1","regla 2"]}
-Usá EXACTAMENTE los nombres de campo reales en "name". Si no hay reglas claras, devolvé "reglas":[].`;
+{"titulo":"Nombre legible de la pantalla","descripcion":"1-2 frases de qué hace","campos":[{"name":"<campo real exacto>","label":"Etiqueta legible","requerido":true,"ayuda":"texto breve"}],"reglas":["regla de negocio en texto"],"validaciones":[{"campo":"<campo real>","op":"min|max|rango|regex","valor":0,"mensaje":"texto del error"}]}
+Reglas para "validaciones" (reglas EJECUTABLES, derivadas de la lógica del .prg):
+- op "min"/"max": "valor" numérico (ej. saldo no negativo => {"campo":"saldo","op":"min","valor":0,"mensaje":"El saldo no puede ser negativo"}).
+- op "rango": "valor" es [minimo,maximo].
+- op "regex": "valor" es un patrón (ej. email, código).
+Usá EXACTAMENTE los nombres de campo reales en "name"/"campo". Si no hay reglas claras devolvé "reglas":[] y "validaciones":[].`;
 }
 
 async function generateEnrichedApp(){
