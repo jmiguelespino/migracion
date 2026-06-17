@@ -80,9 +80,11 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       `.dbf` (tipos numéricos y longitud máxima) + `requerido` que aporta la IA.
       Devuelven 422 con mensajes claros y la SPA los muestra. _Las reglas de
       negocio de texto siguen siendo informativas (panel)._
+- [x] **Reglas de negocio ejecutables**: la IA devuelve validaciones
+      estructuradas (`min`/`max`/`rango`/`regex`), se sanean (anti-inyección) y
+      el backend generado las aplica (422). Se muestran en el panel de cada
+      pantalla. Las reglas de texto libre siguen como informativas.
 - [ ] Enriquecer **todas** las tablas (hoy tope 12) y/o on-demand por pantalla.
-- [ ] Convertir las **reglas de negocio de texto** en validaciones estructuradas
-      ejecutables (rango/regex/condiciones), no solo informativas.
 - [ ] Generar pantallas según el **layout real** de los controles `.scx`
       (posición/orden), no solo la lista de campos.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
