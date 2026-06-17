@@ -70,7 +70,8 @@ modelo de código liviano automáticamente:
 
 1. En GitHub: **Code → Codespaces → Create codespace on main**.
 2. Esperá a que termine la preparación inicial (instala Ollama + el modelo).
-3. En la terminal: `python servidor.py`
+3. El servidor arranca **solo** (task de VS Code al abrir la carpeta). Si no,
+   ejecutá `python servidor.py`.
 4. Abrí el puerto **8080** (se ofrece solo) y elegí el motor **🆓 Gratis**.
 
 > Los Codespaces no tienen GPU: el modo gratuito anda pero es más lento. Para el
