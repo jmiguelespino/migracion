@@ -202,7 +202,7 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
   <div><h1>LegacyMigrator</h1><div class="hdr-sub">Agente de migración de sistemas legacy</div></div>
   <div class="sp"></div>
   <span><span class="dot"></span><span style="font-size:12px;color:var(--teal);font-weight:600">Servidor local activo</span></span>
-  &nbsp;&nbsp;<span class="badge">Powered by Claude AI</span>
+  &nbsp;&nbsp;<span class="badge">Claude · Ollama (gratis) · Demo</span>
 </header>
 
 <div class="app">
@@ -212,7 +212,7 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
     <div class="sb-top">
 
       <!-- API KEY -->
-      <div class="sblk">
+      <div class="sblk" id="keyblk">
         <span class="sblbl">🔑 API Key de Anthropic</span>
         <div class="apirow">
           <input type="password" id="akey" placeholder="sk-ant-...">
@@ -240,7 +240,7 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
       <div class="sblk">
         <span class="sblbl">Configuración</span>
         <div style="font-size:11px;color:var(--text3);margin-bottom:5px">Lenguaje origen</div>
-        <div class="lrow">
+        <div class="lrow" id="langrow">
           <button class="lb active" onclick="setLang(this,'Visual FoxPro')">VFP</button>
           <button class="lb" onclick="setLang(this,'FoxPro')">Fox</button>
           <button class="lb" onclick="setLang(this,'COBOL')">COBOL</button>
@@ -253,9 +253,17 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
           <option value="C# + .NET + Blazor">C# + .NET + Blazor</option>
           <option value="Java + Spring Boot">Java + Spring Boot</option>
         </select>
-        <label style="display:flex;align-items:center;gap:6px;margin-top:10px;font-size:12px;cursor:pointer;color:var(--text2)">
-          <input type="checkbox" id="demo" onchange="S.demo=this.checked;checkReady()"> 🧪 Modo demo (sin API key · sin tokens)
-        </label>
+        <div style="font-size:11px;color:var(--text3);margin:10px 0 5px">Motor de IA</div>
+        <div class="lrow" id="enginerow">
+          <button class="lb active" onclick="setEngine(this,'claude')">Claude</button>
+          <button class="lb" onclick="setEngine(this,'free')">🆓 Gratis</button>
+          <button class="lb" onclick="setEngine(this,'demo')">🧪 Demo</button>
+        </div>
+        <div id="freebox" style="display:none">
+          <div style="font-size:11px;color:var(--text3);margin-bottom:5px">Modelo local (Ollama · sin API key)</div>
+          <select id="ollamaModel" onchange="S.ollamaModel=this.value;checkReady();saveState()"></select>
+          <div class="amsg" id="ollamamsg" style="margin-top:5px"></div>
+        </div>
       </div>
 
       <!-- FASES (aparecen después del análisis) -->
@@ -288,7 +296,7 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
           <h2>Migrador de sistemas legacy</h2>
           <p>Subí tu sistema VFP, COBOL o FoxPro y el agente lo analiza, genera un plan por fases y escribe el código moderno listo para usar.</p>
           <div class="steps">
-            <div class="sc"><div class="sn">1</div><div class="st">API Key</div><div class="sd">Pegá tu clave de Anthropic y hacé clic en OK</div></div>
+            <div class="sc"><div class="sn">1</div><div class="st">Elegí motor</div><div class="sd">Claude (API key), Gratis (Ollama local) o Demo</div></div>
             <div class="sc"><div class="sn">2</div><div class="st">Subir ZIP</div><div class="sd">El sistema completo con todo el código fuente</div></div>
             <div class="sc"><div class="sn">3</div><div class="st">Analizar</div><div class="sd">El agente lee el ZIP y sugiere fases reales</div></div>
             <div class="sc"><div class="sn">4</div><div class="st">Generar y descargar</div><div class="sd">Cada fase con código, tests e interfaz</div></div>
@@ -319,7 +327,8 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
 </div>
 
 <script>
-const S = { apiKey:'', file:null, demo:false, sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null, phases:[], currentPhase:null, currentPhaseData:null, completedPhases:[], generatedFiles:{} };
+const S = { apiKey:'', file:null, engine:'claude', demo:false, ollamaModel:'', sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null, phases:[], currentPhase:null, currentPhaseData:null, completedPhases:[], generatedFiles:{} };
+let ollamaAvailable = false;
 
 // --- PERSISTENCIA DEL PROYECTO (localStorage) ---
 // No guardamos la API key (seguridad) ni el File. Sí el análisis y las fases,
@@ -328,7 +337,7 @@ const LS_KEY = 'lm_proyecto';
 function saveState() {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify({
-      sourceLang:S.sourceLang, targetLang:S.targetLang, demo:S.demo,
+      sourceLang:S.sourceLang, targetLang:S.targetLang, engine:S.engine, demo:S.demo, ollamaModel:S.ollamaModel,
       zipInfo:S.zipInfo, systemInfo:S.systemInfo, phases:S.phases, completedPhases:S.completedPhases
     }));
   } catch(e) { /* cuota llena u otro: se ignora */ }
@@ -337,8 +346,10 @@ function loadState() {
   try {
     const d = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
     if (!d || !d.systemInfo || !(d.phases||[]).length) return false;
+    const engine = d.engine || (d.demo ? 'demo' : 'claude');
     Object.assign(S, { sourceLang:d.sourceLang||S.sourceLang, targetLang:d.targetLang||S.targetLang,
-      demo:!!d.demo, zipInfo:d.zipInfo||null, systemInfo:d.systemInfo, phases:d.phases, completedPhases:d.completedPhases||[] });
+      engine, demo:engine==='demo', ollamaModel:d.ollamaModel||'',
+      zipInfo:d.zipInfo||null, systemInfo:d.systemInfo, phases:d.phases, completedPhases:d.completedPhases||[] });
     return true;
   } catch(e) { return false; }
 }
@@ -348,14 +359,73 @@ function clearState() {
   location.reload();
 }
 
+// Selección de motor de IA: Claude (API key), Gratis (Ollama local) o Demo.
+function setEngine(btn, eng) {
+  document.querySelectorAll('#enginerow .lb').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+  S.engine = eng;
+  S.demo = (eng === 'demo');
+  document.getElementById('keyblk').style.display = (eng === 'claude') ? 'block' : 'none';
+  document.getElementById('freebox').style.display = (eng === 'free') ? 'block' : 'none';
+  if (eng === 'free') loadOllamaModels();
+  checkReady(); saveState();
+}
+
+// Consulta los modelos locales instalados en Ollama y llena el desplegable.
+async function loadOllamaModels() {
+  const sel = document.getElementById('ollamaModel');
+  const msg = document.getElementById('ollamamsg');
+  msg.className = 'amsg'; msg.textContent = 'Buscando modelos locales...';
+  try {
+    const r = await fetch('/api/ollama/models');
+    const d = await r.json();
+    const models = d.models || [];
+    ollamaAvailable = !!d.available;
+    const def = d.default || 'qwen2.5-coder';
+    if (!ollamaAvailable) {
+      sel.innerHTML = `<option value="${esc(def)}">${esc(def)} (recomendado)</option>`;
+      msg.className = 'amsg err';
+      msg.innerHTML = `Ollama no está corriendo. Instalalo en <a href="https://ollama.com" target="_blank" style="color:var(--purple)">ollama.com</a>, abrilo y ejecutá <code>ollama pull ${esc(def)}</code>`;
+    } else if (!models.length) {
+      sel.innerHTML = `<option value="${esc(def)}">${esc(def)} (recomendado)</option>`;
+      msg.className = 'amsg err';
+      msg.innerHTML = `No hay modelos instalados. Ejecutá <code>ollama pull ${esc(def)}</code> (ideal para generar código).`;
+    } else {
+      sel.innerHTML = models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
+      // Preferimos un modelo orientado a código si hay uno instalado.
+      const pref = models.find(m => /coder|code|deepseek|qwen/i.test(m)) || models[0];
+      S.ollamaModel = (S.ollamaModel && models.includes(S.ollamaModel)) ? S.ollamaModel : pref;
+      sel.value = S.ollamaModel;
+      msg.className = 'amsg ok';
+      msg.textContent = `✓ ${models.length} modelo(s) local(es) disponible(s)`;
+    }
+  } catch (e) {
+    ollamaAvailable = false;
+    msg.className = 'amsg err';
+    msg.textContent = 'No se pudo consultar Ollama (¿el servidor local está corriendo?)';
+  }
+  checkReady();
+}
+
 function checkReady() {
-  const hk = S.apiKey.startsWith('sk-'), hf = !!S.file;
-  document.getElementById('ban').disabled = !(hf && (hk || S.demo));
+  const hf = !!S.file;
   const h = document.getElementById('hint');
-  if (!hf) h.textContent = 'Subí el archivo ZIP del sistema';
-  else if (S.demo) h.textContent = '🧪 Modo demo: listo para analizar (sin API)';
-  else if (!hk) h.textContent = 'Falta la API key (o activá Modo demo)';
-  else h.textContent = '¡Todo listo! Hacé clic para analizar ↑';
+  let ok = false, msg = '';
+  if (!hf) {
+    msg = 'Subí el archivo ZIP del sistema';
+  } else if (S.engine === 'demo') {
+    ok = true; msg = '🧪 Modo demo: listo para analizar (sin API)';
+  } else if (S.engine === 'free') {
+    ok = ollamaAvailable && !!S.ollamaModel;
+    msg = ollamaAvailable
+      ? (S.ollamaModel ? `🆓 Listo con ${S.ollamaModel} (local, sin tokens)` : 'Elegí un modelo local')
+      : 'Ollama no detectado: instalalo y descargá un modelo';
+  } else {
+    ok = S.apiKey.startsWith('sk-');
+    msg = ok ? '¡Todo listo! Hacé clic para analizar ↑' : 'Falta la API key (o elegí Gratis/Demo)';
+  }
+  document.getElementById('ban').disabled = !(hf && ok);
+  h.textContent = msg;
 }
 
 async function saveKey() {
@@ -394,7 +464,7 @@ function handleFile(f) {
 }
 
 function setLang(btn, lang) {
-  document.querySelectorAll('.lb').forEach(b => b.classList.remove('active'));
+  document.querySelectorAll('#langrow .lb').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   S.sourceLang = lang;
 }
@@ -520,7 +590,7 @@ Respondé SOLO con JSON válido sin backticks ni texto adicional:
 Generá entre 6 y 8 fases lógicas y ordenadas por prioridad de migración, basándote en las tablas y módulos REALES detectados arriba. En "tablas" de cada fase usá los nombres reales de las tablas .dbf. Colores disponibles: purple, teal, coral, amber.`;
 
   try {
-    const data = await callClaude(prompt, 4000);
+    const data = await callModel(prompt, 4000);
     S.systemInfo = data.sistema; S.phases = data.fases || [];
     // Preferimos los conteos REALES del ZIP sobre los que estime el modelo.
     if (S.zipInfo && S.zipInfo.counts) {
@@ -599,7 +669,7 @@ Respondé SOLO con JSON válido sin backticks ni texto adicional:
 }`;
 
   try {
-    const data = S.demo ? mockPhase(phase) : await callClaude(prompt, 16000);
+    const data = S.demo ? mockPhase(phase) : await callModel(prompt, 16000);
     S.currentPhaseData = data; S.generatedFiles[num] = data;
     if (!S.completedPhases.includes(num)) S.completedPhases.push(num);
     saveState(); renderSidebar();
@@ -722,6 +792,31 @@ function showWarn(m){const b=document.getElementById('wbox');b.textContent='ℹ�
 function hideWarn(){document.getElementById('wbox').classList.remove('show');}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
+// Enruta la generación según el motor elegido: Claude (API) u Ollama (gratis/local).
+async function callModel(prompt, maxTokens) {
+  return S.engine === 'free' ? callOllama(prompt, maxTokens) : callClaude(prompt, maxTokens);
+}
+
+// Convierte el texto del modelo en JSON, tolerando backticks, prefijos y truncado.
+function parseModelJson(text, truncated) {
+  const clean=String(text||'').replace(/```json|```/g,'').trim();
+  // 1) intento directo
+  try{ return JSON.parse(clean); }catch(_){}
+  // 2) primer bloque {...} completo
+  const m=clean.match(/\{[\s\S]*\}/);
+  if(m){ try{ return JSON.parse(m[0]); }catch(_){} }
+  // 3) si se cortó por longitud, intento reparar el JSON truncado
+  if(truncated){
+    try{
+      const obj=JSON.parse(repairTruncatedJson(m?m[0]:clean));
+      showWarn('La respuesta se cortó por longitud: la fase puede estar incompleta. Volvé a generarla para obtenerla completa.');
+      return obj;
+    }catch(_){}
+    throw new Error('La respuesta se cortó por longitud y no se pudo recuperar. Volvé a intentar.');
+  }
+  throw new Error('Respuesta inesperada del modelo. Intentá de nuevo.');
+}
+
 async function callClaude(prompt, maxTokens) {
   const r = await fetch('/api/claude', {
     method:'POST', headers:{'Content-Type':'application/json'},
@@ -734,22 +829,21 @@ async function callClaude(prompt, maxTokens) {
   }
   const data=await r.json();
   const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
-  const clean=text.replace(/```json|```/g,'').trim();
-  // 1) intento directo
-  try{ return JSON.parse(clean); }catch(_){}
-  // 2) primer bloque {...} completo
-  const m=clean.match(/\{[\s\S]*\}/);
-  if(m){ try{ return JSON.parse(m[0]); }catch(_){} }
-  // 3) si se cortó por longitud, intento reparar el JSON truncado
-  if(data.stop_reason==='max_tokens'){
-    try{
-      const obj=JSON.parse(repairTruncatedJson(clean));
-      showWarn('La respuesta se cortó por longitud: la fase puede estar incompleta. Volvé a generarla para obtenerla completa.');
-      return obj;
-    }catch(_){}
-    throw new Error('La respuesta se cortó por longitud y no se pudo recuperar. Volvé a intentar.');
+  return parseModelJson(text, data.stop_reason==='max_tokens');
+}
+
+// Modo gratuito: genera con un modelo local vía Ollama (sin API key ni tokens).
+async function callOllama(prompt, maxTokens) {
+  const r = await fetch('/api/ollama', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:S.ollamaModel||'qwen2.5-coder', prompt, num_predict:maxTokens||4000})
+  });
+  if (!r.ok) {
+    const e=await r.json().catch(()=>({}));
+    throw new Error(e.error?.message||`Error HTTP ${r.status}`);
   }
-  throw new Error('Respuesta inesperada del modelo. Intentá de nuevo.');
+  const data=await r.json();
+  return parseModelJson(data.response||'', data.done_reason==='length');
 }
 
 // Intenta cerrar un JSON truncado (string/llaves/corchetes abiertos) para
@@ -783,10 +877,16 @@ function repairTruncatedJson(s){
 (function restoreProject(){
   if (!loadState()) return;
   // reflejar la config guardada en los controles
-  const demoEl = document.getElementById('demo'); if (demoEl) demoEl.checked = S.demo;
-  const sel = document.querySelector('select'); if (sel) sel.value = S.targetLang;
+  const btns = document.querySelectorAll('#enginerow .lb');
+  const idx = { claude:0, free:1, demo:2 }[S.engine] ?? 0;
+  btns.forEach(b => b.classList.remove('active'));
+  if (btns[idx]) btns[idx].classList.add('active');
+  document.getElementById('keyblk').style.display = (S.engine === 'claude') ? 'block' : 'none';
+  document.getElementById('freebox').style.display = (S.engine === 'free') ? 'block' : 'none';
+  if (S.engine === 'free') loadOllamaModels();
+  const techSel = document.querySelector('.sblk select'); if (techSel) techSel.value = S.targetLang;
   const map = {'Visual FoxPro':'VFP','FoxPro':'Fox','COBOL':'COBOL'};
-  document.querySelectorAll('.lb').forEach(b => b.classList.toggle('active', b.textContent === map[S.sourceLang]));
+  document.querySelectorAll('#langrow .lb').forEach(b => b.classList.toggle('active', b.textContent === map[S.sourceLang]));
   renderAnalysis(); renderSidebar(); showView('a');
   document.getElementById('ttl').textContent = 'Análisis del sistema';
   showWarn('Proyecto anterior restaurado. Para volver a analizar desde cero, subí el ZIP otra vez o tocá "Nuevo proyecto".');

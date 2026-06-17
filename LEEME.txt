@@ -5,8 +5,12 @@
 REQUISITOS
 ──────────
 • Python 3 (ya viene instalado en Windows 10/11, macOS y Linux)
-• Conexión a internet
-• Una API key de Anthropic (console.anthropic.com)
+• Según el motor de IA que elijas:
+  - Claude .......... API key de Anthropic (console.anthropic.com) + internet
+  - 🆓 Gratis ....... Ollama instalado (ollama.com) + un modelo descargado.
+                      NO necesita API key, internet ni tokens: corre local.
+                      Recomendado:  ollama pull qwen2.5-coder
+  - 🧪 Demo ......... nada (solo simula la salida para probar el flujo)
 
 
 CÓMO INICIAR
@@ -26,7 +30,10 @@ macOS / Linux:
 
 CÓMO USAR EL AGENTE
 ────────────────────
-1. Pegá tu API key de Anthropic y hacé clic en OK
+1. Elegí el motor de IA en "Motor de IA":
+   • Claude  → pegá tu API key de Anthropic y hacé clic en OK
+   • Gratis  → elegí el modelo local (necesitás Ollama corriendo)
+   • Demo    → no requiere nada
 2. Subí el ZIP con el sistema legacy
 3. Elegí el lenguaje origen y la tecnología destino
 4. Hacé clic en "Analizar sistema"
@@ -56,7 +63,13 @@ SOPORTE
 Si aparece error de conexión:
 • Verificá que la ventana del servidor esté abierta
 • Verificá que la URL sea http://localhost:8080
-• Verificá tu API key en console.anthropic.com
+• Verificá tu API key en console.anthropic.com (motor Claude)
+
+Modo gratuito (Ollama):
+• Instalá Ollama desde https://ollama.com y abrilo (debe quedar corriendo)
+• Descargá un modelo de código:  ollama pull qwen2.5-coder
+• La lista de modelos aparece sola en la barra lateral al elegir "Gratis"
+• Los modelos locales pueden tardar más que Claude según tu PC
 
 Si una fase "se corta por longitud": volvé a intentar. El agente
 ahora usa max_tokens alto, pero fases muy grandes pueden requerir

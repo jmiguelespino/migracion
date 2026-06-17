@@ -24,6 +24,11 @@ import zipfile
 API_KEY = ""  # Se configura desde el navegador
 PORT = 8080
 
+# Modo gratuito (sin API key): usa un modelo local vía Ollama (https://ollama.com).
+# No requiere clave ni gasta tokens; corre 100% en la máquina del usuario.
+OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
+OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder")
+
 # Límites para no saturar el prompt (ni la memoria) con sistemas enormes.
 MAX_TABLES = 60          # cuántas tablas .dbf describir con su estructura
 MAX_FIELDS_PER_TABLE = 60
@@ -373,6 +378,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             self.serve_file("index.html", "text/html; charset=utf-8")
+        elif self.path == "/api/ollama/models":
+            # Lista los modelos locales instalados en Ollama (para el modo gratuito).
+            # Si Ollama no está corriendo, devuelve available=False sin romper la UI.
+            try:
+                req = urllib.request.Request(OLLAMA_URL + "/api/tags", method="GET")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    data = json.loads(resp.read() or b"{}")
+                models = [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+                self.send_json(200, {"available": True, "models": models,
+                                     "default": OLLAMA_DEFAULT_MODEL})
+            except Exception:
+                self.send_json(200, {"available": False, "models": [],
+                                     "default": OLLAMA_DEFAULT_MODEL})
         else:
             self.send_response(404)
             self.end_headers()
@@ -428,6 +446,62 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+            return
+
+        if self.path == "/api/ollama":
+            # Modo gratuito: genera con un modelo local vía Ollama (sin API key).
+            try:
+                payload = json.loads(self.read_body() or b"{}")
+            except Exception:
+                self.send_json(400, {"error": {"message": "JSON inválido"}})
+                return
+            model = (payload.get("model") or OLLAMA_DEFAULT_MODEL).strip()
+            prompt = payload.get("prompt") or ""
+            try:
+                num_predict = int(payload.get("num_predict") or 4000)
+            except Exception:
+                num_predict = 4000
+            req_body = json.dumps({
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+                # temperatura baja: queremos JSON/código determinista, no creatividad.
+                "options": {"num_predict": num_predict, "temperature": 0.2},
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                OLLAMA_URL + "/api/generate",
+                data=req_body,
+                headers={"Content-Type": "application/json"},
+                method="POST",
+            )
+            try:
+                # Los modelos locales pueden ser lentos: damos margen amplio.
+                with urllib.request.urlopen(req, timeout=600) as resp:
+                    data = resp.read()
+                print(f"  ✓ Respuesta de Ollama ({model})")
+                self.send_response(200)
+                self.send_cors()
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
+            except urllib.error.HTTPError as e:
+                msg = ""
+                try:
+                    msg = json.loads(e.read() or b"{}").get("error", "")
+                except Exception:
+                    pass
+                if "not found" in str(msg).lower() or e.code == 404:
+                    msg = (f"El modelo '{model}' no está instalado. "
+                           f"Ejecutá:  ollama pull {model}")
+                self.send_json(e.code, {"error": {"message": msg or f"Error de Ollama (HTTP {e.code})"}})
+            except urllib.error.URLError:
+                self.send_json(503, {"error": {"message":
+                    f"No se pudo conectar con Ollama en {OLLAMA_URL}. "
+                    f"Instalalo desde https://ollama.com, abrilo y ejecutá:  "
+                    f"ollama pull {model}"}})
+            except Exception as e:
+                self.send_json(500, {"error": {"message": str(e)}})
             return
 
         if self.path == "/api/claude":
