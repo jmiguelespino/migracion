@@ -202,7 +202,7 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
   <div><h1>LegacyMigrator</h1><div class="hdr-sub">Agente de migración de sistemas legacy</div></div>
   <div class="sp"></div>
   <span><span class="dot"></span><span style="font-size:12px;color:var(--teal);font-weight:600">Servidor local activo</span></span>
-  &nbsp;&nbsp;<span class="badge">Claude · Ollama (gratis) · Demo</span>
+  &nbsp;&nbsp;<span class="badge">Claude · Ollama (gratis)</span>
 </header>
 
 <div class="app">
@@ -257,7 +257,6 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
         <div class="lrow" id="enginerow">
           <button class="lb active" onclick="setEngine(this,'claude')">Claude</button>
           <button class="lb" onclick="setEngine(this,'free')">🆓 Gratis</button>
-          <button class="lb" onclick="setEngine(this,'demo')">🧪 Demo</button>
         </div>
         <div id="freebox" style="display:none">
           <div style="font-size:11px;color:var(--text3);margin-bottom:5px">Modelo local (Ollama · sin API key)</div>
@@ -298,7 +297,7 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
           <h2>Migrador de sistemas legacy</h2>
           <p>Subí tu sistema VFP, COBOL o FoxPro y el agente lo analiza, genera un plan por fases y escribe el código moderno listo para usar.</p>
           <div class="steps">
-            <div class="sc"><div class="sn">1</div><div class="st">Elegí motor</div><div class="sd">Claude (API key), Gratis (Ollama local) o Demo</div></div>
+            <div class="sc"><div class="sn">1</div><div class="st">Elegí motor</div><div class="sd">Claude (API key) o Gratis (Ollama local)</div></div>
             <div class="sc"><div class="sn">2</div><div class="st">Subir ZIP</div><div class="sd">El sistema completo con todo el código fuente</div></div>
             <div class="sc"><div class="sn">3</div><div class="st">Analizar</div><div class="sd">El agente lee el ZIP y sugiere fases reales</div></div>
             <div class="sc"><div class="sn">4</div><div class="st">Generar y descargar</div><div class="sd">Cada fase con código, tests e interfaz</div></div>
@@ -329,7 +328,7 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
 </div>
 
 <script>
-const S = { apiKey:'', file:null, engine:'claude', demo:false, ollamaModel:'', sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null, phases:[], currentPhase:null, currentPhaseData:null, completedPhases:[], generatedFiles:{} };
+const S = { apiKey:'', file:null, engine:'claude', ollamaModel:'', sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null, phases:[], currentPhase:null, currentPhaseData:null, completedPhases:[], generatedFiles:{} };
 let ollamaAvailable = false;
 
 // --- PERSISTENCIA DEL PROYECTO (localStorage) ---
@@ -339,7 +338,7 @@ const LS_KEY = 'lm_proyecto';
 function saveState() {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify({
-      sourceLang:S.sourceLang, targetLang:S.targetLang, engine:S.engine, demo:S.demo, ollamaModel:S.ollamaModel,
+      sourceLang:S.sourceLang, targetLang:S.targetLang, engine:S.engine, ollamaModel:S.ollamaModel,
       zipInfo:S.zipInfo, systemInfo:S.systemInfo, phases:S.phases, completedPhases:S.completedPhases
     }));
   } catch(e) { /* cuota llena u otro: se ignora */ }
@@ -348,9 +347,9 @@ function loadState() {
   try {
     const d = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
     if (!d || !d.systemInfo || !(d.phases||[]).length) return false;
-    const engine = d.engine || (d.demo ? 'demo' : 'claude');
+    const engine = (d.engine === 'free') ? 'free' : 'claude';   // 'demo' (obsoleto) -> claude
     Object.assign(S, { sourceLang:d.sourceLang||S.sourceLang, targetLang:d.targetLang||S.targetLang,
-      engine, demo:engine==='demo', ollamaModel:d.ollamaModel||'',
+      engine, ollamaModel:d.ollamaModel||'',
       zipInfo:d.zipInfo||null, systemInfo:d.systemInfo, phases:d.phases, completedPhases:d.completedPhases||[] });
     return true;
   } catch(e) { return false; }
@@ -361,12 +360,11 @@ function clearState() {
   location.reload();
 }
 
-// Selección de motor de IA: Claude (API key), Gratis (Ollama local) o Demo.
+// Selección de motor de IA: Claude (API key) o Gratis (Ollama local).
 function setEngine(btn, eng) {
   document.querySelectorAll('#enginerow .lb').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   S.engine = eng;
-  S.demo = (eng === 'demo');
   document.getElementById('keyblk').style.display = (eng === 'claude') ? 'block' : 'none';
   document.getElementById('freebox').style.display = (eng === 'free') ? 'block' : 'none';
   if (eng === 'free') loadOllamaModels();
@@ -415,8 +413,6 @@ function checkReady() {
   let ok = false, msg = '';
   if (!hf) {
     msg = 'Subí el archivo ZIP del sistema';
-  } else if (S.engine === 'demo') {
-    ok = true; msg = '🧪 Modo demo: listo para analizar (sin API)';
   } else if (S.engine === 'free') {
     ok = ollamaAvailable && !!S.ollamaModel;
     msg = ollamaAvailable
@@ -424,7 +420,7 @@ function checkReady() {
       : 'Ollama no detectado: instalalo y descargá un modelo';
   } else {
     ok = S.apiKey.startsWith('sk-');
-    msg = ok ? '¡Todo listo! Hacé clic para analizar ↑' : 'Falta la API key (o elegí Gratis/Demo)';
+    msg = ok ? '¡Todo listo! Hacé clic para analizar ↑' : 'Falta la API key (o elegí Gratis)';
   }
   document.getElementById('ban').disabled = !(hf && ok);
   // La app completa (cobertura total) es determinística: solo necesita el ZIP.
@@ -432,7 +428,7 @@ function checkReady() {
   if (ba) ba.disabled = !hf;
   // La app + IA necesita además un motor listo (Claude o Ollama).
   const bai = document.getElementById('bappai');
-  if (bai) bai.disabled = !(hf && ok && S.engine !== 'demo');
+  if (bai) bai.disabled = !(hf && ok);
   h.textContent = msg;
 }
 
@@ -494,7 +490,6 @@ Usá EXACTAMENTE los nombres de campo reales en "name". Si no hay reglas claras,
 
 async function generateEnrichedApp(){
   if(!S.file){ showErr('Subí un ZIP primero.'); return; }
-  if(S.engine==='demo'){ showErr('El enriquecimiento con IA necesita el motor Claude o Gratis (Ollama).'); return; }
   hideErr(); hideWarn(); showView('l');
   document.getElementById('ttl').textContent='App completa + IA';
   try{
@@ -669,13 +664,6 @@ async function analyzeSystem() {
 
   setLoad('Analizando el sistema legacy...', 'Identificando módulos y generando plan de migración');
 
-  if (S.demo) {            // modo demo: sin llamar a Claude
-    mockAnalysis();
-    renderAnalysis(); renderSidebar(); showView('a'); saveState();
-    showWarn('Modo demo activo: análisis simulado (los conteos son reales del ZIP). No se gastaron tokens.');
-    return;
-  }
-
   const real = zipSummary(S.zipInfo);
   const prompt = `Sos un experto en migración de sistemas legacy. El usuario tiene un sistema ${S.sourceLang} llamado "${S.file.name}" que quiere migrar a ${S.targetLang}.
 
@@ -770,7 +758,7 @@ Respondé SOLO con JSON válido sin backticks ni texto adicional:
 }`;
 
   try {
-    const data = S.demo ? mockPhase(phase) : await callModel(prompt, 16000);
+    const data = await callModel(prompt, 16000);
     S.currentPhaseData = data; S.generatedFiles[num] = data;
     if (!S.completedPhases.includes(num)) S.completedPhases.push(num);
     saveState(); renderSidebar();
@@ -812,50 +800,6 @@ function nextPhase() {
 }
 
 function slug(s){return String(s||'fase').trim().replace(/\s+/g,'-').toLowerCase().replace(/[^a-z0-9\-]/g,'')||'fase';}
-
-// ---- MODO DEMO: datos simulados, sin llamar a Claude (no gasta tokens) ----
-function cap(s){s=String(s||'');return s.charAt(0).toUpperCase()+s.slice(1).toLowerCase();}
-function pyType(t){return ({C:'str',M:'str',N:'float',F:'float',B:'float',Y:'float',I:'int',D:'date',T:'datetime',L:'bool'})[t]||'str';}
-
-function mockAnalysis(){
-  const c=(S.zipInfo&&S.zipInfo.counts)||{};
-  const names=((S.zipInfo&&S.zipInfo.tables)||[]).map(t=>t.name);
-  S.systemInfo={ nombre:(S.file?S.file.name.replace(/\.zip$/i,''):'Sistema demo'),
-    descripcion:'(Modo demo) Análisis simulado sin llamar a Claude. Los conteos provienen del ZIP real.',
-    pantallas:c.forms||0, tablas:c.tables||0, reportes:c.reports||0, complejidad:'Alta' };
-  const g=[
-    {t:'Login y autenticación',i:'🔐',c:'purple',m:['Login','Usuarios','Grupos','Permisos']},
-    {t:'Tratamiento de archivos',i:'🗂️',c:'teal',m:['Empresas','Depósitos','Tablas generales']},
-    {t:'Producción',i:'🏭',c:'coral',m:['Recetas','Menúes','Plan maestro']},
-    {t:'Compras',i:'🛒',c:'amber',m:['Proveedores','Órdenes de compra']},
-    {t:'Administración',i:'📊',c:'purple',m:['Clientes','Facturación']},
-  ];
-  const forms=((S.zipInfo&&S.zipInfo.forms)||[]);
-  S.phases=g.map((x,i)=>({numero:i+1,titulo:x.t,icono:x.i,color:x.c,
-    descripcion:'(Demo) Migración del módulo '+x.t,modulos:x.m,
-    pantallas_legacy:forms.slice(i*3,i*3+3),
-    tablas:names.slice(i*3,i*3+3),dias_estimados:3+i,prioridad:i<2?'Alta':'Media'}));
-}
-
-function mockPhase(ph){
-  const seen=new Set();
-  const tabs=((S.zipInfo&&S.zipInfo.tables)||[]).filter(t=>(ph.tablas||[]).some(w=>String(w).toLowerCase()===t.name.toLowerCase())).filter(t=>{const k=t.name.toLowerCase();if(seen.has(k))return false;seen.add(k);return true;});
-  const model=tabs.map(t=>`class ${cap(t.name)}(BaseModel):\n`+((t.fields||[]).map(f=>`    ${f.name.toLowerCase()}: ${pyType(f.type)}`).join('\n')||'    pass')).join('\n\n')||'# (sin tablas reales asociadas)';
-  const fd=((S.zipInfo&&S.zipInfo.forms_detail)||[]).filter(f=>(ph.pantallas_legacy||[]).some(p=>String(p).toLowerCase().replace(/\.\w+$/,'')===f.name.toLowerCase()));
-  const ui=fd.length
-    ? '(Demo) Interfaz basada en los controles reales de las pantallas:\n'+fd.slice(0,4).map(f=>`• ${f.name}: `+Object.entries(f.controles||{}).map(([k,v])=>`${v} ${k}`).join(', ')).join('\n')
-    : '(Demo) Interfaz web simulada para esta fase.';
-  return {
-    explicacion:`(Modo demo) Código de ejemplo para la fase "${ph.titulo}", generado localmente sin llamar a Claude ni gastar tokens. Los modelos reflejan las tablas reales del ZIP.`,
-    archivos:[
-      {nombre:'models.py',tipo:'python',descripcion:'Modelos (demo, desde tablas reales)',codigo:'from pydantic import BaseModel\nfrom datetime import date, datetime\n\n'+model},
-      {nombre:'api.py',tipo:'python',descripcion:'Endpoints (demo)',codigo:'from fastapi import FastAPI\napp = FastAPI()\n\n@app.get("/health")\ndef health():\n    return {"ok": True}\n'},
-    ],
-    tests:'def test_demo():\n    assert True\n',
-    interfaz_descripcion:ui,
-    instrucciones:'pip install fastapi uvicorn pydantic\nuvicorn api:app --reload'
-  };
-}
 
 async function downloadPhase() {
   if (!S.currentPhaseData||!S.currentPhase) return;
@@ -979,7 +923,7 @@ function repairTruncatedJson(s){
   if (!loadState()) return;
   // reflejar la config guardada en los controles
   const btns = document.querySelectorAll('#enginerow .lb');
-  const idx = { claude:0, free:1, demo:2 }[S.engine] ?? 0;
+  const idx = { claude:0, free:1 }[S.engine] ?? 0;
   btns.forEach(b => b.classList.remove('active'));
   if (btns[idx]) btns[idx].classList.add('active');
   document.getElementById('keyblk').style.display = (S.engine === 'claude') ? 'block' : 'none';
