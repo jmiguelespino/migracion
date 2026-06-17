@@ -63,6 +63,21 @@ python servidor.py
 # luego abrir http://localhost:8080
 ```
 
+### En GitHub Codespaces (en el navegador)
+
+El repo incluye un `.devcontainer` que instala Ollama, lo arranca y descarga un
+modelo de código liviano automáticamente:
+
+1. En GitHub: **Code → Codespaces → Create codespace on main**.
+2. Esperá a que termine la preparación inicial (instala Ollama + el modelo).
+3. En la terminal: `python servidor.py`
+4. Abrí el puerto **8080** (se ofrece solo) y elegí el motor **🆓 Gratis**.
+
+> Los Codespaces no tienen GPU: el modo gratuito anda pero es más lento. Para el
+> motor **Claude** solo pegás tu API key. **GitHub Pages no sirve** porque la app
+> necesita el backend `servidor.py`.
+
+
 Requisitos: Python 3 y, según el motor elegido, una API key de Anthropic
 (<https://console.anthropic.com>) **o** [Ollama](https://ollama.com) con un
 modelo de código instalado (modo gratuito, sin clave). El modo demo no
