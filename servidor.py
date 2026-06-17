@@ -31,7 +31,21 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # calidad y si tenés recursos, usá OLLAMA_MODEL=qwen2.5-coder (7B) o mayor.
 OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:1.5b")
 # Tope de tokens a generar en Ollama: evita que una fase tarde "infinito" en CPU.
-OLLAMA_MAX_PREDICT = int(os.environ.get("OLLAMA_MAX_PREDICT", "6000"))
+# 4000 es un equilibrio razonable para CPUs modestas (sin GPU).
+OLLAMA_MAX_PREDICT = int(os.environ.get("OLLAMA_MAX_PREDICT", "4000"))
+# Tiempo máximo de espera de una respuesta de Ollama (segundos).
+OLLAMA_TIMEOUT = int(os.environ.get("OLLAMA_TIMEOUT", "900"))
+
+
+def _ollama_timeout_msg(model):
+    """Mensaje claro y accionable cuando una generación de Ollama no termina."""
+    return (
+        f"El modelo local '{model}' no terminó a tiempo (timeout de {OLLAMA_TIMEOUT} s). "
+        f"El análisis y las fases chicas suelen andar; las fases grandes son las "
+        f"que más tardan en CPU. Probá: (1) reintentá la fase; (2) generá con "
+        f"menos tokens iniciando el server con OLLAMA_MAX_PREDICT=3000; "
+        f"(3) usá un modelo aún más chico:  ollama pull qwen2.5-coder:0.5b"
+    )
 
 # --- Rendimiento del modo gratuito --------------------------------------------
 # Ollama ya usa por defecto todos los núcleos físicos y, si hay GPU, tantas capas
@@ -530,7 +544,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             )
             try:
                 # Los modelos locales pueden ser lentos: damos margen amplio.
-                with urllib.request.urlopen(req, timeout=600) as resp:
+                with urllib.request.urlopen(req, timeout=OLLAMA_TIMEOUT) as resp:
                     data = resp.read()
                 print(f"  ✓ Respuesta de Ollama ({model})")
                 self.send_response(200)
@@ -550,17 +564,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
                            f"Ejecutá:  ollama pull {model}")
                 self.send_json(e.code, {"error": {"message": msg or f"Error de Ollama (HTTP {e.code})"}})
             except TimeoutError:
-                self.send_json(504, {"error": {"message":
-                    f"El modelo local '{model}' tardó demasiado (más de 600 s). "
-                    f"Probá un modelo más liviano y rápido, p. ej.:  "
-                    f"ollama pull qwen2.5-coder:1.5b  (y elegilo en la lista). "
-                    f"En PC sin GPU los modelos grandes pueden ser muy lentos."}})
+                self.send_json(504, {"error": {"message": _ollama_timeout_msg(model)}})
             except urllib.error.URLError as e:
                 # Un timeout de lectura puede llegar envuelto en URLError.
                 if isinstance(getattr(e, "reason", None), TimeoutError):
-                    self.send_json(504, {"error": {"message":
-                        f"El modelo local '{model}' tardó demasiado. Probá uno más "
-                        f"liviano:  ollama pull qwen2.5-coder:1.5b"}})
+                    self.send_json(504, {"error": {"message": _ollama_timeout_msg(model)}})
                 else:
                     self.send_json(503, {"error": {"message":
                         f"No se pudo conectar con Ollama en {OLLAMA_URL}. "
