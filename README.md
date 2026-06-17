@@ -50,6 +50,32 @@ El servidor detecta los modelos locales automáticamente (`GET /api/ollama/model
 Podés cambiar la URL o el modelo por defecto con las variables de entorno
 `OLLAMA_URL` y `OLLAMA_MODEL`.
 
+#### Rendimiento (usar todos los recursos)
+
+Ollama **ya usa por defecto** todos los núcleos físicos de la CPU y, si hay GPU,
+descarga en ella tantas capas como entren en la VRAM. Encima de eso:
+
+- Los lanzadores (`iniciar.sh`, `INICIAR.bat`) arrancan `ollama serve` con
+  `OLLAMA_FLASH_ATTENTION=1`, `OLLAMA_NUM_PARALLEL=1`, `OLLAMA_MAX_LOADED_MODELS=1`
+  y `OLLAMA_KEEP_ALIVE=30m` (más rápido, todo dedicado a una petición y modelo
+  siempre caliente).
+- `servidor.py` manda `keep_alive` y un `num_ctx` amplio en cada petición, y
+  acepta overrides finos por entorno:
+
+  | Variable | Efecto |
+  |----------|--------|
+  | `OLLAMA_NUM_GPU` | capas a la GPU (`999` = todas) |
+  | `OLLAMA_NUM_THREAD` | hilos de CPU (def.: núcleos físicos) |
+  | `OLLAMA_NUM_BATCH` | tamaño de lote (p. ej. `1024`: procesa el prompt más rápido) |
+  | `OLLAMA_NUM_CTX` | ventana de contexto (def. `8192`) |
+  | `OLLAMA_MAX_PREDICT` | tope de tokens a generar (def. `6000`) |
+  | `OLLAMA_KEEP_ALIVE` | cuánto mantener el modelo cargado (def. `30m`) |
+
+> En **Windows**, si Ollama ya corre como app de bandeja, los ajustes de servidor
+> (`OLLAMA_FLASH_ATTENTION`, etc.) no le aplican: definilos como variables de
+> entorno del usuario (`setx OLLAMA_FLASH_ATTENTION 1`) y reiniciá Ollama. Los
+> overrides por petición de `servidor.py` sí funcionan siempre.
+
 ### Endpoints del servidor
 
 - `GET  /` → sirve `index.html`

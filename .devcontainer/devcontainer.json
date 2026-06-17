@@ -11,8 +11,8 @@
 
   // Al crear el Codespace: instala Ollama y descarga un modelo de código liviano.
   "postCreateCommand": "bash .devcontainer/setup.sh",
-  // En cada arranque: asegura que el servidor de Ollama esté corriendo.
-  "postStartCommand": "pgrep -x ollama >/dev/null || (nohup ollama serve > /tmp/ollama.log 2>&1 &)",
+  // En cada arranque: asegura que el servidor de Ollama esté corriendo (con la config de rendimiento).
+  "postStartCommand": "pgrep -x ollama >/dev/null || (OLLAMA_FLASH_ATTENTION=1 OLLAMA_NUM_PARALLEL=1 OLLAMA_MAX_LOADED_MODELS=1 OLLAMA_KEEP_ALIVE=30m nohup ollama serve > /tmp/ollama.log 2>&1 &)",
 
   "customizations": {
     "vscode": {
