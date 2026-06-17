@@ -498,15 +498,18 @@ async function generateEnrichedApp(){
   document.getElementById('ttl').textContent='App completa + IA';
   try{
     if(!S.zipInfo){ setLoad('Leyendo el ZIP...',''); S.zipInfo=await readZip(); }
-    const tables=(S.zipInfo.tables||[]);
-    const cap=Math.min(tables.length, 12);   // acotado: el resto queda con scaffold base
+    const all=(S.zipInfo.tables||[]);
+    // Prioridad: primero las tablas con SEÑAL real (formulario o código .prg),
+    // que son las que el modelo puede enriquecer mejor; después el resto.
+    const sig=t=>!!(controlsForTable(t.name)||codeForTable(t.name));
+    const list=all.filter(sig).concat(all.filter(t=>!sig(t))).slice(0,200);
     const enrich={}; let okc=0;
-    for(let i=0;i<cap;i++){
-      const t=tables[i];
-      setLoad(`Enriqueciendo con IA (${i+1}/${cap})...`, `Pantalla: ${t.name} — en CPU puede tardar`);
+    for(let i=0;i<list.length;i++){
+      const t=list[i];
+      setLoad(`Enriqueciendo con IA (${i+1}/${list.length})...`, `Pantalla: ${t.name} — en CPU puede tardar`);
       try{
-        const spec=await callModel(buildEnrichPrompt(t), 1500);
-        if(spec && Array.isArray(spec.campos)){ enrich[_slugKey(t.name)]=spec; okc++; }
+        const spec=await callModel(buildEnrichPrompt(t), 1200);
+        if(spec && (Array.isArray(spec.campos)||Array.isArray(spec.validaciones))){ enrich[_slugKey(t.name)]=spec; okc++; }
       }catch(_){ /* esa tabla queda con el scaffold base */ }
     }
     setLoad('Armando la app...', 'Integrando el enriquecimiento en el scaffold');
@@ -518,7 +521,7 @@ async function generateEnrichedApp(){
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='app-migrada.zip';
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1500);
     showView(S.phases&&S.phases.length?'a':'w');
-    showWarn(`✅ App descargada con ${okc}/${cap} pantallas enriquecidas por IA (etiquetas, obligatorios y reglas de negocio) sobre cobertura total. Mirá COBERTURA.md.`);
+    showWarn(`✅ App descargada: ${okc} de ${all.length} pantallas enriquecidas por IA (etiquetas, obligatorios y reglas de negocio ejecutables) sobre cobertura total. El resto usa el scaffold + validaciones de esquema. Mirá COBERTURA.md.`);
   }catch(e){
     showView(S.phases&&S.phases.length?'a':'w');
     showErr('No se pudo generar la app con IA: '+e.message);

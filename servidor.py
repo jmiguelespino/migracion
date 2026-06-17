@@ -76,7 +76,7 @@ OLLAMA_NUM_BATCH = _int_env("OLLAMA_NUM_BATCH")    # p. ej. 1024: procesa el pro
 MAX_TABLES = 60          # cuántas tablas .dbf describir con su estructura
 MAX_FIELDS_PER_TABLE = 60
 MAX_NAME_LIST = 80       # cuántos nombres de forms/reportes listar
-MAX_SAMPLES = 8          # cuántos .prg pequeños incluir como muestra de código
+MAX_SAMPLES = 40         # cuántos .prg pequeños incluir como muestra de código
 MAX_SAMPLE_BYTES = 6000  # tamaño máximo de cada muestra de código
 MAX_FORMS_PARSED = 50    # cuántos formularios .scx analizar (controles)
 
