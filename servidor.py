@@ -33,6 +33,29 @@ OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:1.5b")
 # Tope de tokens a generar en Ollama: evita que una fase tarde "infinito" en CPU.
 OLLAMA_MAX_PREDICT = int(os.environ.get("OLLAMA_MAX_PREDICT", "6000"))
 
+# --- Rendimiento del modo gratuito --------------------------------------------
+# Ollama ya usa por defecto todos los núcleos físicos y, si hay GPU, tantas capas
+# como entren en la VRAM. Estas variables permiten exprimir aún más los recursos.
+OLLAMA_NUM_CTX = int(os.environ.get("OLLAMA_NUM_CTX", "8192"))
+# Mantiene el modelo cargado en memoria entre peticiones (evita recargarlo cada
+# vez, que es lo más lento). "-1" = para siempre mientras el server viva.
+OLLAMA_KEEP_ALIVE = os.environ.get("OLLAMA_KEEP_ALIVE", "30m")
+
+
+def _int_env(name):
+    """Lee una variable de entorno como int, o None si no está/!es válida."""
+    val = os.environ.get(name)
+    try:
+        return int(val) if val not in (None, "") else None
+    except ValueError:
+        return None
+
+
+# Overrides opcionales (None = dejar que Ollama elija el óptimo):
+OLLAMA_NUM_GPU = _int_env("OLLAMA_NUM_GPU")        # 999 = forzar TODAS las capas a la GPU
+OLLAMA_NUM_THREAD = _int_env("OLLAMA_NUM_THREAD")  # nº de hilos de CPU (def: núcleos físicos)
+OLLAMA_NUM_BATCH = _int_env("OLLAMA_NUM_BATCH")    # p. ej. 1024: procesa el prompt más rápido
+
 # Límites para no saturar el prompt (ni la memoria) con sistemas enormes.
 MAX_TABLES = 60          # cuántas tablas .dbf describir con su estructura
 MAX_FIELDS_PER_TABLE = 60
@@ -477,18 +500,27 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 num_predict = 4000
             # Tope los tokens a generar: en CPU, pedir 16000 tarda muchísimo.
             num_predict = min(num_predict, OLLAMA_MAX_PREDICT)
+            options = {
+                "num_predict": num_predict,
+                # temperatura baja: queremos JSON/código determinista.
+                "temperature": 0.2,
+                # contexto amplio: el prompt incluye tablas/código del ZIP y
+                # con el default (2-4k) se truncaría y el modelo perdería datos.
+                "num_ctx": OLLAMA_NUM_CTX,
+            }
+            # Exprimir recursos: GPU/threads/batch (si se configuraron por entorno).
+            if OLLAMA_NUM_GPU is not None:
+                options["num_gpu"] = OLLAMA_NUM_GPU
+            if OLLAMA_NUM_THREAD is not None:
+                options["num_thread"] = OLLAMA_NUM_THREAD
+            if OLLAMA_NUM_BATCH is not None:
+                options["num_batch"] = OLLAMA_NUM_BATCH
             req_body = json.dumps({
                 "model": model,
                 "prompt": prompt,
                 "stream": False,
-                "options": {
-                    "num_predict": num_predict,
-                    # temperatura baja: queremos JSON/código determinista.
-                    "temperature": 0.2,
-                    # contexto amplio: el prompt incluye tablas/código del ZIP y
-                    # con el default (2-4k) se truncaría y el modelo perdería datos.
-                    "num_ctx": 8192,
-                },
+                "keep_alive": OLLAMA_KEEP_ALIVE,  # mantener el modelo caliente
+                "options": options,
             }).encode("utf-8")
             req = urllib.request.Request(
                 OLLAMA_URL + "/api/generate",

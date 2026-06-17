@@ -7,7 +7,14 @@ if ! command -v ollama >/dev/null 2>&1; then
   curl -fsSL https://ollama.com/install.sh | sh
 fi
 
-echo "==> Arrancando el servidor de Ollama..."
+echo "==> Arrancando el servidor de Ollama (config de rendimiento)..."
+# Rendimiento: flash-attention (más rápido y menos memoria), una sola sesión
+# en paralelo para dedicarle todos los recursos a la petición, un solo modelo
+# cargado y mantenerlo caliente. Ollama ya usa todos los núcleos físicos + GPU.
+export OLLAMA_FLASH_ATTENTION=1
+export OLLAMA_NUM_PARALLEL=1
+export OLLAMA_MAX_LOADED_MODELS=1
+export OLLAMA_KEEP_ALIVE=30m
 nohup ollama serve > /tmp/ollama.log 2>&1 &
 
 echo "==> Esperando a que Ollama responda..."
