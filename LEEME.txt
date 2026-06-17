@@ -9,7 +9,10 @@ REQUISITOS
   - Claude .......... API key de Anthropic (console.anthropic.com) + internet
   - 🆓 Gratis ....... Ollama instalado (ollama.com) + un modelo descargado.
                       NO necesita API key, internet ni tokens: corre local.
-                      Recomendado:  ollama pull qwen2.5-coder
+                      Recomendado (rápido en CPU):
+                        ollama pull qwen2.5-coder:1.5b
+                      Más calidad pero lento sin GPU:
+                        ollama pull qwen2.5-coder
   - 🧪 Demo ......... nada (solo simula la salida para probar el flujo)
 
 
@@ -67,9 +70,12 @@ Si aparece error de conexión:
 
 Modo gratuito (Ollama):
 • Instalá Ollama desde https://ollama.com y abrilo (debe quedar corriendo)
-• Descargá un modelo de código:  ollama pull qwen2.5-coder
+• Descargá un modelo de código:  ollama pull qwen2.5-coder:1.5b
 • La lista de modelos aparece sola en la barra lateral al elegir "Gratis"
 • Los modelos locales pueden tardar más que Claude según tu PC
+• Si el análisis "se queda colgado" o da timeout: estás usando un modelo muy
+  pesado para tu CPU. Usá el 1.5b (ollama pull qwen2.5-coder:1.5b) y elegilo
+  en la lista de modelos.
 
 Si una fase "se corta por longitud": volvé a intentar. El agente
 ahora usa max_tokens alto, pero fases muy grandes pueden requerir

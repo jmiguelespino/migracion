@@ -836,7 +836,7 @@ async function callClaude(prompt, maxTokens) {
 async function callOllama(prompt, maxTokens) {
   const r = await fetch('/api/ollama', {
     method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:S.ollamaModel||'qwen2.5-coder', prompt, num_predict:maxTokens||4000})
+    body:JSON.stringify({model:S.ollamaModel||'qwen2.5-coder:1.5b', prompt, num_predict:maxTokens||4000})
   });
   if (!r.ok) {
     const e=await r.json().catch(()=>({}));
