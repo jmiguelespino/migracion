@@ -459,6 +459,103 @@ def parse_pjx(pjx_bytes, pjt_bytes):
     return {"archivos": archivos, "principal": principal, "por_tipo": por_tipo}
 
 
+def _dbc_get_prop(text, key):
+    """Extrae el valor de una propiedad del bloque PROPERTY de un objeto .dbc."""
+    m = re.search(r'(?:^|\n)\s*' + re.escape(key) + r'\s*=\s*"?([^"\r\n]*)"?', text, re.I)
+    return m.group(1).strip().strip('"') if m else ""
+
+
+def parse_dbc(dbc_bytes, dct_bytes):
+    """Lee el Database Container de VFP (.dbc + memo .dct).
+
+    Un .dbc es un DBF especial: cada registro describe un objeto de la base
+    de datos (tabla, campo, relación, vista, stored procedure, etc.).
+    Se identifica el tipo por el campo OBJECTTYPE y la jerarquía por PARENTID.
+
+    Devuelve:
+    - relaciones: [{parent_table, parent_field, child_table, child_field}]
+    - campos:     {tabla_slug: {campo_slug: {caption, defaultvalue, inputmask, ...}}}
+    - stored_procs: [{name, code}]
+    - vistas: [name]
+    """
+    rows = read_dbf_records(dbc_bytes, dct_bytes, max_records=10000)
+    if not rows:
+        return {"relaciones": [], "campos": {}, "stored_procs": [], "vistas": []}
+
+    # Índice OBJECTID → fila para resolver parentid (jerarquía tabla→campo/relación).
+    by_id = {}
+    for r in rows:
+        oid = r.get("objectid")
+        if oid is not None:
+            try:
+                by_id[int(oid)] = r
+            except (TypeError, ValueError):
+                pass
+
+    relaciones, campos_props, stored_procs, vistas = [], {}, {}, []
+    seen_rels = set()
+
+    for r in rows:
+        otype = str(r.get("objecttype") or "").strip().lower()
+        oname = str(r.get("objectname") or "").strip()
+        prop  = str(r.get("property") or "").strip()
+        code  = str(r.get("code") or "").strip()
+        try:
+            parent_id = int(r.get("parentid") or 0)
+        except (TypeError, ValueError):
+            parent_id = 0
+
+        if otype == "relation":
+            # Relación 1-N entre tablas (la tabla padre es el padre del registro).
+            pt_row = by_id.get(parent_id) if parent_id else None
+            parent_table = str(pt_row.get("objectname") or "") if pt_row else ""
+            parent_tag  = _dbc_get_prop(prop, "ParentTagName")
+            child_table = _dbc_get_prop(prop, "ChildTableName")
+            child_tag   = _dbc_get_prop(prop, "ChildTagName")
+            pt = scaffold._slug(parent_table)
+            ct = scaffold._slug(child_table)
+            pf = scaffold._slug(parent_tag)
+            cf = scaffold._slug(child_tag)
+            sig = (pt, pf, ct, cf)
+            if ct and cf and sig not in seen_rels:
+                seen_rels.add(sig)
+                relaciones.append({
+                    "parent_table": pt, "parent_field": pf,
+                    "child_table":  ct, "child_field":  cf,
+                })
+
+        elif otype == "field":
+            # Propiedades persistentes de un campo (Caption, Default, etc.).
+            pt_row = by_id.get(parent_id) if parent_id else None
+            if pt_row and str(pt_row.get("objecttype") or "").strip().lower() == "table":
+                tabla_key = scaffold._slug(str(pt_row.get("objectname") or "").strip())
+                campo_key = scaffold._slug(oname)
+                if tabla_key and campo_key:
+                    props = {}
+                    for k in ("Caption", "DefaultValue", "InputMask",
+                              "RuleExpression", "RuleText"):
+                        v = _dbc_get_prop(prop, k)
+                        if v:
+                            props[k.lower()] = v
+                    if props:
+                        campos_props.setdefault(tabla_key, {})[campo_key] = props
+
+        elif otype in ("storedprocedurecode", "storedprocedure"):
+            if oname and code:
+                stored_procs.append({"name": oname, "code": code[:3000]})
+
+        elif otype in ("view", "localview", "remoteview"):
+            if oname:
+                vistas.append(oname)
+
+    return {
+        "relaciones": relaciones,
+        "campos": campos_props,
+        "stored_procs": stored_procs[:20],
+        "vistas": vistas[:50],
+    }
+
+
 def _read_memo(sct, blocknum, blocksize):
     """Lee un campo memo de un archivo .sct/.fpt dado su número de bloque."""
     if not sct or blocknum <= 0:
@@ -667,6 +764,26 @@ def analyze_zip(raw_bytes):
         except Exception:
             project = None
 
+    # 2) Bases de datos .dbc: relaciones entre tablas, propiedades de campos,
+    #    stored procedures y vistas. Muy útil para FK constraints y etiquetas.
+    databases = []
+    for dbc_name in sorted(n for n in names if n.lower().endswith(".dbc")):
+        try:
+            dbc_bytes = zf.read(dbc_name)
+            stem = os.path.splitext(dbc_name)[0]
+            dct_real = lower_map.get(stem.lower() + ".dct")
+            dct_bytes = zf.read(dct_real) if dct_real else b""
+            db_info = parse_dbc(dbc_bytes, dct_bytes)
+            db_info["name"] = os.path.splitext(os.path.basename(dbc_name))[0]
+            databases.append(db_info)
+            if db_info["relaciones"] or db_info["stored_procs"]:
+                print(f"  .dbc: {db_info['name']} — "
+                      f"{len(db_info['relaciones'])} relaciones, "
+                      f"{len(db_info['stored_procs'])} stored procs, "
+                      f"{len(db_info['vistas'])} vistas")
+        except Exception:
+            pass
+
     by_ext = {}
     counts = {}
     forms, reports, programs = [], [], []
@@ -784,6 +901,7 @@ def analyze_zip(raw_bytes):
         "samples": samples,
         "menus": menus,
         "project": project,
+        "databases": databases,
     }
 
 
