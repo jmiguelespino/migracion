@@ -256,8 +256,12 @@ BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.path.join(BASE, "datos.db")
 WEB = os.path.join(BASE, "..", "web")
 
-TABLES = __TABLES__
-META = __META__
+# Los datos (tablas + metadata) se cargan de un JSON aparte para evitar
+# problemas de escapado (true/false/null, comillas, backslashes de regex).
+with open(os.path.join(BASE, "meta.json"), encoding="utf-8") as _f:
+    _DATA = json.load(_f)
+TABLES = _DATA["tables"]
+META = _DATA["meta"]
 
 
 def conn():
@@ -604,9 +608,8 @@ def build_app_scaffold(payload):
 
     meta, tables_sql = build_meta(inventory, title, enrich)
 
-    app_py = (APP_PY
-              .replace("__TABLES__", json.dumps(tables_sql, ensure_ascii=False))
-              .replace("__META__", json.dumps(meta, ensure_ascii=False)))
+    app_py = APP_PY
+    meta_json = json.dumps({"tables": tables_sql, "meta": meta}, ensure_ascii=False)
 
     readme = "\n".join([
         f"# {title} — app migrada",
@@ -634,6 +637,7 @@ def build_app_scaffold(payload):
 
     files = {
         "backend/app.py": app_py,
+        "backend/meta.json": meta_json,
         "backend/__init__.py": "",
         "backend/requirements.txt": "fastapi\nuvicorn\n",
         "web/index.html": INDEX_HTML,
