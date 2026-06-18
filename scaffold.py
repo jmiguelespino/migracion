@@ -243,9 +243,9 @@ def _coverage_md(meta):
 APP_PY = r'''#!/usr/bin/env python3
 """App migrada — backend FastAPI + SQLite. Generado por LegacyMigrator.
 
-Correr:
-    pip install fastapi uvicorn
-    uvicorn backend.app:app --reload    (desde la carpeta del proyecto)
+Correr (desde la carpeta del proyecto):
+    python -m pip install fastapi uvicorn
+    python -m uvicorn backend.app:app --port 8000
 Abrir: http://localhost:8000
 """
 import json, os, re, sqlite3
@@ -617,9 +617,13 @@ def build_app_scaffold(payload):
         "App moderna generada desde el sistema legacy, con **las mismas utilidades**.",
         "",
         "## Correr",
+        "",
+        "**Lo más fácil:** doble clic en `iniciar.bat` (Windows) o `bash iniciar.sh` (Mac/Linux).",
+        "",
+        "**Manual** (necesitás Python 3.10+):",
         "```bash",
-        "pip install fastapi uvicorn",
-        "uvicorn backend.app:app --reload",
+        "python -m pip install fastapi uvicorn",
+        "python -m uvicorn backend.app:app --port 8000",
         "```",
         "Abrir http://localhost:8000",
         "",
@@ -632,8 +636,38 @@ def build_app_scaffold(payload):
         "Ver `COBERTURA.md` para el detalle de qué se cubrió.",
     ])
 
-    run_sh = "#!/usr/bin/env bash\ncd \"$(dirname \"$0\")\" || exit 1\npip install fastapi uvicorn\nuvicorn backend.app:app --port 8000\n"
-    run_bat = "@echo off\r\ncd /d \"%~dp0\"\r\npip install fastapi uvicorn\r\nuvicorn backend.app:app --port 8000\r\npause\r\n"
+    # Usamos "python -m pip / -m uvicorn" porque en Windows los ejecutables que
+    # instala pip (uvicorn.exe) suelen quedar en un Scripts\ fuera del PATH, y
+    # "uvicorn" directo da "no se reconoce como comando". El .bat detecta el
+    # intérprete (python o py) y abre el navegador solo.
+    run_sh = (
+        "#!/usr/bin/env bash\n"
+        "cd \"$(dirname \"$0\")\" || exit 1\n"
+        "PY=python3; command -v python3 >/dev/null 2>&1 || PY=python\n"
+        "$PY -m pip install --quiet fastapi uvicorn\n"
+        "echo 'Abriendo http://localhost:8000 ...'\n"
+        "$PY -m uvicorn backend.app:app --port 8000\n"
+    )
+    run_bat = (
+        "@echo off\r\n"
+        "cd /d \"%~dp0\"\r\n"
+        "set PY=python\r\n"
+        "where python >nul 2>nul || set PY=py\r\n"
+        "echo Instalando dependencias (solo la primera vez)...\r\n"
+        "%PY% -m pip install fastapi uvicorn\r\n"
+        "if errorlevel 1 (\r\n"
+        "  echo.\r\n"
+        "  echo ERROR: no se encontro Python. Instalalo desde https://www.python.org/downloads/\r\n"
+        "  echo IMPORTANTE: marca \"Add Python to PATH\" durante la instalacion.\r\n"
+        "  pause\r\n"
+        "  exit /b 1\r\n"
+        ")\r\n"
+        "echo.\r\n"
+        "echo Abriendo http://localhost:8000 ...\r\n"
+        "start \"\" http://localhost:8000\r\n"
+        "%PY% -m uvicorn backend.app:app --port 8000\r\n"
+        "pause\r\n"
+    )
 
     files = {
         "backend/app.py": app_py,
