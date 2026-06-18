@@ -638,30 +638,41 @@ def build_app_scaffold(payload):
 
     # Usamos "python -m pip / -m uvicorn" porque en Windows los ejecutables que
     # instala pip (uvicorn.exe) suelen quedar en un Scripts\ fuera del PATH, y
-    # "uvicorn" directo da "no se reconoce como comando". El .bat detecta el
-    # intérprete (python o py) y abre el navegador solo.
+    # "uvicorn" directo da "no se reconoce como comando".
+    # IMPORTANTE: en el .bat usamos `set "PY=..."` CON comillas; sin comillas y
+    # con saltos CRLF la variable se queda con un retorno de carro pegado y
+    # `%PY% -m pip` se rompe ("no such option: -m"). Detectamos Python por su
+    # --version (no por si pip falla, que puede ser por red) y preferimos el
+    # lanzador `py` cuando existe.
     run_sh = (
         "#!/usr/bin/env bash\n"
         "cd \"$(dirname \"$0\")\" || exit 1\n"
         "PY=python3; command -v python3 >/dev/null 2>&1 || PY=python\n"
-        "$PY -m pip install --quiet fastapi uvicorn\n"
+        "if ! command -v \"$PY\" >/dev/null 2>&1; then\n"
+        "  echo 'ERROR: Python 3 no esta instalado. Instalalo desde https://www.python.org/downloads/'\n"
+        "  exit 1\n"
+        "fi\n"
+        "echo 'Instalando dependencias (solo la primera vez)...'\n"
+        "\"$PY\" -m pip install --quiet fastapi uvicorn\n"
         "echo 'Abriendo http://localhost:8000 ...'\n"
-        "$PY -m uvicorn backend.app:app --port 8000\n"
+        "( sleep 2; (command -v xdg-open >/dev/null 2>&1 && xdg-open http://localhost:8000) || (command -v open >/dev/null 2>&1 && open http://localhost:8000) ) >/dev/null 2>&1 &\n"
+        "\"$PY\" -m uvicorn backend.app:app --port 8000\n"
     )
     run_bat = (
         "@echo off\r\n"
         "cd /d \"%~dp0\"\r\n"
-        "set PY=python\r\n"
-        "where python >nul 2>nul || set PY=py\r\n"
-        "echo Instalando dependencias (solo la primera vez)...\r\n"
-        "%PY% -m pip install fastapi uvicorn\r\n"
-        "if errorlevel 1 (\r\n"
-        "  echo.\r\n"
-        "  echo ERROR: no se encontro Python. Instalalo desde https://www.python.org/downloads/\r\n"
+        "set \"PY=\"\r\n"
+        "py -3 --version >nul 2>nul && set \"PY=py -3\"\r\n"
+        "if not defined PY ( python --version >nul 2>nul && set \"PY=python\" )\r\n"
+        "if not defined PY (\r\n"
+        "  echo ERROR: Python no esta instalado o no esta en el PATH.\r\n"
+        "  echo Instalalo desde https://www.python.org/downloads/\r\n"
         "  echo IMPORTANTE: marca \"Add Python to PATH\" durante la instalacion.\r\n"
         "  pause\r\n"
         "  exit /b 1\r\n"
         ")\r\n"
+        "echo Instalando dependencias (solo la primera vez)...\r\n"
+        "%PY% -m pip install fastapi uvicorn\r\n"
         "echo.\r\n"
         "echo Abriendo http://localhost:8000 ...\r\n"
         "start \"\" http://localhost:8000\r\n"
