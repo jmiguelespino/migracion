@@ -41,6 +41,16 @@ del original (ABM por tabla, menús, reportes, lógica). Servidor local en Pytho
   de prueba, descomprimilo y corré `python -m uvicorn backend.app:app` para
   confirmar que levanta y responde (GET / → 200).
 
+## Patrones de menú VFP (REFERENCIA)
+
+No todos los sistemas VFP usan `.mpr`/`.mnx`. Hay un patrón alternativo con tablas:
+
+- **`programa.dbf`**: cada fila es un ítem de menú. Campos clave: `nombre` (nombre
+  del form), `menu` (etiqueta visible), `tipo` (FORM o MENU), `nmenu` (nro de grupo).
+- **`menues.dbf`**: catálogo de grupos. Campos: `numero`, `menu` (título del grupo).
+- El servidor detecta esto automáticamente en `_parse_programa_menu()` como fallback
+  cuando los menús MPR/MNX tienen < 3 ítems en total.
+
 ## Trampas conocidas (NO repetir)
 
 - **JSON vs Python (`true`/`false`/`null`)**: en Python se escribe `True`,

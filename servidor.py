@@ -369,11 +369,18 @@ def build_seed_from_zip(raw_bytes, inventory):
     Devuelve (seed, indexes, total_filas) con claves = slug del nombre de tabla."""
     zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
     names = [n for n in zf.namelist() if not n.endswith("/")]
-    by_stem = {}   # nombre base sin extensión (lower) -> {ext: ruta real}
+    # by_stem: nombre base sin extensión (lower) -> {ext: ruta real}
+    # Cuando hay duplicados (p.ej. datos/ vs ZZ_EJECUTABLES/) preferimos el
+    # archivo más GRANDE porque suele tener los datos reales de producción.
+    by_stem = {}
+    file_sizes = {n: zf.getinfo(n).file_size for n in names}
     for n in names:
         base = os.path.basename(n)
         stem, ext = os.path.splitext(base)
-        by_stem.setdefault(stem.lower(), {})[ext.lower()] = n
+        sk, ek = stem.lower(), ext.lower()
+        prev = by_stem.get(sk, {}).get(ek)
+        if prev is None or file_sizes.get(n, 0) > file_sizes.get(prev, 0):
+            by_stem.setdefault(sk, {})[ek] = n
 
     seed, indexes, total = {}, {}, 0
     for t in inventory.get("tables", []):
@@ -758,8 +765,15 @@ def parse_vcx_methods(vcx_bytes, vct_bytes):
         code = str(r.get("objcode") or "").strip()
         if not code or len(code) < 15:
             continue
+        # El campo OBJCODE puede contener código compilado (binario). Si el primer
+        # carácter es no-imprimible el bloque entero es código objeto → descartarlo.
+        if ord(code[0]) < 32:
+            continue
+        # Verificación adicional: descartar si más del 20 % son caracteres no-ASCII.
+        non_ascii = sum(1 for c in code[:200] if ord(c) > 127 or ord(c) < 9)
+        if non_ascii > len(code[:200]) * 0.20:
+            continue
         objname  = str(r.get("objname")  or "").strip()
-        # baseclass identifica si es una clase o un método de instancia
         baseclass = str(r.get("baseclass") or "").strip()
         methods.append({
             "name":       objname,
@@ -767,6 +781,55 @@ def parse_vcx_methods(vcx_bytes, vct_bytes):
             "code":       code[:MAX_SAMPLE_BYTES],
         })
     return methods
+
+
+def _parse_programa_menu(prog_bytes, menues_bytes=b""):
+    """Construye navegación desde programa.dbf + menues.dbf (patrón de menú
+    dinámico común en sistemas VFP que no usan .mpr/.mnx estándar).
+
+    programa.dbf tiene: nombre (form), menu (label), tipo (FORM/MENU),
+    nmenu (nro de menú), smenu (nro de submenú).
+    menues.dbf tiene: numero, menu (nombre del grupo de menú).
+    """
+    prog_rows = read_dbf_records(prog_bytes, b"", max_records=500)
+    if not prog_rows:
+        return []
+
+    # menues.dbf: {numero -> nombre del grupo}
+    menu_names = {}
+    if menues_bytes:
+        for r in read_dbf_records(menues_bytes, b"", max_records=50):
+            num = r.get("numero")
+            name = str(r.get("menu") or "").strip()
+            if num is not None and name:
+                try:
+                    menu_names[int(num)] = name
+                except (TypeError, ValueError):
+                    pass
+
+    # Agrupar FORMs por nmenu
+    by_menu = {}
+    for r in prog_rows:
+        if str(r.get("tipo") or "").strip().upper() != "FORM":
+            continue
+        nombre = str(r.get("nombre") or "").strip()
+        label  = str(r.get("menu")   or "").strip()
+        nmenu  = r.get("nmenu")
+        if not nombre or not label or nmenu is None:
+            continue
+        try:
+            nmenu = int(nmenu)
+        except (TypeError, ValueError):
+            continue
+        titulo = menu_names.get(nmenu, f"Menú {nmenu}")
+        if nmenu not in by_menu:
+            by_menu[nmenu] = {"titulo": titulo, "items": []}
+        by_menu[nmenu]["items"].append({
+            "texto":  label,
+            "accion": f"DO FORM {nombre}",
+        })
+
+    return [by_menu[k] for k in sorted(by_menu) if by_menu[k]["items"]]
 
 
 def analyze_zip(raw_bytes):
@@ -789,8 +852,25 @@ def analyze_zip(raw_bytes):
 
     # 2) Bases de datos .dbc: relaciones entre tablas, propiedades de campos,
     #    stored procedures y vistas. Muy útil para FK constraints y etiquetas.
+    # Deduplicamos por nombre base: si hay duplicados (p.ej. ZZ_EJECUTABLES/ vs
+    # datos/) preferimos la copia en la carpeta más "profunda" (datos de producción).
     databases = []
+    dbc_by_stem = {}   # stem_lower -> nombre real elegido
     for dbc_name in sorted(n for n in names if n.lower().endswith(".dbc")):
+        stem_key = os.path.splitext(os.path.basename(dbc_name))[0].lower()
+        prev = dbc_by_stem.get(stem_key)
+        # Preferir rutas con "datos" en la ruta sobre "ejecutables" u otras
+        if prev is None:
+            dbc_by_stem[stem_key] = dbc_name
+        else:
+            parts_new = dbc_name.lower().split("/")
+            parts_old = prev.lower().split("/")
+            # Si el nuevo tiene "dato" y el viejo no, o si el nuevo es más profundo
+            has_datos_new = any("dato" in p for p in parts_new)
+            has_datos_old = any("dato" in p for p in parts_old)
+            if has_datos_new and not has_datos_old:
+                dbc_by_stem[stem_key] = dbc_name
+    for dbc_name in dbc_by_stem.values():
         try:
             dbc_bytes = zf.read(dbc_name)
             stem = os.path.splitext(dbc_name)[0]
@@ -799,10 +879,10 @@ def analyze_zip(raw_bytes):
             db_info = parse_dbc(dbc_bytes, dct_bytes)
             db_info["name"] = os.path.splitext(os.path.basename(dbc_name))[0]
             databases.append(db_info)
-            if db_info["relaciones"] or db_info["stored_procs"]:
+            if db_info["relaciones"] or db_info["stored_procs"] or db_info["vistas"]:
                 print(f"  .dbc: {db_info['name']} — "
-                      f"{len(db_info['relaciones'])} relaciones, "
-                      f"{len(db_info['stored_procs'])} stored procs, "
+                      f"{len(db_info['relaciones'])} rels, "
+                      f"{len(db_info['stored_procs'])} procs, "
                       f"{len(db_info['vistas'])} vistas")
         except Exception:
             pass
@@ -933,6 +1013,28 @@ def analyze_zip(raw_bytes):
                 mnt_real = lower_map.get(os.path.splitext(name)[0].lower() + ".mnt")
                 mnt_bytes = zf.read(mnt_real) if mnt_real else b""
                 menus.extend(parse_mnx_menu(body, mnt_bytes))
+            except Exception:
+                pass
+
+    # Fallback adicional: sistemas que usan menú dinámico desde programa.dbf.
+    # Si los menús extraídos hasta ahora tienen < 3 ítems en total, buscamos
+    # programa.dbf (cualquier copia, preferimos la más grande) + menues.dbf.
+    total_items = sum(len(m.get("items", [])) for m in menus)
+    if total_items < 3:
+        prog_candidates = [n for n in names if os.path.basename(n).lower() == "programa.dbf"]
+        if prog_candidates:
+            # La más grande suele ser la de producción
+            prog_name = max(prog_candidates, key=lambda n: zf.getinfo(n).file_size)
+            try:
+                prog_bytes = zf.read(prog_name)
+                men_name = next(
+                    (n for n in names if os.path.basename(n).lower() == "menues.dbf"), None)
+                men_bytes = zf.read(men_name) if men_name else b""
+                prog_menus = _parse_programa_menu(prog_bytes, men_bytes)
+                if len(prog_menus) > 0:
+                    menus = prog_menus  # reemplaza los menús placeholder
+                    print(f"  menú dinámico: {sum(len(m['items']) for m in menus)} "
+                          f"ítems en {len(menus)} grupos (desde programa.dbf)")
             except Exception:
                 pass
 
