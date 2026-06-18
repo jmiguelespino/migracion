@@ -108,6 +108,16 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       (`CREATE INDEX ... (col1, col2)`) en el backend. Heurística defensiva:
       acepta runs que son un campo exacto, traen función VFP, o concatenan con
       '+', para no confundir datos del árbol B con expresiones.
+- [x] **Leer el .dbc (Database Container)**: `parse_dbc` extrae relaciones entre
+      tablas (→ campos FK con `<select>` en el ABM), Caption persistente de campos
+      (mejor etiqueta cuando el `.scx` no aporta una), stored procedures y vistas.
+      Lee el trío `.dbc` + `.dct` (memo); el `.dcx` (índice) no aporta info nueva.
+- [x] **Cobertura total de tipos VFP**: `.vcx`/`.vct` (métodos de clases →
+      muestras de código), `.mnt` (memo del `.mnx` → ítems/PROCEDURE), `.h`
+      (includes con `#DEFINE`) y `.txt` (notas). Tablas de sistema VFP
+      (`foxuser`, `vfpgraph`, ...) filtradas para no generar ABMs inútiles.
+      **Ver la tabla de referencia completa en `CLAUDE.md`** (qué se lee, qué no
+      y por qué; regla de las "parejas" datos+memo+índice).
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 - [ ] Probar end-to-end con el ZIP real del usuario (314 archivos, 15 tablas).
