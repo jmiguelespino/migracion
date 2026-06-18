@@ -424,29 +424,38 @@ async function loadOllamaModels() {
 
 function checkReady() {
   const hf = !!S.file;
+  const haveZip = hf || !!S.zipInfo;
   const h = document.getElementById('hint');
-  let ok = false, msg = '';
-  if (!hf) {
-    msg = 'Subí el archivo ZIP del sistema';
-  } else if (S.engine === 'free') {
+
+  // Verificar si el motor de IA está listo (independiente de si hay archivo).
+  let ok = false;
+  if (S.engine === 'free') {
     ok = ollamaAvailable && !!S.ollamaModel;
+  } else {
+    ok = S.apiKey.startsWith('sk-');
+  }
+
+  let msg = '';
+  if (!haveZip) {
+    msg = 'Subí el archivo ZIP del sistema';
+  } else if (haveZip && !hf) {
+    // Inventario restaurado de sesión anterior.
+    msg = ok
+      ? '↩ Sistema restaurado: podés generar la app (📦 o ✨).'
+      : '↩ Sistema restaurado: podés usar 📦 (sin key). Para ✨ ingresá la API key.';
+  } else if (S.engine === 'free') {
     msg = ollamaAvailable
       ? (S.ollamaModel ? `🆓 Listo con ${S.ollamaModel} (local, sin tokens)` : 'Elegí un modelo local')
       : 'Ollama no detectado: instalalo y descargá un modelo';
   } else {
-    ok = S.apiKey.startsWith('sk-');
     msg = ok ? '¡Todo listo! Hacé clic para analizar ↑' : 'Falta la API key (o elegí Gratis)';
   }
+
   document.getElementById('ban').disabled = !(hf && ok);
-  // La app completa (cobertura total) es determinística: alcanza con el ZIP
-  // recién subido O con un inventario restaurado de una sesión anterior.
-  const haveZip = hf || !!S.zipInfo;
   const ba = document.getElementById('bapp');
   if (ba) ba.disabled = !haveZip;
-  // La app + IA necesita además un motor listo (Claude o Ollama).
   const bai = document.getElementById('bappai');
   if (bai) bai.disabled = !(haveZip && ok);
-  if (!hf && S.zipInfo) msg = '↩ Sistema anterior cargado: podés generar la app.';
   h.textContent = msg;
 }
 
@@ -574,11 +583,24 @@ fi.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.
 function handleFile(f) {
   if (!f.name.toLowerCase().endsWith('.zip')) { showErr('Subí un archivo ZIP'); return; }
   S.file = f;
-  S.zipInfo = null; // se vuelve a leer al analizar
+  S.zipInfo = null;
+  S.savedFileName = f.name;
   document.getElementById('fname').textContent = f.name;
-  document.getElementById('fmeta').textContent = (f.size/1024/1024).toFixed(1) + ' MB · Listo para analizar';
+  document.getElementById('fmeta').textContent = (f.size/1024/1024).toFixed(1) + ' MB · Leyendo…';
   document.getElementById('fok').classList.add('show');
   checkReady();
+  // Leer el ZIP inmediatamente en background para persistir el inventario.
+  // Si el usuario cierra la app antes de generar, puede continuar al reabrir.
+  readZip().then(info => {
+    S.zipInfo = info;
+    const z = info;
+    document.getElementById('fmeta').textContent =
+      `${(f.size/1024/1024).toFixed(1)} MB · ${(z.tables||[]).length} tablas · ${(z.reports||[]).length} reportes`;
+    saveState();
+    checkReady();
+  }).catch(() => {
+    document.getElementById('fmeta').textContent = (f.size/1024/1024).toFixed(1) + ' MB · Listo para analizar';
+  });
 }
 
 function setLang(btn, lang) {
@@ -691,9 +713,11 @@ async function analyzeSystem() {
   setLoad('Analizando el sistema legacy...', 'Identificando módulos y generando plan de migración');
 
   const real = zipSummary(S.zipInfo);
-  const prompt = `Sos un experto en migración de sistemas legacy. El usuario tiene un sistema ${S.sourceLang} llamado "${S.file.name}" que quiere migrar a ${S.targetLang}.
+  const sysName = S.file ? S.file.name : (S.savedFileName || 'sistema legacy');
+  const sysSize = S.file ? `${(S.file.size/1024/1024).toFixed(1)}MB` : '(tamaño desconocido)';
+  const prompt = `Sos un experto en migración de sistemas legacy. El usuario tiene un sistema ${S.sourceLang} llamado "${sysName}" que quiere migrar a ${S.targetLang}.
 
-${real || `Tamaño del archivo: ${(S.file.size/1024/1024).toFixed(1)}MB (no se pudo leer el contenido).`}
+${real || `Tamaño del archivo: ${sysSize} (no se pudo leer el contenido).`}
 
 Respondé SOLO con JSON válido sin backticks ni texto adicional:
 {
