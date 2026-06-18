@@ -784,7 +784,7 @@ Respondé SOLO con JSON válido sin backticks ni texto adicional:
 }`;
 
   try {
-    const data = await callModel(prompt, 16000);
+    const data = await callModel(prompt, 8000);
     S.currentPhaseData = data; S.generatedFiles[num] = data;
     if (!S.completedPhases.includes(num)) S.completedPhases.push(num);
     saveState(); renderSidebar();
@@ -792,7 +792,13 @@ Respondé SOLO con JSON válido sin backticks ni texto adicional:
     document.getElementById('bdl').style.display = 'flex';
     renderPhaseDownload(phase, data);
     await downloadPhase();  // descarga automática del ZIP (no se renderiza el código)
-  } catch(e) { showView('a'); showErr('Error al generar: ' + e.message); }
+  } catch(e) {
+    showView('a');
+    const extra = S.engine==='free'
+      ? ' Con modelos pequeños (1.5b) el flujo por fases es inestable. Probá con los botones 📦 o ✨ de arriba, que son mucho más confiables.'
+      : '';
+    showErr('Error al generar: ' + e.message + extra);
+  }
 }
 
 // Muestra una confirmación con la lista de archivos del ZIP (no el código).
@@ -873,7 +879,7 @@ function parseModelJson(text, truncated) {
   const clean=String(text||'').replace(/```json|```/g,'').trim();
   // 1) intento directo
   try{ return JSON.parse(clean); }catch(_){}
-  // 2) primer bloque {...} completo
+  // 2) primer bloque {...} completo (greedy: desde primer { hasta último })
   const m=clean.match(/\{[\s\S]*\}/);
   if(m){ try{ return JSON.parse(m[0]); }catch(_){} }
   // 3) si se cortó por longitud, intento reparar el JSON truncado
@@ -885,7 +891,9 @@ function parseModelJson(text, truncated) {
     }catch(_){}
     throw new Error('La respuesta se cortó por longitud y no se pudo recuperar. Volvé a intentar.');
   }
-  throw new Error('Respuesta inesperada del modelo. Intentá de nuevo.');
+  // Mostramos los primeros 200 chars para ayudar a diagnosticar
+  const preview = clean.slice(0, 200).replace(/</g,'&lt;');
+  throw new Error('El modelo no devolvió JSON válido. Primeros caracteres: "' + preview + '"');
 }
 
 async function callClaude(prompt, maxTokens) {
