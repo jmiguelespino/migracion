@@ -19,6 +19,11 @@ del original (ABM por tabla, menús, reportes, lógica). Servidor local en Pytho
 
 ## Principios de diseño (respetar)
 
+- **PREMISA RECTORA**: la app generada debe (1) cumplir **TODOS** los
+  requerimientos/utilidades del sistema original (paridad funcional: tablas,
+  datos, índices, menús, reportes, imágenes, reglas) y (2) ser una versión
+  **mejorada y optimizada** — visual y de UX — no una copia mínima. Toda mejora
+  nueva debe respetar ambas cosas a la vez.
 - **La cobertura es determinística** (en `scaffold.py`, sin IA): garantiza que la
   app generada exponga TODAS las utilidades del ZIP. La IA solo **enriquece**.
 - **App generada = FastAPI + SPA vanilla en un proceso** (sin Node), para correr

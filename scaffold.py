@@ -263,8 +263,9 @@ Correr (desde la carpeta del proyecto):
     python -m uvicorn backend.app:app --port 8000
 Abrir: http://localhost:8000
 """
-import json, os, re, sqlite3
+import io, json, os, re, sqlite3
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.responses import Response
 from fastapi.staticfiles import StaticFiles
 
 BASE = os.path.dirname(os.path.abspath(__file__))
@@ -404,14 +405,60 @@ def meta():
     return META
 
 
+@app.get("/api/_counts")
+def counts():
+    c = conn()
+    out = {}
+    for t in TABLES:
+        try:
+            out[t] = c.execute('SELECT COUNT(*) FROM "%s"' % t).fetchone()[0]
+        except sqlite3.Error:
+            out[t] = 0
+    c.close()
+    return out
+
+
 @app.get("/api/t/{table}")
-def list_rows(table: str):
+def list_rows(table: str, q: str = "", sort: str = "", dir: str = "asc",
+              page: int = 1, size: int = 50):
+    """Listado con búsqueda, orden y paginación del lado del servidor."""
     if table not in TABLES:
         raise HTTPException(404, "tabla desconocida")
+    cols = [cn for cn, _ in TABLES[table]]
+    where, params = "", []
+    if q:
+        where = " WHERE " + " OR ".join('CAST("%s" AS TEXT) LIKE ?' % c for c in cols)
+        params = ["%" + q + "%"] * len(cols)
+    if sort in cols or sort == "id":
+        order = ' ORDER BY "%s" %s' % (sort, "DESC" if str(dir).lower() == "desc" else "ASC")
+    else:
+        order = " ORDER BY id DESC"
+    size = max(1, min(int(size or 50), 500))
+    page = max(1, int(page or 1))
     c = conn()
-    rows = [dict(r) for r in c.execute('SELECT * FROM "%s" ORDER BY id DESC LIMIT 2000' % table)]
+    total = c.execute('SELECT COUNT(*) FROM "%s"%s' % (table, where), params).fetchone()[0]
+    rows = [dict(r) for r in c.execute(
+        'SELECT * FROM "%s"%s%s LIMIT ? OFFSET ?' % (table, where, order),
+        params + [size, (page - 1) * size])]
     c.close()
-    return rows
+    return {"rows": rows, "total": total, "page": page, "size": size}
+
+
+@app.get("/api/t/{table}/export.csv")
+def export_csv(table: str):
+    if table not in TABLES:
+        raise HTTPException(404)
+    import csv
+    out = io.StringIO()
+    cols = ["id"] + [cn for cn, _ in TABLES[table]]
+    w = csv.writer(out)
+    w.writerow(cols)
+    c = conn()
+    for r in c.execute('SELECT * FROM "%s" ORDER BY id' % table):
+        w.writerow([r[cn] for cn in cols])
+    c.close()
+    return Response(out.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="%s.csv"' % table})
 
 
 @app.post("/api/t/{table}")
@@ -476,67 +523,134 @@ app.mount("/", StaticFiles(directory=WEB, html=True), name="web")
 
 
 INDEX_HTML = r'''<!DOCTYPE html>
-<html lang="es"><head><meta charset="UTF-8">
+<html lang="es" data-theme="light"><head><meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>App migrada</title><link rel="stylesheet" href="style.css"></head>
 <body>
-<header><b id="apptitle">App migrada</b><span id="stats"></span></header>
+<header>
+  <button id="burger" class="icon" title="Menú" aria-label="Menú">☰</button>
+  <b id="apptitle">App migrada</b>
+  <span id="stats" class="muted"></span>
+  <button id="theme" class="icon" title="Tema claro/oscuro" aria-label="Tema">🌙</button>
+</header>
 <div class="layout">
   <nav id="nav"></nav>
-  <main id="main"><p class="muted">Elegí una utilidad del menú de la izquierda.</p></main>
+  <div id="backdrop"></div>
+  <main id="main"></main>
 </div>
 <script src="app.js"></script>
 </body></html>
 '''
 
 
-STYLE_CSS = r'''*{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,Segoe UI,sans-serif;color:#1a1917;background:#f6f5f2}
-header{background:#534AB7;color:#fff;padding:10px 16px;display:flex;align-items:center;gap:12px}
-header b{font-size:16px}
-header #stats{font-size:12px;opacity:.85}
-.layout{display:flex;height:calc(100vh - 44px)}
-nav{width:280px;background:#fff;border-right:1px solid #e2dfd8;overflow:auto;padding:8px}
-nav .grp{font-size:11px;text-transform:uppercase;color:#9c9a92;font-weight:700;margin:12px 8px 4px}
-nav a{display:block;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:13px;color:#1a1917;text-decoration:none}
-nav a:hover{background:#f0ede8}
-nav a.active{background:#EEEDFE;color:#3C3489;font-weight:600}
-main{flex:1;overflow:auto;padding:18px}
-h2{font-size:18px;margin-bottom:10px}
-.muted{color:#9c9a92}
-table{border-collapse:collapse;width:100%;background:#fff;border:1px solid #e2dfd8;border-radius:8px;overflow:hidden}
-th,td{padding:7px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:left}
-th{background:#f0ede8;font-weight:700}
-img.thumb{max-width:80px;max-height:60px;border-radius:4px;border:1px solid #e2dfd8;vertical-align:middle;object-fit:contain}
-button{background:#534AB7;color:#fff;border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font-weight:600}
-button.sec{background:#fff;color:#534AB7;border:1px solid #ccc9c0}
-button.del{background:#A32D2D}
-.row{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
-form.abm{background:#fff;border:1px solid #e2dfd8;border-radius:8px;padding:14px;margin-bottom:14px;display:grid;grid-template-columns:1fr 1fr;gap:10px}
-form.abm label{display:flex;flex-direction:column;font-size:12px;color:#6b6963;gap:3px}
-form.abm input,form.abm textarea{padding:6px 8px;border:1px solid #ccc9c0;border-radius:6px;font-size:13px}
+STYLE_CSS = r''':root{
+  --bg:#f4f5f7; --panel:#ffffff; --panel2:#fafafa; --text:#1a1d21; --muted:#6b7280;
+  --border:#e5e7eb; --brand:#5b54d6; --brand-d:#4239b8; --brand-bg:#eeedfe;
+  --accent:#0ea5a3; --danger:#dc2626; --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+}
+[data-theme=dark]{
+  --bg:#0f1216; --panel:#171b21; --panel2:#1d222a; --text:#e6e8eb; --muted:#9aa3af;
+  --border:#2a3039; --brand:#8b84ff; --brand-d:#6d64f0; --brand-bg:#21264f;
+  --accent:#2dd4bf; --danger:#f87171; --shadow:0 1px 3px rgba(0,0,0,.4);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:var(--text);background:var(--bg);font-size:14px}
+header{background:var(--panel);border-bottom:1px solid var(--border);padding:0 16px;height:54px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:20}
+header b{font-size:16px;color:var(--brand)}
+header #stats{flex:1;font-size:12px}
+.icon{background:transparent;border:1px solid transparent;color:var(--text);font-size:18px;cursor:pointer;border-radius:8px;padding:4px 9px;line-height:1}
+.icon:hover{background:var(--panel2);border-color:var(--border)}
+#burger{display:none}
+.layout{display:flex;min-height:calc(100vh - 54px)}
+nav{width:260px;background:var(--panel);border-right:1px solid var(--border);overflow:auto;padding:10px;flex-shrink:0;position:sticky;top:54px;height:calc(100vh - 54px)}
+nav .grp{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;margin:14px 8px 5px}
+nav a{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text);text-decoration:none}
+nav a:hover{background:var(--panel2)}
+nav a.active{background:var(--brand-bg);color:var(--brand-d);font-weight:600}
+nav a .cnt{margin-left:auto;font-size:11px;color:var(--muted);background:var(--panel2);border-radius:10px;padding:1px 7px}
+#backdrop{display:none}
+main{flex:1;overflow:auto;padding:22px;max-width:100%}
+h1{font-size:22px;margin-bottom:4px}
+h2{font-size:19px;margin-bottom:4px}
+.sub{color:var(--muted);margin-bottom:16px}
+.muted{color:var(--muted)}
+.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0}
+.toolbar .sp{flex:1}
+input.search{padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--text);font-size:13px;min-width:200px}
+.tablewrap{background:var(--panel);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);overflow:auto}
+table{border-collapse:collapse;width:100%}
+th,td{padding:9px 12px;border-bottom:1px solid var(--border);font-size:13px;text-align:left;white-space:nowrap}
+th{background:var(--panel2);font-weight:600;position:sticky;top:0;cursor:pointer;user-select:none}
+th:hover{color:var(--brand)}
+th .ar{font-size:10px;color:var(--brand)}
+tbody tr:hover{background:var(--panel2)}
+td.actions{text-align:right;white-space:nowrap}
+img.thumb{max-width:72px;max-height:54px;border-radius:6px;border:1px solid var(--border);vertical-align:middle;object-fit:contain}
+button{background:var(--brand);color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600;font-size:13px}
+button:hover{background:var(--brand-d)}
+button.sec{background:var(--panel);color:var(--brand);border:1px solid var(--border)}
+button.sec:hover{background:var(--panel2)}
+button.del{background:var(--danger)}
+button.sm{padding:5px 9px;font-size:12px}
+.pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:12px;flex-wrap:wrap}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:20px}
+.metric{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:var(--shadow);text-decoration:none;color:var(--text);display:block}
+.metric:hover{border-color:var(--brand)}
+.metric .n{font-size:26px;font-weight:700;color:var(--brand)}
+.metric .l{font-size:12px;color:var(--muted);margin-top:2px}
+.bars{display:flex;flex-direction:column;gap:7px}
+.bar{display:grid;grid-template-columns:160px 1fr 70px;gap:10px;align-items:center;font-size:12px}
+.bar .track{background:var(--panel2);border-radius:6px;height:18px;overflow:hidden}
+.bar .fill{background:linear-gradient(90deg,var(--brand),var(--accent));height:100%;border-radius:6px}
+.bar a{color:var(--text);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bar a:hover{color:var(--brand)}
+form.abm{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px;box-shadow:var(--shadow)}
+form.abm label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:4px;font-weight:600}
+form.abm input,form.abm textarea{padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--panel2);color:var(--text);font-weight:400}
+form.abm input:focus,form.abm textarea:focus{outline:2px solid var(--brand-bg);border-color:var(--brand)}
+form.abm input.bad{border-color:var(--danger)}
+form.abm .err{color:var(--danger);font-size:11px;min-height:0}
 form.abm .full{grid-column:1 / -1;display:flex;gap:8px}
-.card{background:#fff;border:1px solid #e2dfd8;border-radius:8px;padding:14px;margin-bottom:10px}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:var(--shadow)}
+.card.rules{border-left:3px solid var(--accent)}
+.tag{display:inline-block;background:var(--brand-bg);color:var(--brand-d);border-radius:6px;padding:2px 8px;font-size:11px;margin:2px 4px 2px 0}
+@media(max-width:860px){
+  #burger{display:inline-block}
+  nav{position:fixed;left:-280px;top:54px;z-index:30;transition:left .2s;box-shadow:var(--shadow)}
+  nav.open{left:0}
+  #backdrop.show{display:block;position:fixed;inset:54px 0 0 0;background:rgba(0,0,0,.4);z-index:25}
+  form.abm{grid-template-columns:1fr}
+}
 '''
 
 
-APP_JS = r'''let META = null;
+APP_JS = r'''let META = null, COUNTS = {};
 const $ = (s) => document.querySelector(s);
+// Estado de la vista de cada tabla (búsqueda/orden/página).
+const VS = {};
 
 async function boot() {
+  initTheme();
   META = await (await fetch('/api/_meta')).json();
+  try { COUNTS = await (await fetch('/api/_counts')).json(); } catch (_) { COUNTS = {}; }
   $('#apptitle').textContent = META.titulo || 'App migrada';
   const s = META.stats || {};
-  $('#stats').textContent = `${s.tablas||0} tablas · ${s.reportes||0} reportes · ${s.items_menu||0} ítems de menú`;
+  $('#stats').textContent = `${s.tablas||0} tablas · ${s.registros_importados||0} registros · ${s.reportes||0} reportes`;
   buildNav();
+  $('#burger').onclick = () => { $('#nav').classList.toggle('open'); $('#backdrop').classList.toggle('show'); };
+  $('#backdrop').onclick = closeNav;
+  $('#theme').onclick = toggleTheme;
   route();
 }
-window.addEventListener('hashchange', route);
+window.addEventListener('hashchange', () => { closeNav(); route(); });
+
+function initTheme(){ const t = localStorage.getItem('tema') || 'light'; document.documentElement.setAttribute('data-theme', t); setThemeIcon(t); }
+function toggleTheme(){ const cur = document.documentElement.getAttribute('data-theme'); const t = cur === 'dark' ? 'light' : 'dark'; document.documentElement.setAttribute('data-theme', t); localStorage.setItem('tema', t); setThemeIcon(t); }
+function setThemeIcon(t){ $('#theme').textContent = t === 'dark' ? '☀️' : '🌙'; }
+function closeNav(){ $('#nav').classList.remove('open'); $('#backdrop').classList.remove('show'); }
 
 function buildNav() {
-  const nav = $('#nav');
-  let h = '';
-  // Menús originales del sistema (navegación legacy).
+  let h = `<a href="#/">🏠 Inicio</a>`;
   (META.menus || []).forEach((m, mi) => {
     h += `<div class="grp">${esc(m.titulo || 'Menú')}</div>`;
     (m.items || []).forEach((it, ii) => {
@@ -545,88 +659,154 @@ function buildNav() {
       h += `<a href="${href}">${esc(it.texto || '')}</a>`;
     });
   });
-  // Todas las tablas (ABM) — garantiza cobertura.
   h += `<div class="grp">Tablas (ABM)</div>`;
-  (META.tablas || []).forEach(t => { h += `<a href="#/abm/${t.key}">${esc(t.name)}</a>`; });
-  // Reportes.
+  (META.tablas || []).forEach(t => {
+    const c = COUNTS[t.key]; const badge = (c != null) ? `<span class="cnt">${c}</span>` : '';
+    h += `<a href="#/abm/${t.key}">${esc(t.name)}${badge}</a>`;
+  });
   if ((META.reportes || []).length) {
     h += `<div class="grp">Reportes</div>`;
     META.reportes.forEach((r, i) => { h += `<a href="#/rep/${i}">${esc(r.name)}</a>`; });
   }
-  nav.innerHTML = h;
+  $('#nav').innerHTML = h;
 }
 
-// Busca una tabla cuyo nombre se parezca al texto de un ítem de menú.
 function byName(txt) {
   const n = norm(txt);
   return (META.tablas || []).find(t => { const tn = norm(t.name); return tn && (n.includes(tn) || tn.includes(n)); });
 }
 function norm(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
-
-// Imágenes del sistema original: el valor del campo guarda un nombre de archivo
-// (a veces con ruta tipo "fotos\\a.jpg"); las servimos desde /assets/<base>.
 function assetSrc(val){ const s=String(val||'').trim().replace(/\\/g,'/'); return 'assets/' + encodeURIComponent(s.split('/').pop()); }
 function cellHtml(f, val){
   if (f.es_imagen && val) return `<img class="thumb" src="${assetSrc(val)}" alt="${esc(val)}" title="${esc(val)}" onerror="this.replaceWith(document.createTextNode('${esc(val)}'))">`;
+  if (f.input === 'checkbox') return (val==1||val===true||val==='1') ? '✅' : (val==null||val==='' ? '' : '—');
   return esc(val);
 }
 
 function route() {
-  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === location.hash));
-  const p = (location.hash || '').split('/');
+  const hash = location.hash || '#/';
+  document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === hash));
+  const p = hash.split('/');
   if (p[1] === 'abm') return viewAbm(p[2]);
   if (p[1] === 'rep') return viewReport(+p[2]);
   if (p[1] === 'info') return viewInfo(+p[2], +p[3]);
-  $('#main').innerHTML = '<p class="muted">Elegí una utilidad del menú de la izquierda.</p>';
+  return viewHome();
+}
+function tableByKey(k){return (META.tablas||[]).find(t=>t.key===k);}
+
+// ---------- DASHBOARD ----------
+function viewHome() {
+  const s = META.stats || {};
+  const tablas = META.tablas || [];
+  const cards = [
+    ['Tablas', s.tablas||0], ['Registros', s.registros_importados||0],
+    ['Reportes', s.reportes||0], ['Índices', s.indices||0],
+    ['Imágenes', s.imagenes||0], ['Pantallas enriquecidas', s.enriquecidas||0],
+  ].map(([l,n]) => `<div class="metric"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+  const max = Math.max(1, ...tablas.map(t => COUNTS[t.key]||0));
+  const bars = tablas.slice().sort((a,b)=>(COUNTS[b.key]||0)-(COUNTS[a.key]||0)).map(t => {
+    const c = COUNTS[t.key]||0; const w = Math.round((c/max)*100);
+    return `<div class="bar"><a href="#/abm/${t.key}">${esc(t.name)}</a><div class="track"><div class="fill" style="width:${w}%"></div></div><span class="muted">${c}</span></div>`;
+  }).join('');
+  $('#main').innerHTML = `<h1>${esc(META.titulo||'App migrada')}</h1>
+    <p class="sub">Sistema migrado con todas sus utilidades. Datos reales importados del sistema original.</p>
+    <div class="grid">${cards}</div>
+    <div class="card"><b>Registros por tabla</b><div class="bars" style="margin-top:12px">${bars||'<span class="muted">Sin datos importados.</span>'}</div></div>`;
 }
 
-function tableByKey(k){return (META.tablas||[]).find(t=>t.key===k);}
+// ---------- ABM ----------
+function vstate(key){ return VS[key] || (VS[key] = { q:'', sort:'', dir:'asc', page:1, size:50 }); }
 
 async function viewAbm(key) {
   const t = tableByKey(key);
   if (!t) { $('#main').innerHTML = '<p>Tabla no encontrada.</p>'; return; }
-  const rows = await (await fetch('/api/t/' + key)).json();
+  const st = vstate(key);
+  const qs = new URLSearchParams({ q:st.q, sort:st.sort, dir:st.dir, page:st.page, size:st.size });
+  const res = await (await fetch(`/api/t/${key}?${qs}`)).json();
+  const rows = res.rows || [], total = res.total || 0;
+  const pages = Math.max(1, Math.ceil(total / st.size));
   const fields = t.campos;
-  let form = `<form class="abm" onsubmit="return saveRow('${key}')">`;
-  form += `<input type="hidden" id="f_id">`;
-  fields.forEach(f => {
+
+  const form = formHtml(t, key);
+  const head = '<tr>' + fields.map(f => {
+    const ar = st.sort === f.name ? `<span class="ar">${st.dir==='asc'?'▲':'▼'}</span>` : '';
+    return `<th onclick="sortBy('${key}','${f.name}')">${esc(f.label || f.name)} ${ar}</th>`;
+  }).join('') + '<th></th></tr>';
+  const body = rows.map(r => '<tr>' + fields.map(f => `<td>${cellHtml(f, r[f.name])}</td>`).join('') +
+    `<td class="actions"><button class="sec sm" onclick='editRow(${JSON.stringify(r).replace(/'/g,"&#39;")})'>✎</button>
+     <button class="del sm" onclick="delRow('${key}',${r.id})">🗑</button></td></tr>`).join('');
+
+  $('#main').innerHTML = `<h2>${esc(t.titulo || t.name)}</h2>
+    <p class="sub">${esc(t.descripcion || '')} <span class="muted">${total} registros</span></p>
+    ${reglasHtml(t)}
+    ${form}
+    <div class="toolbar">
+      <input class="search" id="q" placeholder="🔎 Buscar..." value="${esc(st.q)}" oninput="onSearch('${key}',this.value)">
+      <span class="sp"></span>
+      <button class="sec sm" onclick="window.open('/api/t/${key}/export.csv')">⬇ Exportar CSV</button>
+    </div>
+    <div class="tablewrap"><table><thead>${head}</thead><tbody>${body || '<tr><td class="muted" style="padding:16px">Sin registros.</td></tr>'}</tbody></table></div>
+    <div class="pager">
+      <span class="muted">Página ${st.page} de ${pages}</span>
+      <button class="sec sm" ${st.page<=1?'disabled':''} onclick="goPage('${key}',${st.page-1})">‹ Anterior</button>
+      <button class="sec sm" ${st.page>=pages?'disabled':''} onclick="goPage('${key}',${st.page+1})">Siguiente ›</button>
+    </div>`;
+}
+
+function formHtml(t, key) {
+  let form = `<form class="abm" id="abmform" onsubmit="return saveRow('${key}')"><input type="hidden" id="f_id">`;
+  t.campos.forEach(f => {
     const req = (f.requerido && f.input !== 'checkbox') ? 'required' : '';
     const tip = f.ayuda ? `title="${esc(f.ayuda).replace(/"/g,'&quot;')}"` : '';
     const star = f.requerido ? ' *' : '';
+    const onv = ` oninput="liveVal('${key}','${f.name}')"`;
     const ctl = f.input === 'textarea'
-      ? `<textarea id="f_${f.name}" ${req} ${tip}></textarea>`
-      : `<input id="f_${f.name}" type="${f.input}" ${req} ${tip}${f.es_imagen ? ` oninput="document.getElementById('pv_${f.name}').src=assetSrc(this.value)"` : ''}>`;
+      ? `<textarea id="f_${f.name}" ${req} ${tip}${onv}></textarea>`
+      : `<input id="f_${f.name}" type="${f.input==='checkbox'?'text':f.input}" ${req} ${tip}${onv}${f.es_imagen ? ` oninput="document.getElementById('pv_${f.name}').src=assetSrc(this.value);liveVal('${key}','${f.name}')"` : ''}>`;
     const pv = f.es_imagen ? `<img id="pv_${f.name}" class="thumb" alt="" onerror="this.style.display='none'">` : '';
-    form += `<label>${esc(f.label || f.name)}${star}${ctl}${pv}</label>`;
+    form += `<label>${esc(f.label || f.name)}${star}${ctl}${pv}<span class="err" id="e_${f.name}"></span></label>`;
   });
-  form += `<div class="full"><button type="submit">Guardar</button>
+  form += `<div class="full"><button type="submit">💾 Guardar</button>
            <button type="button" class="sec" onclick="clearForm()">Limpiar</button></div></form>`;
-  let head = '<tr>' + fields.map(f => `<th>${esc(f.label || f.name)}</th>`).join('') + '<th></th></tr>';
-  let body = rows.map(r => '<tr>' + fields.map(f => `<td>${cellHtml(f, r[f.name])}</td>`).join('') +
-    `<td><button class="sec" onclick='editRow(${JSON.stringify(r)})'>✎</button>
-     <button class="del" onclick="delRow('${key}',${r.id})">🗑</button></td></tr>`).join('');
-  $('#main').innerHTML = `<h2>${esc(t.titulo || t.name)} <span class="muted">(${rows.length} registros)</span></h2>
-    ${t.descripcion ? `<p class="muted" style="margin-bottom:10px">${esc(t.descripcion)}</p>` : ''}
-    ${reglasHtml(t)}${form}
-    <table><thead>${head}</thead><tbody>${body || ''}</tbody></table>`;
+  return form;
 }
+
+// Validación en vivo en el cliente (espejo de la del backend: requerido/numérico/maxlen).
+function liveVal(key, name) {
+  const t = tableByKey(key), f = t.campos.find(x => x.name === name);
+  const e = document.getElementById('f_' + name), msg = document.getElementById('e_' + name);
+  if (!f || !e || !msg) return true;
+  const v = e.value; let err = '';
+  if (f.requerido && !v.trim()) err = 'Obligatorio';
+  else if (v.trim() && ['N','F','B','Y','I'].includes(f.type) && isNaN(Number(v.replace(',','.')))) err = 'Debe ser numérico';
+  else if (f.maxlen && v.length > f.maxlen) err = `Máx. ${f.maxlen} caracteres`;
+  msg.textContent = err; e.classList.toggle('bad', !!err);
+  return !err;
+}
+
+function onSearch(key, v){ const st = vstate(key); st.q = v; st.page = 1; clearTimeout(st._t); st._t = setTimeout(() => viewAbm(key), 250); }
+function sortBy(key, col){ const st = vstate(key); if (st.sort === col) st.dir = st.dir === 'asc' ? 'desc' : 'asc'; else { st.sort = col; st.dir = 'asc'; } viewAbm(key); }
+function goPage(key, p){ vstate(key).page = p; viewAbm(key); }
 
 function reglasHtml(t) {
   const r = t.reglas || [], v = t.validaciones || [];
   if (!r.length && !v.length) return '';
-  let h = `<div class="card"><b>📋 Reglas de negocio (del sistema original)</b>`;
-  if (r.length) h += `<ul style="margin:6px 0 0 18px">` + r.map(x => `<li>${esc(x)}</li>`).join('') + `</ul>`;
-  if (v.length) h += `<div class="muted" style="margin-top:6px">⚙️ Validaciones activas: ` +
-    v.map(x => esc(x.campo + ' ' + x.op + (x.valor !== undefined ? ' ' + JSON.stringify(x.valor) : ''))).join(' · ') + `</div>`;
+  let h = `<div class="card rules"><b>📋 Reglas de negocio (del sistema original)</b>`;
+  if (r.length) h += `<ul style="margin:8px 0 0 18px">` + r.map(x => `<li>${esc(x)}</li>`).join('') + `</ul>`;
+  if (v.length) h += `<div style="margin-top:8px">` +
+    v.map(x => `<span class="tag">${esc(x.campo + ' ' + x.op + (x.valor !== undefined ? ' ' + JSON.stringify(x.valor) : ''))}</span>`).join('') + `</div>`;
   return h + `</div>`;
 }
 
-function clearForm(){document.querySelectorAll('form.abm [id^=f_]').forEach(e=>{e.value='';});}
-function editRow(r){for(const k in r){const e=document.getElementById('f_'+k);if(e)e.value=r[k];const pv=document.getElementById('pv_'+k);if(pv&&r[k]){pv.style.display='';pv.src=assetSrc(r[k]);}}document.getElementById('f_id').value=r.id;}
+function clearForm(){document.querySelectorAll('form.abm [id^=f_]').forEach(e=>{e.value='';});document.querySelectorAll('form.abm .err').forEach(e=>e.textContent='');document.querySelectorAll('form.abm .bad').forEach(e=>e.classList.remove('bad'));}
+function editRow(r){for(const k in r){const e=document.getElementById('f_'+k);if(e)e.value=r[k]==null?'':r[k];const pv=document.getElementById('pv_'+k);if(pv&&r[k]){pv.style.display='';pv.src=assetSrc(r[k]);}}document.getElementById('f_id').value=r.id;window.scrollTo({top:0,behavior:'smooth'});}
 
 async function saveRow(key) {
   const t = tableByKey(key);
+  let ok = true;
+  t.campos.forEach(f => { if (!liveVal(key, f.name)) ok = false; });
+  if (!ok) return false;
   const data = {};
   t.campos.forEach(f => { const e = document.getElementById('f_' + f.name); if (e) data[f.name] = e.value; });
   const id = document.getElementById('f_id').value;
@@ -637,32 +817,36 @@ async function saveRow(key) {
     alert('No se pudo guardar:\n' + (e.detail || ('Error ' + r.status)));
     return false;
   }
+  try { COUNTS = await (await fetch('/api/_counts')).json(); buildNav(); } catch(_) {}
   viewAbm(key);
   return false;
 }
 async function delRow(key, id) {
   if (!confirm('¿Borrar el registro?')) return;
   await fetch(`/api/t/${key}/${id}`, { method: 'DELETE' });
+  try { COUNTS = await (await fetch('/api/_counts')).json(); buildNav(); } catch(_) {}
   viewAbm(key);
 }
 
 async function viewReport(i) {
   const r = META.reportes[i];
   if (!r) { $('#main').innerHTML = '<p>Reporte no encontrado.</p>'; return; }
-  if (!r.tabla) { $('#main').innerHTML = `<h2>Reporte: ${esc(r.name)}</h2><div class="card muted">Sin tabla asociada (consulta a definir).</div>`; return; }
+  if (!r.tabla) { $('#main').innerHTML = `<h2>Reporte: ${esc(r.name)}</h2><div class="card muted">Sin tabla asociada.</div>`; return; }
   const t = tableByKey(r.tabla);
-  const rows = await (await fetch('/api/t/' + r.tabla).catch(()=>({json:()=>[]}))).json();
+  const res = await (await fetch(`/api/t/${r.tabla}?size=500`).catch(()=>({json:()=>({rows:[]})}))).json();
+  const rows = res.rows || [];
   const head = '<tr>' + t.campos.map(f => `<th>${esc(f.label||f.name)}</th>`).join('') + '</tr>';
   const body = rows.map(x => '<tr>' + t.campos.map(f => `<td>${cellHtml(f, x[f.name])}</td>`).join('') + '</tr>').join('');
-  $('#main').innerHTML = `<h2>Reporte: ${esc(r.name)} <span class="muted">(${rows.length} filas)</span></h2>
-    <table><thead>${head}</thead><tbody>${body}</tbody></table>`;
+  $('#main').innerHTML = `<h2>📊 ${esc(r.name)}</h2>
+    <p class="sub">Reporte sobre la tabla <b>${esc(t.name)}</b> · ${res.total||rows.length} filas</p>
+    <div class="toolbar"><span class="sp"></span><button class="sec sm" onclick="window.open('/api/t/${r.tabla}/export.csv')">⬇ Exportar CSV</button></div>
+    <div class="tablewrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
 function viewInfo(mi, ii) {
   const it = ((META.menus[mi] || {}).items || [])[ii] || {};
   $('#main').innerHTML = `<h2>${esc(it.texto || 'Pantalla')}</h2>
-    <div class="card">Utilidad del sistema original.<br><span class="muted">Acción legacy: ${esc(it.accion || '—')}</span><br><br>
-    Pantalla pendiente de implementar la lógica (2ª etapa con IA).</div>`;
+    <div class="card">Utilidad del sistema original.<br><span class="muted">Acción legacy: ${esc(it.accion || '—')}</span></div>`;
 }
 
 boot();
