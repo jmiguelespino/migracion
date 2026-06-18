@@ -228,10 +228,18 @@ def _coverage_md(meta):
         "",
     ]
     idxmap = meta.get("indexes") or {}
+
+    def _fmt_idx(defs):
+        parts = []
+        for cols in defs:
+            cols = cols if isinstance(cols, list) else [cols]
+            parts.append("(" + "+".join(cols) + ")" if len(cols) > 1 else cols[0])
+        return ", ".join(parts)
+
     for t in meta["tablas"]:
         mark = " ✨ IA" if t.get("enriquecido") else ""
         reglas = f", {len(t['reglas'])} reglas" if t.get("reglas") else ""
-        idx = f", índices: {', '.join(idxmap[t['key']])}" if idxmap.get(t["key"]) else ""
+        idx = f", índices: {_fmt_idx(idxmap[t['key']])}" if idxmap.get(t["key"]) else ""
         out.append(f"- **{t['name']}** ({len(t['campos'])} campos, {t['registros']} reg.{reglas}{idx}) → `/#/abm/{t['key']}`{mark}")
     out += ["", "## Reportes"]
     for r in meta["reportes"]:
@@ -279,17 +287,24 @@ def init_db():
     for t, cols in TABLES.items():
         defs = ", ".join('"%s" %s' % (cn, ct) for cn, ct in cols)
         c.execute('CREATE TABLE IF NOT EXISTS "%s" (id INTEGER PRIMARY KEY AUTOINCREMENT, %s)' % (t, defs))
-    # Índices del sistema original (best-effort, derivados de los .cdx/.idx).
-    for t, idxcols in (META.get("indexes") or {}).items():
+    # Índices del sistema original, derivados de las expresiones de clave de los
+    # .cdx/.idx. Cada entrada es una lista de índices; cada índice una lista de
+    # columnas (compuesto si tiene más de una). Acepta también el formato viejo
+    # (lista de columnas sueltas) por compatibilidad.
+    for t, idxdefs in (META.get("indexes") or {}).items():
         if t not in TABLES:
             continue
         valid = {cn for cn, _ in TABLES[t]}
-        for col in idxcols:
-            if col in valid:
-                try:
-                    c.execute('CREATE INDEX IF NOT EXISTS "ix_%s_%s" ON "%s" ("%s")' % (t, col, t, col))
-                except sqlite3.Error:
-                    pass
+        for i, cols in enumerate(idxdefs):
+            cols = cols if isinstance(cols, list) else [cols]
+            cols = [c for c in cols if c in valid]
+            if not cols:
+                continue
+            try:
+                c.execute('CREATE INDEX IF NOT EXISTS "ix_%s_%d" ON "%s" (%s)' % (
+                    t, i, t, ",".join('"%s"' % x for x in cols)))
+            except sqlite3.Error:
+                pass
     c.commit()
     # Importar los datos reales del sistema legacy una sola vez (si está vacío).
     seed_path = os.path.join(BASE, "seed.json")
@@ -664,9 +679,22 @@ def build_app_scaffold(payload):
         if clean:
             seed[key] = clean
             total_rows += len(clean)
-    indexes = {key: [c for c in cols if c in {cn for cn, _ in tables_sql[key]}]
-               for key, cols in indexes_in.items() if key in tables_sql}
-    indexes = {k: v for k, v in indexes.items() if v}
+    # indexes_in[key] = lista de índices; cada índice = lista de columnas
+    # (compuesto si tiene más de una). Filtramos a columnas válidas y dedupe.
+    indexes = {}
+    for key, defs in indexes_in.items():
+        if key not in tables_sql:
+            continue
+        valid = {cn for cn, _ in tables_sql[key]}
+        clean, seen = [], set()
+        for cols in defs:
+            cols = [c for c in (cols if isinstance(cols, list) else [cols]) if c in valid]
+            sig = tuple(cols)
+            if cols and sig not in seen:
+                seen.add(sig)
+                clean.append(cols)
+        if clean:
+            indexes[key] = clean
     meta["indexes"] = indexes
     meta["stats"]["registros_importados"] = total_rows
     meta["stats"]["tablas_con_datos"] = len(seed)

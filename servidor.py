@@ -290,20 +290,56 @@ def read_dbf_records(dbf_bytes, fpt_bytes, max_records=50000):
     return rows
 
 
-def read_dbf_index_columns(idx_bytes, field_slugs):
-    """Best-effort: deduce qué columnas estaban indexadas (.cdx/.idx) escaneando
-    la cabecera en busca de tokens ASCII que coincidan con campos reales. No
-    parsea el árbol B completo; a lo sumo crea un índice de más (inofensivo)."""
+# Funciones típicas de VFP que envuelven una expresión de índice (señal fuerte
+# de que un texto ASCII es una expresión de clave y no datos del árbol B).
+_VFP_IDX_FUNCS = re.compile(
+    r"\b(UPPER|LOWER|STR|VAL|DTOS|DTOC|DTOT|TTOC|CTOD|ALLTRIM|TRIM|LTRIM|RTRIM|"
+    r"PADL|PADR|PADC|LEFT|RIGHT|SUBSTR|STUFF|TRANSFORM|RECNO|DELETED|IIF|"
+    r"BINTOC|ASC|CHR|MONTH|YEAR|DAY)\b", re.I)
+# Caracteres que pueden aparecer en una expresión de índice VFP.
+_EXPR_RUN = re.compile(r"[A-Za-z0-9_.()+\-*/, '\"<>=!$:]{2,}")
+
+
+def parse_cdx_expressions(idx_bytes, field_slugs):
+    """Parser de los índices .cdx/.idx de FoxPro.
+
+    El valor accionable de un índice para SQLite son los CAMPOS de su expresión
+    de clave. Esas expresiones se guardan como texto ASCII en las cabeceras de
+    cada tag (p. ej. "CODIGO" o "STR(GRUPO)+STR(MENU)"); los datos del árbol B
+    (las claves concretas) están comprimidos y no nos interesan para recrear el
+    índice. Por eso localizamos las EXPRESIONES y de cada una extraemos, en
+    orden, los campos reales involucrados → un índice (compuesto si aplica).
+
+    Devuelve una lista de índices; cada uno es una lista ordenada de slugs de
+    campo. Heurística defensiva: solo acepta runs que (a) sean exactamente un
+    campo real, (b) contengan una función de índice VFP, o (c) concatenen
+    campos con '+'. Así evita falsos positivos de los nodos de datos."""
     if not idx_bytes:
         return []
-    head = idx_bytes[:8192].decode("latin-1", "replace")
+    text = idx_bytes.decode("latin-1", "replace")
     fset = set(field_slugs)
-    cols = []
-    for tok in re.findall(r"[A-Za-z_][A-Za-z0-9_]*", head):
-        s = scaffold._slug(tok)
-        if s in fset and s not in cols:
-            cols.append(s)
-    return cols[:8]
+    defs, seen = [], set()
+    for run in _EXPR_RUN.findall(text):
+        run = run.strip()
+        idents = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", run)
+        cols = []
+        for ident in idents:
+            s = scaffold._slug(ident)
+            if s in fset and s not in cols:
+                cols.append(s)
+        if not cols:
+            continue
+        single_field = (len(idents) == 1 and cols and len(run) <= 32)
+        has_func = bool(_VFP_IDX_FUNCS.search(run))
+        compound = ("+" in run and len(cols) >= 1)
+        if not (single_field or has_func or compound):
+            continue
+        sig = tuple(cols)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        defs.append(cols)
+    return defs[:16]
 
 
 def build_seed_from_zip(raw_bytes, inventory):
@@ -334,16 +370,19 @@ def build_seed_from_zip(raw_bytes, inventory):
             seed[key] = rows
             total += len(rows)
         field_slugs = [scaffold._slug(f.get("name")) for f in (t.get("fields") or [])]
-        cols = []
+        defs, seen = [], set()
         for ext in (".cdx", ".idx"):
             if ext in entry:
                 try:
-                    cols += read_dbf_index_columns(zf.read(entry[ext]), field_slugs)
+                    for cols in parse_cdx_expressions(zf.read(entry[ext]), field_slugs):
+                        sig = tuple(cols)
+                        if cols and sig not in seen:
+                            seen.add(sig)
+                            defs.append(cols)
                 except Exception:
                     pass
-        cols = [c for i, c in enumerate(cols) if c not in cols[:i]]  # dedupe estable
-        if cols:
-            indexes[key] = cols[:8]
+        if defs:
+            indexes[key] = defs[:16]   # lista de índices; cada uno = lista de columnas
     return seed, indexes, total
 
 

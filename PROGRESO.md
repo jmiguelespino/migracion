@@ -101,13 +101,16 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       `backend/seed.json`. El backend generado los importa a SQLite en el primer
       arranque (si la tabla está vacía; idempotente). Se muestran los registros
       importados en la UI (header `X-Rows-Imported`) y en `COBERTURA.md`.
-- [x] **Recrear índices**: best-effort desde `.cdx`/`.idx`
-      (`read_dbf_index_columns` escanea la cabecera por nombres de campo) →
-      `CREATE INDEX` en el backend generado. Documentado como aproximado.
+- [x] **Recrear índices (parser real de expresiones)**: `parse_cdx_expressions`
+      extrae las EXPRESIONES de clave de los `.cdx`/`.idx` (incluidas las
+      compuestas tipo `STR(GRUPO)+STR(MENU)` y con funciones tipo
+      `UPPER(NOMBRE)`), saca los campos en orden y genera **índices compuestos**
+      (`CREATE INDEX ... (col1, col2)`) en el backend. Heurística defensiva:
+      acepta runs que son un campo exacto, traen función VFP, o concatenan con
+      '+', para no confundir datos del árbol B con expresiones.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 - [ ] Probar end-to-end con el ZIP real del usuario (314 archivos, 15 tablas).
-- [ ] Índices: parser real del árbol B del `.cdx` (hoy heurística por cabecera).
 
 ## 🔄 Convención de trabajo
 
