@@ -111,6 +111,18 @@ EXT_CATEGORY = {
     ".mnx": "menus", ".mpr": "menus",
     ".pjx": "project", ".pjt": "project",
     ".cbl": "programs", ".cob": "programs", ".cpy": "copybooks",
+    ".h": "includes",   # archivos de include VFP (#DEFINE, constantes)
+    ".txt": "docs",     # documentación / notas
+}
+
+# Tablas de sistema de VFP/FoxPro que NO son datos de negocio.
+# Se excluyen del análisis para no generar ABMs inútiles.
+VFP_SYSTEM_TABLES = {
+    "foxuser",    # preferencias del IDE/runtime
+    "vfpgraph",   # soporte de gráficos del IDE
+    "foxcode",    # catálogo de código IntelliSense
+    "foxtask",    # tareas del proyecto
+    "foxref",     # referencias de proyectos
 }
 
 # Códigos de TYPE en el proyecto .pjx -> tipo legible.
@@ -714,36 +726,47 @@ def parse_mpr_menu(text):
     return menus
 
 
-def parse_mnx_menu(head_and_body):
-    """Fallback: extrae los PROMPT de un .mnx (es una tabla DBF) como lista plana."""
-    struct = parse_dbf_structure(head_and_body[:32 + 32 * 64])
-    if not struct:
-        return []
-    # Buscamos el campo "prompt" y leemos su columna en cada registro.
-    try:
-        header_len = int.from_bytes(head_and_body[8:10], "little")
-        rec_len = int.from_bytes(head_and_body[10:12], "little")
-    except Exception:
-        return []
-    offset, length = None, 0
-    pos = 1
-    for f in struct["fields"]:
-        if f["name"].lower() == "prompt":
-            offset, length = pos, f["len"]
-            break
-        pos += f["len"]
-    if offset is None:
-        return []
-    items, n = [], int.from_bytes(head_and_body[4:8], "little")
-    for r in range(min(n, 300)):
-        start = header_len + r * rec_len + offset
-        raw = head_and_body[start:start + length]
-        if len(raw) < length:
-            break
-        txt = _clean_prompt(raw.decode("latin-1", "replace").replace("\x00", ""))
-        if txt:
-            items.append({"texto": txt, "accion": ""})
+def parse_mnx_menu(mnx_bytes, mnt_bytes=b""):
+    """Fallback: extrae los ítems de un .mnx (tabla DBF) como lista plana.
+
+    Acepta el memo .mnt para poder leer campos Memo (PROCEDURE, MESSAGE, etc.).
+    Usa read_dbf_records para soportar ambos tipos de campo correctamente.
+    """
+    rows = read_dbf_records(mnx_bytes, mnt_bytes, max_records=500)
+    items = []
+    for r in rows:
+        txt = _clean_prompt(str(r.get("prompt") or "").replace("\x00", ""))
+        if not txt:
+            continue
+        accion = str(r.get("procedure") or r.get("action") or
+                     r.get("command") or "")[:120].strip()
+        items.append({"texto": txt, "accion": accion})
     return [{"titulo": "Menú", "items": items}] if items else []
+
+
+def parse_vcx_methods(vcx_bytes, vct_bytes):
+    """Extrae los métodos (código) de una biblioteca de clases VFP (.vcx + .vct).
+
+    Un .vcx es un DBF donde cada registro es un miembro de clase. El campo
+    OBJCODE (memo, en el .vct) contiene el código PRG del método.
+
+    Devuelve lista de {name, class_name, code} con los métodos no vacíos.
+    """
+    rows = read_dbf_records(vcx_bytes, vct_bytes, max_records=2000)
+    methods = []
+    for r in rows:
+        code = str(r.get("objcode") or "").strip()
+        if not code or len(code) < 15:
+            continue
+        objname  = str(r.get("objname")  or "").strip()
+        # baseclass identifica si es una clase o un método de instancia
+        baseclass = str(r.get("baseclass") or "").strip()
+        methods.append({
+            "name":       objname,
+            "class_name": baseclass,
+            "code":       code[:MAX_SAMPLE_BYTES],
+        })
+    return methods
 
 
 def analyze_zip(raw_bytes):
@@ -813,8 +836,10 @@ def analyze_zip(raw_bytes):
             programs.append(base)
 
         # Estructura real de las tablas .dbf (leyendo solo el header).
+        # Excluimos las tablas de sistema de VFP que no son datos de negocio.
         tname = os.path.splitext(base)[0].lower()
-        if ext == ".dbf" and len(tables) < MAX_TABLES and tname not in seen_tables:
+        if (ext == ".dbf" and len(tables) < MAX_TABLES
+                and tname not in seen_tables and tname not in VFP_SYSTEM_TABLES):
             try:
                 with zf.open(name) as fp:
                     head = fp.read(32 + 32 * 256)  # suficiente para todos los campos
@@ -864,8 +889,9 @@ def analyze_zip(raw_bytes):
         elif ext == ".mnx":
             mnx_pending.append(name)
 
-        # Muestras de código fuente real (programas pequeños).
-        if ext in (".prg", ".cbl", ".cob") and len(samples) < MAX_SAMPLES:
+        # Muestras de código fuente real: .prg, .cbl, .cob, y también archivos
+        # de include .h (constantes #DEFINE) y .txt (notas/documentación).
+        if ext in (".prg", ".cbl", ".cob", ".h", ".txt") and len(samples) < MAX_SAMPLES:
             try:
                 info = zf.getinfo(name)
                 if info.file_size <= MAX_SAMPLE_BYTES * 3:
@@ -878,13 +904,35 @@ def analyze_zip(raw_bytes):
             except Exception:
                 pass
 
-    # Si no hubo menús .mpr, intentamos con los .mnx (DBF) como fallback plano.
+    # Clases VFP (.vcx + .vct): extraer métodos como muestras adicionales de código.
+    # Son reutilizables y contienen lógica de negocio en sus event handlers.
+    vcx_names = [n for n in sorted(names) if n.lower().endswith(".vcx")]
+    for vcx_name in vcx_names[:15]:  # máx 15 archivos de clase
+        try:
+            vcx_bytes = zf.read(vcx_name)
+            stem = os.path.splitext(vcx_name)[0]
+            vct_real = lower_map.get(stem.lower() + ".vct")
+            vct_bytes = zf.read(vct_real) if vct_real else b""
+            vcx_base = os.path.basename(vcx_name)
+            for m in parse_vcx_methods(vcx_bytes, vct_bytes)[:6]:
+                if len(samples) >= MAX_SAMPLES:
+                    break
+                samples.append({
+                    "name": f"{vcx_base}.{m['name']}",
+                    "content": m["code"],
+                })
+        except Exception:
+            pass
+
+    # Si no hubo menús .mpr, intentamos con los .mnx (DBF + memo .mnt) como fallback.
     if not menus and mnx_pending:
         for name in mnx_pending[:5]:
             try:
                 with zf.open(name) as fp:
                     body = fp.read(200000)
-                menus.extend(parse_mnx_menu(body))
+                mnt_real = lower_map.get(os.path.splitext(name)[0].lower() + ".mnt")
+                mnt_bytes = zf.read(mnt_real) if mnt_real else b""
+                menus.extend(parse_mnx_menu(body, mnt_bytes))
             except Exception:
                 pass
 
