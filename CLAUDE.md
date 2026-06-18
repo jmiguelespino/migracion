@@ -32,6 +32,24 @@ del original (ABM por tabla, menús, reportes, lógica). Servidor local en Pytho
 - `python3 -m py_compile servidor.py scaffold.py`
 - Validar el JS embebido de `index.html` con `node --check` (extraer `<script>`).
 - El backend generado por `scaffold.py` debe compilar (`py_compile`).
+- **No alcanza con compilar: el backend generado debe ARRANCAR.** Generá un ZIP
+  de prueba, descomprimilo y corré `python -m uvicorn backend.app:app` para
+  confirmar que levanta y responde (GET / → 200).
+
+## Trampas conocidas (NO repetir)
+
+- **JSON vs Python (`true`/`false`/`null`)**: en Python se escribe `True`,
+  `False`, `None` — nunca `true`/`false`/`null`. Si generás código Python que
+  incrusta datos, **no pegues `json.dumps()` como literal Python** (produce
+  `true`/`false`/`null` y rompe con `NameError`). Serializá a un `.json` aparte
+  y cargalo en runtime con `json.load()` (así está hoy en `scaffold.py` →
+  `backend/meta.json`). Esto además evita problemas de escapado de comillas y
+  backslashes (p. ej. patrones regex).
+- **`.bat` de Windows con CRLF**: usá siempre `set "VAR=valor"` CON comillas.
+  Sin comillas, el salto `\r\n` deja un retorno de carro pegado a la variable y
+  `%VAR% ...` se expande mal.
+- **`uvicorn` en Windows**: invocá `python -m uvicorn` (no `uvicorn` directo,
+  que suele quedar fuera del PATH en `Scripts\`).
 
 ## Flujo de entrega
 
