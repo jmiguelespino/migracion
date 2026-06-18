@@ -31,6 +31,9 @@ reportes y la lógica de negocio. Paridad funcional, no una muestra.
   la fase. Sigue existiendo (botón **⚡ Analizar sistema (por fases)**).
 - **Motores de IA**: **Claude** (API key) y **🆓 Gratis** (Ollama local). El
   modo **Demo** fue ELIMINADO (era salida simulada, redundante).
+- **Reanudar sesión**: el inventario del ZIP se persiste en `localStorage` apenas
+  se lee (con fallback de cuota: sin muestras → sin zipInfo). Al reabrir, se
+  restaura y se puede **generar la app sin volver a subir el ZIP**.
 
 ## 🧱 Arquitectura / archivos
 
