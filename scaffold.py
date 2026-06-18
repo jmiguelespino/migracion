@@ -191,6 +191,7 @@ def build_meta(inventory, title, enrich=None):
 
     formularios = [re.sub(r"\.\w+$", "", str(f)) for f in inventory.get("forms", [])]
     menus = inventory.get("menus", []) or []
+    proyecto = inventory.get("project") or None
 
     meta = {
         "titulo": title,
@@ -198,11 +199,14 @@ def build_meta(inventory, title, enrich=None):
         "menus": menus,
         "reportes": reportes,
         "formularios": formularios,
+        "proyecto": proyecto,
         "stats": {
             "tablas": len(tablas), "formularios": len(formularios),
             "reportes": len(reportes),
             "items_menu": sum(len(m.get("items", [])) for m in menus),
             "enriquecidas": sum(1 for t in tablas if t.get("enriquecido")),
+            "archivos_proyecto": len(proyecto["archivos"]) if proyecto else 0,
+            "programa_principal": (proyecto or {}).get("principal", ""),
         },
     }
     return meta, tables_sql
@@ -251,6 +255,16 @@ def _coverage_md(meta):
     out += ["", "## Menús del sistema"]
     for m in meta["menus"]:
         out.append(f"- **{m.get('titulo','')}**: " + ", ".join(i.get("texto", "") for i in m.get("items", [])))
+
+    pj = meta.get("proyecto")
+    if pj:
+        out += ["", "## Proyecto original (.pjx)",
+                f"- **Programa principal:** `{pj.get('principal') or '(no declarado)'}`",
+                f"- **Archivos declarados:** {len(pj.get('archivos', []))}", "",
+                "| Archivo | Tipo | Excluido |", "|---------|------|:--------:|"]
+        for a in pj.get("archivos", [])[:200]:
+            out.append(f"| {a['name']} | {a['type_name']} | {'sí' if a['excluido'] else ''} |")
+
     out += ["", "---", "_Generado por LegacyMigrator (cobertura total)._"]
     return "\n".join(out)
 
@@ -709,9 +723,14 @@ function viewHome() {
     const c = COUNTS[t.key]||0; const w = Math.round((c/max)*100);
     return `<div class="bar"><a href="#/abm/${t.key}">${esc(t.name)}</a><div class="track"><div class="fill" style="width:${w}%"></div></div><span class="muted">${c}</span></div>`;
   }).join('');
+  const pj = META.proyecto;
+  const pjHtml = pj ? `<div class="card"><b>📦 Proyecto original (.pjx)</b>
+    <p class="sub" style="margin:6px 0 0">Programa principal: <b>${esc(pj.principal||'(no declarado)')}</b> · ${(pj.archivos||[]).length} archivos declarados</p>
+    <div style="margin-top:8px">${Object.entries(pj.por_tipo||{}).map(([k,v])=>`<span class="tag">${esc(k)}: ${v}</span>`).join('')}</div></div>` : '';
   $('#main').innerHTML = `<h1>${esc(META.titulo||'App migrada')}</h1>
     <p class="sub">Sistema migrado con todas sus utilidades. Datos reales importados del sistema original.</p>
     <div class="grid">${cards}</div>
+    ${pjHtml}
     <div class="card"><b>Registros por tabla</b><div class="bars" style="margin-top:12px">${bars||'<span class="muted">Sin datos importados.</span>'}</div></div>`;
 }
 

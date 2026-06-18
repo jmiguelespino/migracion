@@ -109,7 +109,17 @@ EXT_CATEGORY = {
     ".prg": "programs",
     ".vcx": "classes", ".vct": "classes",
     ".mnx": "menus", ".mpr": "menus",
+    ".pjx": "project", ".pjt": "project",
     ".cbl": "programs", ".cob": "programs", ".cpy": "copybooks",
+}
+
+# Códigos de TYPE en el proyecto .pjx -> tipo legible.
+PJX_TYPE = {
+    "H": "Programa principal", "P": "Programa", "S": "Formulario",
+    "R": "Reporte", "L": "Etiqueta", "M": "Menú", "V": "Clase",
+    "d": "Base de datos", "D": "Base de datos", "Q": "Consulta",
+    "T": "Tabla", "B": "Biblioteca (API)", "K": "Texto", "Z": "Otro",
+    "I": "Imagen", "X": "Otro", "m": "Menú",
 }
 
 # Tipos de campo DBF -> nombre legible (para enriquecer el prompt).
@@ -417,6 +427,38 @@ def extract_assets_from_zip(raw_bytes):
     return assets
 
 
+def parse_pjx(pjx_bytes, pjt_bytes):
+    """Lee el proyecto VFP (.pjx + memo .pjt). Es una tabla DBF: cada registro
+    describe un archivo del sistema. Devuelve el manifiesto: lista de archivos
+    (con tipo, si está excluido y si es el principal) y el programa de arranque.
+
+    Es el archivo MÁS importante para el armado: define qué compone el sistema
+    y cuál es su punto de entrada. Reusa el lector de .dbf (read_dbf_records)."""
+    rows = read_dbf_records(pjx_bytes, pjt_bytes, max_records=5000)
+    archivos, principal, por_tipo = [], "", {}
+    for r in rows:
+        name = str(r.get("name") or "").strip().replace("\x00", "")
+        if not name:
+            continue
+        typ = (str(r.get("type") or "").strip() or "?")[:1]
+        es_main = bool(r.get("mainprog") or r.get("main"))
+        item = {
+            "name": name.replace("\\", "/").split("/")[-1],
+            "ruta": name,
+            "type": typ,
+            "type_name": PJX_TYPE.get(typ, typ),
+            "excluido": bool(r.get("exclude")),
+            "principal": es_main,
+        }
+        archivos.append(item)
+        por_tipo[item["type_name"]] = por_tipo.get(item["type_name"], 0) + 1
+        if es_main and not principal:
+            principal = item["name"]
+        if not principal and typ == "H":
+            principal = item["name"]
+    return {"archivos": archivos, "principal": principal, "por_tipo": por_tipo}
+
+
 def _read_memo(sct, blocknum, blocksize):
     """Lee un campo memo de un archivo .sct/.fpt dado su número de bloque."""
     if not sct or blocknum <= 0:
@@ -613,6 +655,18 @@ def analyze_zip(raw_bytes):
     names = [n for n in zf.namelist() if not n.endswith("/")]
     lower_map = {n.lower(): n for n in names}  # para ubicar el .sct de cada .scx
 
+    # 1) PRIMERO el proyecto .pjx: es el manifiesto del sistema (qué archivos lo
+    # componen y cuál es el programa principal). Orienta todo el armado.
+    project = None
+    pjx_name = next((n for n in names if n.lower().endswith(".pjx")), None)
+    if pjx_name:
+        try:
+            pjt_real = lower_map.get(os.path.splitext(pjx_name)[0].lower() + ".pjt")
+            pjt_bytes = zf.read(pjt_real) if pjt_real else b""
+            project = parse_pjx(zf.read(pjx_name), pjt_bytes)
+        except Exception:
+            project = None
+
     by_ext = {}
     counts = {}
     forms, reports, programs = [], [], []
@@ -729,6 +783,7 @@ def analyze_zip(raw_bytes):
         "programs": sorted(set(programs))[:MAX_NAME_LIST],
         "samples": samples,
         "menus": menus,
+        "project": project,
     }
 
 
