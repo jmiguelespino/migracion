@@ -504,7 +504,7 @@ def parse_dbc(dbc_bytes, dct_bytes):
             except (TypeError, ValueError):
                 pass
 
-    relaciones, campos_props, stored_procs, vistas = [], {}, {}, []
+    relaciones, campos_props, stored_procs, vistas = [], {}, [], []
     seen_rels = set()
 
     for r in rows:

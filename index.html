@@ -274,7 +274,7 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
 
     <!-- ZONA INFERIOR: BOTÓN SIEMPRE VISIBLE -->
     <div class="sb-bot">
-      <button class="ban" id="ban" onclick="analyzeSystem()" disabled>⚡ Analizar sistema (por fases)</button>
+      <button class="ban" id="ban" onclick="analyzeSystem()" disabled title="Experimental — para Claude API. En CPU/Ollama usá 📦 o ✨" style="opacity:0.75">⚡ Analizar sistema (por fases) <span style="font-size:0.7em;opacity:0.8">[experimental]</span></button>
       <button class="ban" id="bapp" onclick="generateFullApp()" disabled style="margin-top:8px;background:var(--teal)">📦 Generar app completa</button>
       <button class="ban" id="bappai" onclick="generateEnrichedApp()" disabled style="margin-top:8px;background:var(--coral)">✨ App completa + IA</button>
       <div class="hint" id="hint">Completá la API key y subí un ZIP</div>
