@@ -612,9 +612,14 @@ async function handleFolder(fileList) {
     const zipBlob = buildZip(entries);
     const folderName = (files[0].webkitRelativePath || 'sistema').split('/')[0] || 'sistema';
     const zipFile = new File([zipBlob], folderName + '.zip', { type: 'application/zip' });
-    handleFile(zipFile);
+    setLoad('Leyendo el sistema en el servidor...', `${files.length} archivos · ${(zipBlob.size/1024/1024).toFixed(1)} MB`);
+    await handleFile(zipFile);   // espera la lectura del ZIP antes de salir del loading
+    showView('w');
+    const z = S.zipInfo || {};
+    showWarn(`✅ Carpeta cargada: ${(z.tables||[]).length} tablas detectadas. Ya podés generar la app (📦 / ✨).`);
   } catch (err) {
-    showView('w'); showErr('No se pudo empaquetar la carpeta: ' + err.message);
+    showView('w');
+    showErr('No se pudo procesar la carpeta: ' + (err.message || err));
   }
 }
 
@@ -662,15 +667,17 @@ function handleFile(f) {
   checkReady();
   // Leer el ZIP inmediatamente en background para persistir el inventario.
   // Si el usuario cierra la app antes de generar, puede continuar al reabrir.
-  readZip().then(info => {
+  return readZip().then(info => {
     S.zipInfo = info;
     const z = info;
     document.getElementById('fmeta').textContent =
       `${(f.size/1024/1024).toFixed(1)} MB · ${(z.tables||[]).length} tablas · ${(z.reports||[]).length} reportes`;
     saveState();
     checkReady();
-  }).catch(() => {
+    return info;
+  }).catch((e) => {
     document.getElementById('fmeta').textContent = (f.size/1024/1024).toFixed(1) + ' MB · Listo para analizar';
+    throw e;
   });
 }
 
