@@ -328,29 +328,44 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
 </div>
 
 <script>
-const S = { apiKey:'', file:null, engine:'claude', ollamaModel:'', sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null, phases:[], currentPhase:null, currentPhaseData:null, completedPhases:[], generatedFiles:{} };
+const S = { apiKey:'', file:null, savedFileName:'', engine:'claude', ollamaModel:'', sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null, phases:[], currentPhase:null, currentPhaseData:null, completedPhases:[], generatedFiles:{} };
 let ollamaAvailable = false;
 
 // --- PERSISTENCIA DEL PROYECTO (localStorage) ---
 // No guardamos la API key (seguridad) ni el File. Sí el análisis y las fases,
 // para no perder el trabajo al recargar la página.
 const LS_KEY = 'lm_proyecto';
+// El zipInfo puede ser grande; si no entra en la cuota, lo guardamos sin las
+// muestras de código (lo más pesado) y, si tampoco, sin zipInfo.
+function liteZip(z) {
+  if (!z) return null;
+  const { samples, ...rest } = z;
+  return rest;
+}
 function saveState() {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify({
-      sourceLang:S.sourceLang, targetLang:S.targetLang, engine:S.engine, ollamaModel:S.ollamaModel,
-      zipInfo:S.zipInfo, systemInfo:S.systemInfo, phases:S.phases, completedPhases:S.completedPhases
-    }));
-  } catch(e) { /* cuota llena u otro: se ignora */ }
+  const base = {
+    sourceLang:S.sourceLang, targetLang:S.targetLang, engine:S.engine, ollamaModel:S.ollamaModel,
+    fileName:(S.file ? S.file.name : (S.savedFileName||'')),
+    systemInfo:S.systemInfo, phases:S.phases, completedPhases:S.completedPhases
+  };
+  const tries = [
+    () => JSON.stringify({ ...base, zipInfo:S.zipInfo }),
+    () => JSON.stringify({ ...base, zipInfo:liteZip(S.zipInfo) }),
+    () => JSON.stringify(base),
+  ];
+  for (const make of tries) {
+    try { localStorage.setItem(LS_KEY, make()); return; } catch (e) { /* cuota: probamos más liviano */ }
+  }
 }
 function loadState() {
   try {
     const d = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-    if (!d || !d.systemInfo || !(d.phases||[]).length) return false;
+    // Reanudamos si hay fases analizadas O un inventario del ZIP guardado.
+    if (!d || !(d.zipInfo || ((d.phases||[]).length && d.systemInfo))) return false;
     const engine = (d.engine === 'free') ? 'free' : 'claude';   // 'demo' (obsoleto) -> claude
     Object.assign(S, { sourceLang:d.sourceLang||S.sourceLang, targetLang:d.targetLang||S.targetLang,
-      engine, ollamaModel:d.ollamaModel||'',
-      zipInfo:d.zipInfo||null, systemInfo:d.systemInfo, phases:d.phases, completedPhases:d.completedPhases||[] });
+      engine, ollamaModel:d.ollamaModel||'', savedFileName:d.fileName||'',
+      zipInfo:d.zipInfo||null, systemInfo:d.systemInfo||null, phases:d.phases||[], completedPhases:d.completedPhases||[] });
     return true;
   } catch(e) { return false; }
 }
@@ -423,12 +438,15 @@ function checkReady() {
     msg = ok ? '¡Todo listo! Hacé clic para analizar ↑' : 'Falta la API key (o elegí Gratis)';
   }
   document.getElementById('ban').disabled = !(hf && ok);
-  // La app completa (cobertura total) es determinística: solo necesita el ZIP.
+  // La app completa (cobertura total) es determinística: alcanza con el ZIP
+  // recién subido O con un inventario restaurado de una sesión anterior.
+  const haveZip = hf || !!S.zipInfo;
   const ba = document.getElementById('bapp');
-  if (ba) ba.disabled = !hf;
+  if (ba) ba.disabled = !haveZip;
   // La app + IA necesita además un motor listo (Claude o Ollama).
   const bai = document.getElementById('bappai');
-  if (bai) bai.disabled = !(hf && ok);
+  if (bai) bai.disabled = !(haveZip && ok);
+  if (!hf && S.zipInfo) msg = '↩ Sistema anterior cargado: podés generar la app.';
   h.textContent = msg;
 }
 
@@ -436,13 +454,13 @@ function checkReady() {
 // (un ABM por tabla, los menús como navegación y un reporte por cada .frx).
 // Es determinística: no usa el modelo, así que no depende de Claude ni Ollama.
 async function generateFullApp() {
-  if (!S.file) { showErr('Subí un ZIP primero.'); return; }
+  if (!S.file && !S.zipInfo) { showErr('Subí un ZIP primero.'); return; }
   hideErr(); hideWarn(); showView('l');
   setLoad('Generando la app completa...', 'Armando ABM, menús y reportes (cobertura total, sin IA)');
   document.getElementById('ttl').textContent = 'App completa (cobertura total)';
   try {
-    if (!S.zipInfo) S.zipInfo = await readZip();
-    const title = (S.systemInfo && S.systemInfo.nombre) || (S.file.name.replace(/\.zip$/i, '')) || 'App migrada';
+    if (!S.zipInfo) { S.zipInfo = await readZip(); saveState(); }
+    const title = (S.systemInfo && S.systemInfo.nombre) || ((S.file ? S.file.name : (S.savedFileName||'app')).replace(/\.zip$/i, '')) || 'App migrada';
     const payload = { inventory: Object.assign({ nombre: title }, S.zipInfo), title, filename: 'app-migrada.zip' };
     const r = await fetch('/api/scaffold', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error?.message || ('HTTP ' + r.status)); }
@@ -493,11 +511,11 @@ Usá EXACTAMENTE los nombres de campo reales en "name"/"campo". Si no hay reglas
 }
 
 async function generateEnrichedApp(){
-  if(!S.file){ showErr('Subí un ZIP primero.'); return; }
+  if(!S.file && !S.zipInfo){ showErr('Subí un ZIP primero.'); return; }
   hideErr(); hideWarn(); showView('l');
   document.getElementById('ttl').textContent='App completa + IA';
   try{
-    if(!S.zipInfo){ setLoad('Leyendo el ZIP...',''); S.zipInfo=await readZip(); }
+    if(!S.zipInfo){ setLoad('Leyendo el ZIP...',''); S.zipInfo=await readZip(); saveState(); }
     const all=(S.zipInfo.tables||[]);
     // Prioridad: primero las tablas con SEÑAL real (formulario o código .prg),
     // que son las que el modelo puede enriquecer mejor; después el resto.
@@ -513,7 +531,7 @@ async function generateEnrichedApp(){
       }catch(_){ /* esa tabla queda con el scaffold base */ }
     }
     setLoad('Armando la app...', 'Integrando el enriquecimiento en el scaffold');
-    const title=(S.systemInfo&&S.systemInfo.nombre)||S.file.name.replace(/\.zip$/i,'')||'App migrada';
+    const title=(S.systemInfo&&S.systemInfo.nombre)||(S.file?S.file.name:(S.savedFileName||'app')).replace(/\.zip$/i,'')||'App migrada';
     const payload={ inventory:Object.assign({nombre:title},S.zipInfo), enrich, title, filename:'app-migrada.zip' };
     const r=await fetch('/api/scaffold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error?.message||('HTTP '+r.status)); }
@@ -663,6 +681,7 @@ async function analyzeSystem() {
     if (!S.zipInfo) {
       setLoad('Leyendo el ZIP...', 'Extrayendo archivos y estructura de tablas reales');
       S.zipInfo = await readZip();
+      saveState();   // persistimos el inventario ya, por si el análisis falla
     }
   } catch(e) {
     // Si falla la lectura, seguimos con análisis básico por nombre/tamaño.
@@ -939,9 +958,26 @@ function repairTruncatedJson(s){
   const techSel = document.querySelector('.sblk select'); if (techSel) techSel.value = S.targetLang;
   const map = {'Visual FoxPro':'VFP','FoxPro':'Fox','COBOL':'COBOL'};
   document.querySelectorAll('#langrow .lb').forEach(b => b.classList.toggle('active', b.textContent === map[S.sourceLang]));
-  renderAnalysis(); renderSidebar(); showView('a');
-  document.getElementById('ttl').textContent = 'Análisis del sistema';
-  showWarn('Proyecto anterior restaurado. Para volver a analizar desde cero, subí el ZIP otra vez o tocá "Nuevo proyecto".');
+
+  // Mostrar el sistema restaurado en el cuadro de archivo (aunque no haya File).
+  if (S.savedFileName || S.zipInfo) {
+    document.getElementById('fname').textContent = S.savedFileName || 'Sistema restaurado';
+    const z = S.zipInfo;
+    document.getElementById('fmeta').textContent = z
+      ? `${(z.tables||[]).length} tablas · ${(z.menus||[]).length} menús · ${(z.reports||[]).length} reportes (restaurado)`
+      : 'Proyecto restaurado';
+    document.getElementById('fok').classList.add('show');
+  }
+
+  if (S.systemInfo && (S.phases||[]).length) {
+    renderAnalysis(); renderSidebar(); showView('a');
+    document.getElementById('ttl').textContent = 'Análisis del sistema';
+    showWarn('Proyecto anterior restaurado (análisis + fases). También podés generar la app completa. Para empezar de cero: "Nuevo proyecto".');
+  } else {
+    showView('w');
+    showWarn('Sistema anterior restaurado: ya podés generar la app (📦 / ✨) sin volver a subir el ZIP. Para empezar de cero: "Nuevo proyecto".');
+  }
+  document.getElementById('bnew').style.display = 'flex';
   checkReady();
 })();
 </script>
