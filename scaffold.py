@@ -17,6 +17,7 @@ segunda etapa (enriquecer pantallas y portar la lógica de los .prg).
 
 import io
 import json
+import os
 import re
 import zipfile
 
@@ -220,6 +221,8 @@ def _coverage_md(meta):
         f"| · de ellas, enriquecidas con IA | {s.get('enriquecidas', 0)} | ✨ etiquetas, obligatorios y reglas |",
         f"| Registros importados | {s.get('registros_importados', 0)} | ✅ datos reales del .dbf |",
         f"| Índices recreados | {s.get('indices', 0)} | 🟡 best-effort (.cdx/.idx) |",
+        f"| Imágenes incluidas | {s.get('imagenes', 0)} | ✅ en `web/assets/` |",
+        f"| Campos mostrados como imagen | {s.get('campos_imagen', 0)} | ✅ render `<img>` |",
         f"| Menús (navegación) | {len(meta['menus'])} | ✅ generado |",
         f"| Reportes (vista/consulta) | {s['reportes']} | ✅ generado |",
         f"| Formularios originales | {s['formularios']} | 🟡 listados |",
@@ -504,6 +507,7 @@ h2{font-size:18px;margin-bottom:10px}
 table{border-collapse:collapse;width:100%;background:#fff;border:1px solid #e2dfd8;border-radius:8px;overflow:hidden}
 th,td{padding:7px 10px;border-bottom:1px solid #eee;font-size:13px;text-align:left}
 th{background:#f0ede8;font-weight:700}
+img.thumb{max-width:80px;max-height:60px;border-radius:4px;border:1px solid #e2dfd8;vertical-align:middle;object-fit:contain}
 button{background:#534AB7;color:#fff;border:none;border-radius:6px;padding:7px 12px;cursor:pointer;font-weight:600}
 button.sec{background:#fff;color:#534AB7;border:1px solid #ccc9c0}
 button.del{background:#A32D2D}
@@ -560,6 +564,14 @@ function byName(txt) {
 function norm(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 
+// Imágenes del sistema original: el valor del campo guarda un nombre de archivo
+// (a veces con ruta tipo "fotos\\a.jpg"); las servimos desde /assets/<base>.
+function assetSrc(val){ const s=String(val||'').trim().replace(/\\/g,'/'); return 'assets/' + encodeURIComponent(s.split('/').pop()); }
+function cellHtml(f, val){
+  if (f.es_imagen && val) return `<img class="thumb" src="${assetSrc(val)}" alt="${esc(val)}" title="${esc(val)}" onerror="this.replaceWith(document.createTextNode('${esc(val)}'))">`;
+  return esc(val);
+}
+
 function route() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === location.hash));
   const p = (location.hash || '').split('/');
@@ -584,13 +596,14 @@ async function viewAbm(key) {
     const star = f.requerido ? ' *' : '';
     const ctl = f.input === 'textarea'
       ? `<textarea id="f_${f.name}" ${req} ${tip}></textarea>`
-      : `<input id="f_${f.name}" type="${f.input}" ${req} ${tip}>`;
-    form += `<label>${esc(f.label || f.name)}${star}${ctl}</label>`;
+      : `<input id="f_${f.name}" type="${f.input}" ${req} ${tip}${f.es_imagen ? ` oninput="document.getElementById('pv_${f.name}').src=assetSrc(this.value)"` : ''}>`;
+    const pv = f.es_imagen ? `<img id="pv_${f.name}" class="thumb" alt="" onerror="this.style.display='none'">` : '';
+    form += `<label>${esc(f.label || f.name)}${star}${ctl}${pv}</label>`;
   });
   form += `<div class="full"><button type="submit">Guardar</button>
            <button type="button" class="sec" onclick="clearForm()">Limpiar</button></div></form>`;
   let head = '<tr>' + fields.map(f => `<th>${esc(f.label || f.name)}</th>`).join('') + '<th></th></tr>';
-  let body = rows.map(r => '<tr>' + fields.map(f => `<td>${esc(r[f.name])}</td>`).join('') +
+  let body = rows.map(r => '<tr>' + fields.map(f => `<td>${cellHtml(f, r[f.name])}</td>`).join('') +
     `<td><button class="sec" onclick='editRow(${JSON.stringify(r)})'>✎</button>
      <button class="del" onclick="delRow('${key}',${r.id})">🗑</button></td></tr>`).join('');
   $('#main').innerHTML = `<h2>${esc(t.titulo || t.name)} <span class="muted">(${rows.length} registros)</span></h2>
@@ -610,7 +623,7 @@ function reglasHtml(t) {
 }
 
 function clearForm(){document.querySelectorAll('form.abm [id^=f_]').forEach(e=>{e.value='';});}
-function editRow(r){for(const k in r){const e=document.getElementById('f_'+k);if(e)e.value=r[k];}document.getElementById('f_id').value=r.id;}
+function editRow(r){for(const k in r){const e=document.getElementById('f_'+k);if(e)e.value=r[k];const pv=document.getElementById('pv_'+k);if(pv&&r[k]){pv.style.display='';pv.src=assetSrc(r[k]);}}document.getElementById('f_id').value=r.id;}
 
 async function saveRow(key) {
   const t = tableByKey(key);
@@ -640,7 +653,7 @@ async function viewReport(i) {
   const t = tableByKey(r.tabla);
   const rows = await (await fetch('/api/t/' + r.tabla).catch(()=>({json:()=>[]}))).json();
   const head = '<tr>' + t.campos.map(f => `<th>${esc(f.label||f.name)}</th>`).join('') + '</tr>';
-  const body = rows.map(x => '<tr>' + t.campos.map(f => `<td>${esc(x[f.name])}</td>`).join('') + '</tr>').join('');
+  const body = rows.map(x => '<tr>' + t.campos.map(f => `<td>${cellHtml(f, x[f.name])}</td>`).join('') + '</tr>').join('');
   $('#main').innerHTML = `<h2>Reporte: ${esc(r.name)} <span class="muted">(${rows.length} filas)</span></h2>
     <table><thead>${head}</thead><tbody>${body}</tbody></table>`;
 }
@@ -656,9 +669,48 @@ boot();
 '''
 
 
-def build_app_scaffold(payload):
-    """payload = {inventory, title}. Devuelve los bytes del ZIP de la app."""
+IMAGE_EXT_RE = re.compile(r"\.(png|jpe?g|gif|bmp|ico|webp|tiff?)$", re.I)
+# Pistas en el nombre del campo para detectar imágenes aunque no haya datos.
+IMG_FIELD_HINT = re.compile(r"(imagen|imag|foto|photo|image|logo|dibujo|pic|icono|icon|thumb)", re.I)
+
+
+def _basename_lower(val):
+    """Nombre de archivo (sin ruta) en minúsculas, de un valor tipo 'fotos\\a.jpg'."""
+    s = str(val or "").strip().replace("\\", "/")
+    return s.rsplit("/", 1)[-1].lower()
+
+
+def _detect_image_fields(meta, seed, asset_names):
+    """Marca como imagen los campos cuyos valores son nombres de archivo de
+    imagen (idealmente presentes en assets) o cuyo nombre sugiere una imagen.
+    Devuelve la cantidad de campos marcados."""
+    marked = 0
+    for t in meta["tablas"]:
+        rows = seed.get(t["key"]) or []
+        for campo in t["campos"]:
+            if campo.get("type") not in ("C", "M", "G", "P"):
+                continue
+            name = campo["name"]
+            vals = [r.get(name) for r in rows if r.get(name)]
+            looks = [v for v in vals if IMAGE_EXT_RE.search(str(v))]
+            in_assets = [v for v in looks if _basename_lower(v) in asset_names]
+            es_img = False
+            if vals and len(looks) >= max(1, len(vals) * 0.3):
+                es_img = True                      # los datos son nombres de imagen
+            elif asset_names and IMG_FIELD_HINT.search(name) and (looks or not vals):
+                es_img = True                      # el nombre del campo lo sugiere
+            if es_img:
+                campo["es_imagen"] = True
+                campo["input"] = "text"            # se edita como texto (nombre de archivo)
+                marked += 1
+    return marked
+
+
+def build_app_scaffold(payload, assets=None):
+    """payload = {inventory, title, seed, indexes}. `assets` = {nombre: bytes}
+    con las imágenes a incluir. Devuelve (bytes_zip, meta)."""
     inventory = payload.get("inventory") or {}
+    assets = assets or {}
     title = (payload.get("title") or inventory.get("nombre") or "App migrada").strip()
     enrich = payload.get("enrich") or {}
 
@@ -700,6 +752,12 @@ def build_app_scaffold(payload):
     meta["stats"]["tablas_con_datos"] = len(seed)
     meta["stats"]["indices"] = sum(len(v) for v in indexes.values())
 
+    # Imágenes: detectar qué campos son imágenes (para mostrarlas en la SPA).
+    asset_names = {k.lower() for k in assets}
+    img_fields = _detect_image_fields(meta, seed, asset_names)
+    meta["stats"]["imagenes"] = len(assets)
+    meta["stats"]["campos_imagen"] = img_fields
+
     app_py = APP_PY
     meta_json = json.dumps({"tables": tables_sql, "meta": meta}, ensure_ascii=False)
     seed_json = json.dumps(seed, ensure_ascii=False) if seed else ""
@@ -724,6 +782,8 @@ def build_app_scaffold(payload):
         f"- {meta['stats']['tablas']} tablas con ABM (alta/baja/modificación/listado)",
         f"- {meta['stats'].get('registros_importados', 0)} registros importados de los .dbf reales",
         f"- {meta['stats'].get('indices', 0)} índices recreados (best-effort desde .cdx/.idx)",
+        f"- {meta['stats'].get('imagenes', 0)} imágenes del sistema en `web/assets/` "
+        f"({meta['stats'].get('campos_imagen', 0)} campos se muestran como imagen)",
         f"- {len(meta['menus'])} menús como navegación",
         f"- {meta['stats']['reportes']} reportes como vistas de consulta",
         "- Base de datos SQLite local (`backend/datos.db`, se crea sola)",
@@ -798,4 +858,7 @@ def build_app_scaffold(payload):
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
         for path, content in files.items():
             z.writestr(path, content)
+        # Imágenes del sistema original -> web/assets/ (servidas por el backend).
+        for name, data in (assets or {}).items():
+            z.writestr("web/assets/" + os.path.basename(name), data)
     return buf.getvalue(), meta

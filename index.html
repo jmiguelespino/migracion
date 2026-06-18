@@ -230,6 +230,8 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
           <span>ZIP con código fuente VFP / COBOL / FoxPro</span>
         </div>
         <input type="file" id="fi" accept=".zip">
+        <input type="file" id="fdir" webkitdirectory directory multiple style="display:none">
+        <button class="bsm sec" style="width:100%;margin-top:6px" onclick="document.getElementById('fdir').click()">📂 Elegir carpeta (.dbf + imágenes)</button>
         <div class="fok" id="fok">
           <div class="fn" id="fname">—</div>
           <div class="fm" id="fmeta">—</div>
@@ -474,6 +476,7 @@ async function generateFullApp() {
     const r = await fetch('/api/scaffold', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error?.message || ('HTTP ' + r.status)); }
     const imported = parseInt(r.headers.get('X-Rows-Imported') || '0', 10);
+    const imgs = parseInt(r.headers.get('X-Images-Imported') || '0', 10);
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = 'app-migrada.zip';
@@ -481,7 +484,8 @@ async function generateFullApp() {
     setTimeout(() => URL.revokeObjectURL(a.href), 1500);
     showView(S.phases && S.phases.length ? 'a' : 'w');
     const z = S.zipInfo;
-    const dataMsg = imported ? ` Se importaron ${imported} registros reales de los .dbf.` : ' (Datos no importados: volvé a subir el ZIP en esta sesión para incluirlos.)';
+    const imgMsg = imgs ? ` Incluye ${imgs} imágenes del sistema.` : '';
+    const dataMsg = (imported ? ` Se importaron ${imported} registros reales de los .dbf.` : ' (Datos no importados: volvé a subir el ZIP/carpeta en esta sesión para incluirlos.)') + imgMsg;
     showWarn(`✅ App completa descargada (app-migrada.zip). Incluye ABM para ${(z.tables||[]).length} tablas, ${(z.menus||[]).length} menús y ${(z.reports||[]).length} reportes.${dataMsg} Adentro: COBERTURA.md y cómo correrla (FastAPI).`);
   } catch (e) {
     showView(S.phases && S.phases.length ? 'a' : 'w');
@@ -583,6 +587,69 @@ drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add(
 drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
 drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('drag'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
 fi.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+
+// Selección de CARPETA: tomamos los archivos relevantes (datos + imágenes),
+// armamos un ZIP en el navegador (sin librerías) y lo metemos en el mismo flujo.
+const fdir = document.getElementById('fdir');
+fdir.addEventListener('change', e => { if (e.target.files.length) handleFolder(e.target.files); });
+
+// Extensiones que importan para la migración (datos, formularios, código, imágenes).
+const FOLDER_EXTS = new Set(['.dbf','.fpt','.cdx','.idx','.dbc','.dct','.scx','.sct','.frx','.frt','.mpr','.mnx','.vcx','.vct','.prg','.cbl','.cob','.cpy','.png','.jpg','.jpeg','.gif','.bmp','.ico','.webp','.tif','.tiff']);
+
+async function handleFolder(fileList) {
+  const files = Array.from(fileList).filter(f => {
+    const dot = f.name.lastIndexOf('.');
+    return dot >= 0 && FOLDER_EXTS.has(f.name.slice(dot).toLowerCase());
+  });
+  if (!files.length) { showErr('La carpeta no tiene archivos .dbf, código ni imágenes reconocibles.'); return; }
+  showView('l'); setLoad('Empaquetando la carpeta...', `${files.length} archivos (datos + imágenes)`);
+  try {
+    const entries = [];
+    for (const f of files) {
+      const buf = new Uint8Array(await f.arrayBuffer());
+      entries.push({ name: (f.webkitRelativePath || f.name).replace(/\\/g,'/'), data: buf });
+    }
+    const zipBlob = buildZip(entries);
+    const folderName = (files[0].webkitRelativePath || 'sistema').split('/')[0] || 'sistema';
+    const zipFile = new File([zipBlob], folderName + '.zip', { type: 'application/zip' });
+    handleFile(zipFile);
+  } catch (err) {
+    showView('w'); showErr('No se pudo empaquetar la carpeta: ' + err.message);
+  }
+}
+
+// --- Armado de ZIP en el navegador (método "store", sin compresión) ---
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; }
+  return t;
+})();
+function crc32(buf) {
+  let c = 0xFFFFFFFF;
+  for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
+  return (c ^ 0xFFFFFFFF) >>> 0;
+}
+function buildZip(entries) {
+  const enc = new TextEncoder();
+  const locals = [], central = []; let offset = 0;
+  const u16 = v => [v & 0xFF, (v >>> 8) & 0xFF];
+  const u32 = v => [v & 0xFF, (v >>> 8) & 0xFF, (v >>> 16) & 0xFF, (v >>> 24) & 0xFF];
+  for (const e of entries) {
+    const nameBytes = enc.encode(e.name);
+    const crc = crc32(e.data), sz = e.data.length;
+    const lh = [].concat(u32(0x04034b50), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(crc), u32(sz), u32(sz), u16(nameBytes.length), u16(0));
+    locals.push(new Uint8Array(lh), nameBytes, e.data);
+    const ch = [].concat(u32(0x02014b50), u16(20), u16(20), u16(0), u16(0), u16(0), u16(0),
+      u32(crc), u32(sz), u32(sz), u16(nameBytes.length), u16(0), u16(0), u16(0), u16(0), u32(0), u32(offset));
+    central.push(new Uint8Array(ch), nameBytes);
+    offset += lh.length + nameBytes.length + sz;
+  }
+  const centralSize = central.reduce((a, b) => a + b.length, 0);
+  const eocd = new Uint8Array([].concat(u32(0x06054b50), u16(0), u16(0),
+    u16(entries.length), u16(entries.length), u32(centralSize), u32(offset), u16(0)));
+  return new Blob([...locals, ...central, eocd], { type: 'application/zip' });
+}
 
 function handleFile(f) {
   if (!f.name.toLowerCase().endsWith('.zip')) { showErr('Subí un archivo ZIP'); return; }

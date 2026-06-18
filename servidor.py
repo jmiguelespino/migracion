@@ -386,6 +386,37 @@ def build_seed_from_zip(raw_bytes, inventory):
     return seed, indexes, total
 
 
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tif", ".tiff"}
+ASSET_MAX_FILE = 8 * 1024 * 1024     # tamaño máx por imagen
+ASSET_MAX_TOTAL = 80 * 1024 * 1024   # tamaño máx total de imágenes a incluir
+
+
+def extract_assets_from_zip(raw_bytes):
+    """Extrae las imágenes del ZIP para incluirlas en la app generada.
+    Devuelve {nombre_base_lower: bytes}. Acota tamaño por archivo y total."""
+    zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
+    assets, total = {}, 0
+    for info in zf.infolist():
+        if info.is_dir():
+            continue
+        base = os.path.basename(info.filename)
+        ext = os.path.splitext(base)[1].lower()
+        if ext not in IMAGE_EXTS or info.file_size > ASSET_MAX_FILE:
+            continue
+        key = base.lower()
+        if key in assets:
+            continue
+        if total + info.file_size > ASSET_MAX_TOTAL:
+            break
+        try:
+            data = zf.read(info.filename)
+        except Exception:
+            continue
+        assets[key] = data
+        total += len(data)
+    return assets
+
+
 def _read_memo(sct, blocknum, blocksize):
     """Lee un campo memo de un archivo .sct/.fpt dado su número de bloque."""
     if not sct or blocknum <= 0:
@@ -895,8 +926,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 self.send_json(400, {"error": {"message": "JSON inválido"}})
                 return
-            # Si tenemos el ZIP en caché, importamos los datos e índices reales.
+            # Si tenemos el ZIP en caché, importamos los datos, índices e imágenes.
             raw = _ZIP_CACHE.get(payload.get("zip_token"))
+            assets = {}
             if raw:
                 try:
                     seed, indexes, total = build_seed_from_zip(raw, payload.get("inventory") or {})
@@ -906,15 +938,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
                           f"{sum(len(v) for v in indexes.values())} índices")
                 except Exception as e:
                     print(f"  ! No se pudieron importar los datos: {e}")
+                try:
+                    assets = extract_assets_from_zip(raw)
+                    if assets:
+                        print(f"  ✓ Imágenes a incluir: {len(assets)}")
+                except Exception as e:
+                    print(f"  ! No se pudieron extraer las imágenes: {e}")
             try:
-                data, meta = scaffold.build_app_scaffold(payload)
+                data, meta = scaffold.build_app_scaffold(payload, assets=assets)
             except Exception as e:
                 self.send_json(500, {"error": {"message": f"Error al generar la app: {e}"}})
                 return
             st = meta.get("stats", {})
             print(f"  ✓ App generada: {st.get('tablas', 0)} ABM, "
                   f"{len(meta['menus'])} menús, {st.get('reportes', 0)} reportes, "
-                  f"{st.get('registros_importados', 0)} registros importados")
+                  f"{st.get('registros_importados', 0)} registros, "
+                  f"{st.get('imagenes', 0)} imágenes")
             fname = safe_name(payload.get("filename"), "app-migrada.zip")
             self.send_response(200)
             self.send_cors()
@@ -922,7 +961,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
             self.send_header("X-Rows-Imported", str(st.get("registros_importados", 0)))
             self.send_header("X-Tables-Seeded", str(st.get("tablas_con_datos", 0)))
-            self.send_header("Access-Control-Expose-Headers", "X-Rows-Imported, X-Tables-Seeded")
+            self.send_header("X-Images-Imported", str(st.get("imagenes", 0)))
+            self.send_header("Access-Control-Expose-Headers",
+                             "X-Rows-Imported, X-Tables-Seeded, X-Images-Imported")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
