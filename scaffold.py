@@ -218,6 +218,8 @@ def _coverage_md(meta):
         "|----------|---------:|--------|",
         f"| Tablas (ABM funcional) | {s['tablas']} | ✅ generado |",
         f"| · de ellas, enriquecidas con IA | {s.get('enriquecidas', 0)} | ✨ etiquetas, obligatorios y reglas |",
+        f"| Registros importados | {s.get('registros_importados', 0)} | ✅ datos reales del .dbf |",
+        f"| Índices recreados | {s.get('indices', 0)} | 🟡 best-effort (.cdx/.idx) |",
         f"| Menús (navegación) | {len(meta['menus'])} | ✅ generado |",
         f"| Reportes (vista/consulta) | {s['reportes']} | ✅ generado |",
         f"| Formularios originales | {s['formularios']} | 🟡 listados |",
@@ -225,10 +227,12 @@ def _coverage_md(meta):
         "## Tablas → ABM",
         "",
     ]
+    idxmap = meta.get("indexes") or {}
     for t in meta["tablas"]:
         mark = " ✨ IA" if t.get("enriquecido") else ""
         reglas = f", {len(t['reglas'])} reglas" if t.get("reglas") else ""
-        out.append(f"- **{t['name']}** ({len(t['campos'])} campos, {t['registros']} reg.{reglas}) → `/#/abm/{t['key']}`{mark}")
+        idx = f", índices: {', '.join(idxmap[t['key']])}" if idxmap.get(t["key"]) else ""
+        out.append(f"- **{t['name']}** ({len(t['campos'])} campos, {t['registros']} reg.{reglas}{idx}) → `/#/abm/{t['key']}`{mark}")
     out += ["", "## Reportes"]
     for r in meta["reportes"]:
         dest = f"tabla `{r['tabla']}`" if r["tabla"] else "sin tabla asociada"
@@ -275,7 +279,44 @@ def init_db():
     for t, cols in TABLES.items():
         defs = ", ".join('"%s" %s' % (cn, ct) for cn, ct in cols)
         c.execute('CREATE TABLE IF NOT EXISTS "%s" (id INTEGER PRIMARY KEY AUTOINCREMENT, %s)' % (t, defs))
+    # Índices del sistema original (best-effort, derivados de los .cdx/.idx).
+    for t, idxcols in (META.get("indexes") or {}).items():
+        if t not in TABLES:
+            continue
+        valid = {cn for cn, _ in TABLES[t]}
+        for col in idxcols:
+            if col in valid:
+                try:
+                    c.execute('CREATE INDEX IF NOT EXISTS "ix_%s_%s" ON "%s" ("%s")' % (t, col, t, col))
+                except sqlite3.Error:
+                    pass
     c.commit()
+    # Importar los datos reales del sistema legacy una sola vez (si está vacío).
+    seed_path = os.path.join(BASE, "seed.json")
+    if os.path.exists(seed_path):
+        try:
+            with open(seed_path, encoding="utf-8") as f:
+                seed = json.load(f)
+        except (OSError, ValueError):
+            seed = {}
+        for t, rows in seed.items():
+            if t not in TABLES or not rows:
+                continue
+            if c.execute('SELECT COUNT(*) FROM "%s"' % t).fetchone()[0]:
+                continue  # ya tiene datos: no re-importamos
+            valid = [cn for cn, _ in TABLES[t]]
+            for r in rows:
+                use = [k for k in valid if k in r]
+                if not use:
+                    continue
+                try:
+                    c.execute(
+                        'INSERT INTO "%s" (%s) VALUES (%s)' % (
+                            t, ",".join('"%s"' % x for x in use), ",".join("?" * len(use))),
+                        [r[x] for x in use])
+                except sqlite3.Error:
+                    pass
+        c.commit()
     c.close()
 
 
@@ -608,8 +649,32 @@ def build_app_scaffold(payload):
 
     meta, tables_sql = build_meta(inventory, title, enrich)
 
+    # Datos e índices reales extraídos del ZIP (los provee el servidor). Solo
+    # conservamos las tablas y columnas que existen en el esquema generado.
+    seed_in = payload.get("seed") or {}
+    indexes_in = payload.get("indexes") or {}
+    seed, total_rows = {}, 0
+    for key, cols in tables_sql.items():
+        rows = seed_in.get(key)
+        if not rows:
+            continue
+        valid = {cn for cn, _ in cols}
+        clean = [{k: v for k, v in r.items() if k in valid} for r in rows]
+        clean = [r for r in clean if r]
+        if clean:
+            seed[key] = clean
+            total_rows += len(clean)
+    indexes = {key: [c for c in cols if c in {cn for cn, _ in tables_sql[key]}]
+               for key, cols in indexes_in.items() if key in tables_sql}
+    indexes = {k: v for k, v in indexes.items() if v}
+    meta["indexes"] = indexes
+    meta["stats"]["registros_importados"] = total_rows
+    meta["stats"]["tablas_con_datos"] = len(seed)
+    meta["stats"]["indices"] = sum(len(v) for v in indexes.values())
+
     app_py = APP_PY
     meta_json = json.dumps({"tables": tables_sql, "meta": meta}, ensure_ascii=False)
+    seed_json = json.dumps(seed, ensure_ascii=False) if seed else ""
 
     readme = "\n".join([
         f"# {title} — app migrada",
@@ -629,9 +694,14 @@ def build_app_scaffold(payload):
         "",
         "## Qué incluye",
         f"- {meta['stats']['tablas']} tablas con ABM (alta/baja/modificación/listado)",
+        f"- {meta['stats'].get('registros_importados', 0)} registros importados de los .dbf reales",
+        f"- {meta['stats'].get('indices', 0)} índices recreados (best-effort desde .cdx/.idx)",
         f"- {len(meta['menus'])} menús como navegación",
         f"- {meta['stats']['reportes']} reportes como vistas de consulta",
         "- Base de datos SQLite local (`backend/datos.db`, se crea sola)",
+        "",
+        "Los datos se cargan en `datos.db` la **primera vez** que arranca la app",
+        "(si la tabla está vacía). Para re-importar desde cero, borrá `backend/datos.db`.",
         "",
         "Ver `COBERTURA.md` para el detalle de qué se cubrió.",
     ])
@@ -693,6 +763,8 @@ def build_app_scaffold(payload):
         "iniciar.sh": run_sh,
         "iniciar.bat": run_bat,
     }
+    if seed_json:
+        files["backend/seed.json"] = seed_json
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:

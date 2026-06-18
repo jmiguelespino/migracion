@@ -470,17 +470,19 @@ async function generateFullApp() {
   try {
     if (!S.zipInfo) { S.zipInfo = await readZip(); saveState(); }
     const title = (S.systemInfo && S.systemInfo.nombre) || ((S.file ? S.file.name : (S.savedFileName||'app')).replace(/\.zip$/i, '')) || 'App migrada';
-    const payload = { inventory: Object.assign({ nombre: title }, S.zipInfo), title, filename: 'app-migrada.zip' };
+    const payload = { inventory: Object.assign({ nombre: title }, S.zipInfo), title, filename: 'app-migrada.zip', zip_token: (S.zipInfo && S.zipInfo.zip_token) || '' };
     const r = await fetch('/api/scaffold', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
     if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error?.message || ('HTTP ' + r.status)); }
+    const imported = parseInt(r.headers.get('X-Rows-Imported') || '0', 10);
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = 'app-migrada.zip';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1500);
     showView(S.phases && S.phases.length ? 'a' : 'w');
-    const z = S.zipInfo, c = (z && z.counts) || {};
-    showWarn(`✅ App completa descargada (app-migrada.zip). Incluye ABM para ${(z.tables||[]).length} tablas, ${(z.menus||[]).length} menús y ${(z.reports||[]).length} reportes. Adentro: COBERTURA.md y cómo correrla (FastAPI). Es 100% de cobertura, sin IA.`);
+    const z = S.zipInfo;
+    const dataMsg = imported ? ` Se importaron ${imported} registros reales de los .dbf.` : ' (Datos no importados: volvé a subir el ZIP en esta sesión para incluirlos.)';
+    showWarn(`✅ App completa descargada (app-migrada.zip). Incluye ABM para ${(z.tables||[]).length} tablas, ${(z.menus||[]).length} menús y ${(z.reports||[]).length} reportes.${dataMsg} Adentro: COBERTURA.md y cómo correrla (FastAPI).`);
   } catch (e) {
     showView(S.phases && S.phases.length ? 'a' : 'w');
     showErr('No se pudo generar la app completa: ' + e.message);
@@ -541,14 +543,16 @@ async function generateEnrichedApp(){
     }
     setLoad('Armando la app...', 'Integrando el enriquecimiento en el scaffold');
     const title=(S.systemInfo&&S.systemInfo.nombre)||(S.file?S.file.name:(S.savedFileName||'app')).replace(/\.zip$/i,'')||'App migrada';
-    const payload={ inventory:Object.assign({nombre:title},S.zipInfo), enrich, title, filename:'app-migrada.zip' };
+    const payload={ inventory:Object.assign({nombre:title},S.zipInfo), enrich, title, filename:'app-migrada.zip', zip_token:(S.zipInfo&&S.zipInfo.zip_token)||'' };
     const r=await fetch('/api/scaffold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error?.message||('HTTP '+r.status)); }
+    const imported=parseInt(r.headers.get('X-Rows-Imported')||'0',10);
     const blob=await r.blob();
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='app-migrada.zip';
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1500);
     showView(S.phases&&S.phases.length?'a':'w');
-    showWarn(`✅ App descargada: ${okc} de ${all.length} pantallas enriquecidas por IA (etiquetas, obligatorios y reglas de negocio ejecutables) sobre cobertura total. El resto usa el scaffold + validaciones de esquema. Mirá COBERTURA.md.`);
+    const dataMsg=imported?` Se importaron ${imported} registros reales de los .dbf.`:'';
+    showWarn(`✅ App descargada: ${okc} de ${all.length} pantallas enriquecidas por IA (etiquetas, obligatorios y reglas de negocio ejecutables) sobre cobertura total.${dataMsg} El resto usa el scaffold + validaciones de esquema. Mirá COBERTURA.md.`);
   }catch(e){
     showView(S.phases&&S.phases.length?'a':'w');
     showErr('No se pudo generar la app con IA: '+e.message);

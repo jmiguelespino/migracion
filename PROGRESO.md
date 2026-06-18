@@ -95,9 +95,19 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       posición y **mapeo exacto formulario→tabla** (no por nombre). El ABM
       generado refleja el formulario original. (`MAX_SAMPLES`=40, `re` a nivel
       módulo.)
+- [x] **Importar los datos reales de los `.dbf`**: el servidor cachea el ZIP
+      subido (token) y, al generar la app, lee los registros (`read_dbf_records`,
+      con memos `.fpt`, fechas, lógicos, currency, etc.) y los hornea en
+      `backend/seed.json`. El backend generado los importa a SQLite en el primer
+      arranque (si la tabla está vacía; idempotente). Se muestran los registros
+      importados en la UI (header `X-Rows-Imported`) y en `COBERTURA.md`.
+- [x] **Recrear índices**: best-effort desde `.cdx`/`.idx`
+      (`read_dbf_index_columns` escanea la cabecera por nombres de campo) →
+      `CREATE INDEX` en el backend generado. Documentado como aproximado.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 - [ ] Probar end-to-end con el ZIP real del usuario (314 archivos, 15 tablas).
+- [ ] Índices: parser real del árbol B del `.cdx` (hoy heurística por cabecera).
 
 ## 🔄 Convención de trabajo
 
