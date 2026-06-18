@@ -17,6 +17,7 @@ import io
 import json
 import os
 import re
+import struct
 import sys
 import urllib.error
 import urllib.request
@@ -26,6 +27,24 @@ import scaffold  # generador determinístico de la app migrada (cobertura total)
 
 API_KEY = ""  # Se configura desde el navegador
 PORT = 8080
+
+# Caché en memoria del último ZIP subido. Permite que /api/scaffold lea los
+# datos e índices reales de los .dbf al generar la app, sin re-subir el archivo.
+# Se identifica por un token (hash) que el navegador guarda y reenvía.
+_ZIP_CACHE = {}        # token -> bytes del ZIP
+_ZIP_CACHE_ORDER = []  # orden de inserción (para descartar los más viejos)
+ZIP_CACHE_MAX = 3
+
+
+def _cache_zip(raw):
+    import hashlib
+    token = hashlib.sha1(raw).hexdigest()[:16]
+    if token not in _ZIP_CACHE:
+        _ZIP_CACHE[token] = raw
+        _ZIP_CACHE_ORDER.append(token)
+        while len(_ZIP_CACHE_ORDER) > ZIP_CACHE_MAX:
+            _ZIP_CACHE.pop(_ZIP_CACHE_ORDER.pop(0), None)
+    return token
 
 # Modo gratuito (sin API key): usa un modelo local vía Ollama (https://ollama.com).
 # No requiere clave ni gasta tokens; corre 100% en la máquina del usuario.
@@ -90,7 +109,17 @@ EXT_CATEGORY = {
     ".prg": "programs",
     ".vcx": "classes", ".vct": "classes",
     ".mnx": "menus", ".mpr": "menus",
+    ".pjx": "project", ".pjt": "project",
     ".cbl": "programs", ".cob": "programs", ".cpy": "copybooks",
+}
+
+# Códigos de TYPE en el proyecto .pjx -> tipo legible.
+PJX_TYPE = {
+    "H": "Programa principal", "P": "Programa", "S": "Formulario",
+    "R": "Reporte", "L": "Etiqueta", "M": "Menú", "V": "Clase",
+    "d": "Base de datos", "D": "Base de datos", "Q": "Consulta",
+    "T": "Tabla", "B": "Biblioteca (API)", "K": "Texto", "Z": "Otro",
+    "I": "Imagen", "X": "Otro", "m": "Menú",
 }
 
 # Tipos de campo DBF -> nombre legible (para enriquecer el prompt).
@@ -140,6 +169,294 @@ def parse_dbf_structure(head_bytes):
     if not fields:
         return None
     return {"records": num_records, "fields": fields}
+
+
+def _dbf_layout(head_bytes):
+    """Como parse_dbf_structure pero además devuelve header_len, record_len y el
+    offset de cada campo dentro del registro (para leer los datos reales)."""
+    if len(head_bytes) < 32:
+        return None
+    try:
+        num_records = int.from_bytes(head_bytes[4:8], "little")
+        header_len = int.from_bytes(head_bytes[8:10], "little")
+        record_len = int.from_bytes(head_bytes[10:12], "little")
+    except Exception:
+        return None
+    limit = header_len if 32 < header_len <= len(head_bytes) else len(head_bytes)
+    region = head_bytes[32:limit]
+    fields = []
+    offset = 1  # byte 0 del registro = marca de borrado
+    i = 0
+    while i + 32 <= len(region):
+        if region[i] == 0x0D:
+            break
+        name = region[i:i + 11].split(b"\x00")[0].decode("latin-1", "replace").strip()
+        if not name:
+            break
+        ftype = chr(region[i + 11]) if region[i + 11] else "C"
+        flen = region[i + 16]
+        dec = region[i + 17]
+        fields.append({"name": name, "type": ftype, "len": flen, "dec": dec, "offset": offset})
+        offset += flen
+        if len(fields) >= MAX_FIELDS_PER_TABLE:
+            break
+        i += 32
+    if not fields:
+        return None
+    return {"header_len": header_len, "record_len": record_len,
+            "num_records": num_records, "fields": fields}
+
+
+def _decode_dbf_value(raw, ftype, dec, fpt, blocksize):
+    """Convierte los bytes de un campo .dbf al tipo Python adecuado para SQLite."""
+    t = (ftype or "C").upper()
+    if t in ("C", "P", "V"):
+        return raw.decode("latin-1", "replace").replace("\x00", " ").rstrip()
+    if t in ("M", "G"):
+        if len(raw) >= 4 and not raw[:4].strip(b"\x00 ").isdigit():
+            blk = int.from_bytes(raw[:4], "little")          # VFP: puntero binario LE
+        else:
+            s = raw.decode("latin-1", "replace").strip()     # dBASE: nº de bloque ASCII
+            blk = int(s) if s.isdigit() else 0
+        return _read_memo(fpt, blk, blocksize) if blk > 0 else ""
+    if t in ("N", "F"):
+        s = raw.decode("latin-1", "replace").strip()
+        if not s or s in (".", "-", "*"):
+            return None
+        try:
+            return int(s) if (dec == 0 and "." not in s) else float(s)
+        except ValueError:
+            return None
+    if t == "I":
+        return int.from_bytes(raw[:4], "little", signed=True) if len(raw) >= 4 else None
+    if t == "B":
+        try:
+            return struct.unpack("<d", raw[:8])[0]
+        except struct.error:
+            return None
+    if t == "Y":
+        try:
+            return struct.unpack("<q", raw[:8])[0] / 10000.0
+        except struct.error:
+            return None
+    if t == "L":
+        ch = chr(raw[0]) if raw else " "
+        if ch in "TtYy":
+            return 1
+        if ch in "FfNn":
+            return 0
+        return None
+    if t == "D":
+        s = raw.decode("latin-1", "replace").strip()
+        return "%s-%s-%s" % (s[0:4], s[4:6], s[6:8]) if (len(s) == 8 and s.isdigit()) else None
+    if t == "T":
+        if len(raw) >= 8:
+            jdate = int.from_bytes(raw[0:4], "little")
+            ms = int.from_bytes(raw[4:8], "little")
+            if jdate <= 0:
+                return None
+            try:
+                import datetime
+                d = datetime.date.fromordinal(jdate - 1721425)
+                secs = ms // 1000
+                return "%sT%02d:%02d:%02d" % (d.isoformat(), secs // 3600, (secs % 3600) // 60, secs % 60)
+            except (ValueError, OverflowError):
+                return None
+        return None
+    return raw.decode("latin-1", "replace").replace("\x00", " ").rstrip()
+
+
+def read_dbf_records(dbf_bytes, fpt_bytes, max_records=50000):
+    """Lee los registros reales de un .dbf (datos, no solo el header). Devuelve
+    una lista de dicts {slug_campo: valor}, saltando los registros borrados."""
+    layout = _dbf_layout(dbf_bytes[: 32 + 32 * 256])
+    if not layout or layout["record_len"] <= 0:
+        return []
+    rec_len = layout["record_len"]
+    fields = layout["fields"]
+    blocksize = int.from_bytes(fpt_bytes[6:8], "big") if (fpt_bytes and len(fpt_bytes) >= 8) else 64
+    if blocksize <= 0:
+        blocksize = 64
+    rows = []
+    pos = layout["header_len"]
+    total = len(dbf_bytes)
+    limit = min(layout["num_records"], max_records) if layout["num_records"] > 0 else max_records
+    count = 0
+    while pos + rec_len <= total and count < limit:
+        rec = dbf_bytes[pos:pos + rec_len]
+        pos += rec_len
+        count += 1
+        if rec[:1] == b"*":  # registro marcado como borrado
+            continue
+        row = {}
+        for f in fields:
+            raw = rec[f["offset"]:f["offset"] + f["len"]]
+            try:
+                row[scaffold._slug(f["name"])] = _decode_dbf_value(
+                    raw, f["type"], f["dec"], fpt_bytes, blocksize)
+            except Exception:
+                row[scaffold._slug(f["name"])] = None
+        rows.append(row)
+    return rows
+
+
+# Funciones típicas de VFP que envuelven una expresión de índice (señal fuerte
+# de que un texto ASCII es una expresión de clave y no datos del árbol B).
+_VFP_IDX_FUNCS = re.compile(
+    r"\b(UPPER|LOWER|STR|VAL|DTOS|DTOC|DTOT|TTOC|CTOD|ALLTRIM|TRIM|LTRIM|RTRIM|"
+    r"PADL|PADR|PADC|LEFT|RIGHT|SUBSTR|STUFF|TRANSFORM|RECNO|DELETED|IIF|"
+    r"BINTOC|ASC|CHR|MONTH|YEAR|DAY)\b", re.I)
+# Caracteres que pueden aparecer en una expresión de índice VFP.
+_EXPR_RUN = re.compile(r"[A-Za-z0-9_.()+\-*/, '\"<>=!$:]{2,}")
+
+
+def parse_cdx_expressions(idx_bytes, field_slugs):
+    """Parser de los índices .cdx/.idx de FoxPro.
+
+    El valor accionable de un índice para SQLite son los CAMPOS de su expresión
+    de clave. Esas expresiones se guardan como texto ASCII en las cabeceras de
+    cada tag (p. ej. "CODIGO" o "STR(GRUPO)+STR(MENU)"); los datos del árbol B
+    (las claves concretas) están comprimidos y no nos interesan para recrear el
+    índice. Por eso localizamos las EXPRESIONES y de cada una extraemos, en
+    orden, los campos reales involucrados → un índice (compuesto si aplica).
+
+    Devuelve una lista de índices; cada uno es una lista ordenada de slugs de
+    campo. Heurística defensiva: solo acepta runs que (a) sean exactamente un
+    campo real, (b) contengan una función de índice VFP, o (c) concatenen
+    campos con '+'. Así evita falsos positivos de los nodos de datos."""
+    if not idx_bytes:
+        return []
+    text = idx_bytes.decode("latin-1", "replace")
+    fset = set(field_slugs)
+    defs, seen = [], set()
+    for run in _EXPR_RUN.findall(text):
+        run = run.strip()
+        idents = re.findall(r"[A-Za-z_][A-Za-z0-9_]*", run)
+        cols = []
+        for ident in idents:
+            s = scaffold._slug(ident)
+            if s in fset and s not in cols:
+                cols.append(s)
+        if not cols:
+            continue
+        single_field = (len(idents) == 1 and cols and len(run) <= 32)
+        has_func = bool(_VFP_IDX_FUNCS.search(run))
+        compound = ("+" in run and len(cols) >= 1)
+        if not (single_field or has_func or compound):
+            continue
+        sig = tuple(cols)
+        if sig in seen:
+            continue
+        seen.add(sig)
+        defs.append(cols)
+    return defs[:16]
+
+
+def build_seed_from_zip(raw_bytes, inventory):
+    """Extrae datos e índices reales del ZIP para sembrar la app generada.
+    Devuelve (seed, indexes, total_filas) con claves = slug del nombre de tabla."""
+    zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
+    names = [n for n in zf.namelist() if not n.endswith("/")]
+    by_stem = {}   # nombre base sin extensión (lower) -> {ext: ruta real}
+    for n in names:
+        base = os.path.basename(n)
+        stem, ext = os.path.splitext(base)
+        by_stem.setdefault(stem.lower(), {})[ext.lower()] = n
+
+    seed, indexes, total = {}, {}, 0
+    for t in inventory.get("tables", []):
+        name = t.get("name") or ""
+        key = scaffold._slug(name)
+        entry = by_stem.get(name.lower())
+        if not key or not entry or ".dbf" not in entry:
+            continue
+        try:
+            dbf_bytes = zf.read(entry[".dbf"])
+            fpt_bytes = zf.read(entry[".fpt"]) if ".fpt" in entry else b""
+            rows = read_dbf_records(dbf_bytes, fpt_bytes)
+        except Exception:
+            rows = []
+        if rows:
+            seed[key] = rows
+            total += len(rows)
+        field_slugs = [scaffold._slug(f.get("name")) for f in (t.get("fields") or [])]
+        defs, seen = [], set()
+        for ext in (".cdx", ".idx"):
+            if ext in entry:
+                try:
+                    for cols in parse_cdx_expressions(zf.read(entry[ext]), field_slugs):
+                        sig = tuple(cols)
+                        if cols and sig not in seen:
+                            seen.add(sig)
+                            defs.append(cols)
+                except Exception:
+                    pass
+        if defs:
+            indexes[key] = defs[:16]   # lista de índices; cada uno = lista de columnas
+    return seed, indexes, total
+
+
+IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".webp", ".tif", ".tiff"}
+ASSET_MAX_FILE = 8 * 1024 * 1024     # tamaño máx por imagen
+ASSET_MAX_TOTAL = 80 * 1024 * 1024   # tamaño máx total de imágenes a incluir
+
+
+def extract_assets_from_zip(raw_bytes):
+    """Extrae las imágenes del ZIP para incluirlas en la app generada.
+    Devuelve {nombre_base_lower: bytes}. Acota tamaño por archivo y total."""
+    zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
+    assets, total = {}, 0
+    for info in zf.infolist():
+        if info.is_dir():
+            continue
+        base = os.path.basename(info.filename)
+        ext = os.path.splitext(base)[1].lower()
+        if ext not in IMAGE_EXTS or info.file_size > ASSET_MAX_FILE:
+            continue
+        key = base.lower()
+        if key in assets:
+            continue
+        if total + info.file_size > ASSET_MAX_TOTAL:
+            break
+        try:
+            data = zf.read(info.filename)
+        except Exception:
+            continue
+        assets[key] = data
+        total += len(data)
+    return assets
+
+
+def parse_pjx(pjx_bytes, pjt_bytes):
+    """Lee el proyecto VFP (.pjx + memo .pjt). Es una tabla DBF: cada registro
+    describe un archivo del sistema. Devuelve el manifiesto: lista de archivos
+    (con tipo, si está excluido y si es el principal) y el programa de arranque.
+
+    Es el archivo MÁS importante para el armado: define qué compone el sistema
+    y cuál es su punto de entrada. Reusa el lector de .dbf (read_dbf_records)."""
+    rows = read_dbf_records(pjx_bytes, pjt_bytes, max_records=5000)
+    archivos, principal, por_tipo = [], "", {}
+    for r in rows:
+        name = str(r.get("name") or "").strip().replace("\x00", "")
+        if not name:
+            continue
+        typ = (str(r.get("type") or "").strip() or "?")[:1]
+        es_main = bool(r.get("mainprog") or r.get("main"))
+        item = {
+            "name": name.replace("\\", "/").split("/")[-1],
+            "ruta": name,
+            "type": typ,
+            "type_name": PJX_TYPE.get(typ, typ),
+            "excluido": bool(r.get("exclude")),
+            "principal": es_main,
+        }
+        archivos.append(item)
+        por_tipo[item["type_name"]] = por_tipo.get(item["type_name"], 0) + 1
+        if es_main and not principal:
+            principal = item["name"]
+        if not principal and typ == "H":
+            principal = item["name"]
+    return {"archivos": archivos, "principal": principal, "por_tipo": por_tipo}
 
 
 def _read_memo(sct, blocknum, blocksize):
@@ -338,6 +655,18 @@ def analyze_zip(raw_bytes):
     names = [n for n in zf.namelist() if not n.endswith("/")]
     lower_map = {n.lower(): n for n in names}  # para ubicar el .sct de cada .scx
 
+    # 1) PRIMERO el proyecto .pjx: es el manifiesto del sistema (qué archivos lo
+    # componen y cuál es el programa principal). Orienta todo el armado.
+    project = None
+    pjx_name = next((n for n in names if n.lower().endswith(".pjx")), None)
+    if pjx_name:
+        try:
+            pjt_real = lower_map.get(os.path.splitext(pjx_name)[0].lower() + ".pjt")
+            pjt_bytes = zf.read(pjt_real) if pjt_real else b""
+            project = parse_pjx(zf.read(pjx_name), pjt_bytes)
+        except Exception:
+            project = None
+
     by_ext = {}
     counts = {}
     forms, reports, programs = [], [], []
@@ -454,6 +783,7 @@ def analyze_zip(raw_bytes):
         "programs": sorted(set(programs))[:MAX_NAME_LIST],
         "samples": samples,
         "menus": menus,
+        "project": project,
     }
 
 
@@ -612,6 +942,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             try:
                 info = analyze_zip(raw)
+                info["zip_token"] = _cache_zip(raw)  # para importar datos al generar
                 print(f"  ✓ ZIP leído: {info['total_files']} archivos, "
                       f"{len(info['tables'])} tablas analizadas")
                 self.send_json(200, info)
@@ -650,18 +981,44 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 self.send_json(400, {"error": {"message": "JSON inválido"}})
                 return
+            # Si tenemos el ZIP en caché, importamos los datos, índices e imágenes.
+            raw = _ZIP_CACHE.get(payload.get("zip_token"))
+            assets = {}
+            if raw:
+                try:
+                    seed, indexes, total = build_seed_from_zip(raw, payload.get("inventory") or {})
+                    payload["seed"] = seed
+                    payload["indexes"] = indexes
+                    print(f"  ✓ Datos a importar: {total} registros en {len(seed)} tablas, "
+                          f"{sum(len(v) for v in indexes.values())} índices")
+                except Exception as e:
+                    print(f"  ! No se pudieron importar los datos: {e}")
+                try:
+                    assets = extract_assets_from_zip(raw)
+                    if assets:
+                        print(f"  ✓ Imágenes a incluir: {len(assets)}")
+                except Exception as e:
+                    print(f"  ! No se pudieron extraer las imágenes: {e}")
             try:
-                data, meta = scaffold.build_app_scaffold(payload)
+                data, meta = scaffold.build_app_scaffold(payload, assets=assets)
             except Exception as e:
                 self.send_json(500, {"error": {"message": f"Error al generar la app: {e}"}})
                 return
-            print(f"  ✓ App generada: {meta['stats']['tablas']} ABM, "
-                  f"{len(meta['menus'])} menús, {meta['stats']['reportes']} reportes")
+            st = meta.get("stats", {})
+            print(f"  ✓ App generada: {st.get('tablas', 0)} ABM, "
+                  f"{len(meta['menus'])} menús, {st.get('reportes', 0)} reportes, "
+                  f"{st.get('registros_importados', 0)} registros, "
+                  f"{st.get('imagenes', 0)} imágenes")
             fname = safe_name(payload.get("filename"), "app-migrada.zip")
             self.send_response(200)
             self.send_cors()
             self.send_header("Content-Type", "application/zip")
             self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
+            self.send_header("X-Rows-Imported", str(st.get("registros_importados", 0)))
+            self.send_header("X-Tables-Seeded", str(st.get("tablas_con_datos", 0)))
+            self.send_header("X-Images-Imported", str(st.get("imagenes", 0)))
+            self.send_header("Access-Control-Expose-Headers",
+                             "X-Rows-Imported, X-Tables-Seeded, X-Images-Imported")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
