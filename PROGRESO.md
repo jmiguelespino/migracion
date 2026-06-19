@@ -27,10 +27,13 @@ reportes y la lógica de negocio. Paridad funcional, no una muestra.
   etiquetas legibles, campos obligatorios, ayuda y **reglas de negocio** (del
   `.prg`). Se hornea en el scaffold. Hasta 12 tablas, con progreso; si una
   falla, esa pantalla queda con el scaffold base (degradación elegante).
-- **Flujo "por fases"** (anterior): analizar → generar fase → descargar ZIP de
-  la fase. Sigue existiendo (botón **⚡ Analizar sistema (por fases)**).
-- **Motores de IA**: **Claude** (API key) y **🆓 Gratis** (Ollama local). El
-  modo **Demo** fue ELIMINADO (era salida simulada, redundante).
+- **Flujo "por fases"** (analizar → generar fase → ZIP por fase): **ELIMINADO**.
+  Dependía 100% de la IA (frágil en CPU/Ollama), no garantizaba cobertura ni que
+  la app arrancara, y entregaba la salida fragmentada. Lo reemplazan 📦 y ✨, que
+  cumplen la premisa rectora (cobertura total + app que corre). Se quitó el botón
+  ⚡, la vista de fases y el endpoint `/api/zip`.
+- **Motores de IA**: **Claude** (API key) y **🆓 Gratis** (Ollama local), usados
+  solo para el enriquecimiento ✨. El modo **Demo** fue ELIMINADO (salida simulada).
 - **Reanudar sesión**: el inventario del ZIP se persiste en `localStorage` apenas
   se lee (con fallback de cuota: sin muestras → sin zipInfo). Al reabrir, se
   restaura y se puede **generar la app sin volver a subir el ZIP**.
@@ -49,7 +52,7 @@ reportes y la lógica de negocio. Paridad funcional, no una muestra.
 ### Endpoints (`servidor.py`)
 - `GET /` y `GET /api/ollama/models`
 - `POST /api/key`, `/api/zipinfo`, `/api/claude`, `/api/ollama`
-- `POST /api/zip` (ZIP de una fase) · `POST /api/scaffold` (app completa)
+- `POST /api/scaffold` (app completa, determinística + enriquecimiento IA)
 
 ## 🔑 Decisiones clave
 
@@ -108,9 +111,45 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       (`CREATE INDEX ... (col1, col2)`) en el backend. Heurística defensiva:
       acepta runs que son un campo exacto, traen función VFP, o concatenan con
       '+', para no confundir datos del árbol B con expresiones.
+- [x] **Leer el .dbc (Database Container)**: `parse_dbc` extrae relaciones entre
+      tablas (→ campos FK con `<select>` en el ABM), Caption persistente de campos
+      (mejor etiqueta cuando el `.scx` no aporta una), stored procedures y vistas.
+      Lee el trío `.dbc` + `.dct` (memo); el `.dcx` (índice) no aporta info nueva.
+- [x] **Cobertura total de tipos VFP**: `.vcx`/`.vct` (métodos de clases →
+      muestras de código), `.mnt` (memo del `.mnx` → ítems/PROCEDURE), `.h`
+      (includes con `#DEFINE`) y `.txt` (notas). Tablas de sistema VFP
+      (`foxuser`, `vfpgraph`, ...) filtradas para no generar ABMs inútiles.
+      **Ver la tabla de referencia completa en `CLAUDE.md`** (qué se lee, qué no
+      y por qué; regla de las "parejas" datos+memo+índice).
+- [x] **Prueba end-to-end con ZIP real** (314 archivos, sistema Recetas): 13 ABM,
+      21 244 registros, 143 imágenes, 23 índices, 2 reportes, menú con 10 ítems
+      reales. App generada compila y arranca (`uvicorn`). Ver hallazgos abajo.
+- [x] **Menú dinámico desde `programa.dbf` + `menues.dbf`**: patrón de sistemas
+      VFP que no usan `.mpr`/`.mnx` estándar — las opciones de menú se guardan en
+      tablas. `_parse_programa_menu()` lo soporta; fallback automático cuando los
+      menús MPR/MNX tienen < 3 ítems.
+- [x] **Filtro de código compilado en `.vcx`**: `OBJCODE` puede contener bytecode
+      VFP (empieza con `0xFE`). Se descartan entradas cuyo primer byte sea < 32 o
+      que tengan > 20 % de chars no-ASCII.
+- [x] **Deduplicación de `.dbc`**: si el mismo `.dbc` aparece en varias carpetas
+      (p.ej. `ZZ_EJECUTABLES/` y `datos/`), se prefiere el de la ruta con "dato".
+- [x] **Deduplicación de `.dbf` en seed**: cuando hay dos copias del mismo DBF, se
+      importa la **más grande** (más registros = datos de producción).
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
-- [ ] Probar end-to-end con el ZIP real del usuario (314 archivos, 15 tablas).
+
+## 🔍 Hallazgos del sistema Recetas (ZIP real)
+
+- **Menú dinámico en tablas**: `programa.dbf` (nombre, menu, tipo=FORM, nmenu) +
+  `menues.dbf` (numero, menu=título del grupo). El `.mpr` (`GENERAL.MPR`) solo
+  tenía 2 ítems placeholder del template de VFP.
+- **Formularios apuntan a vistas, no a tablas**: `vistcomi.dbc` tiene 47 vistas
+  (`vreccab1`, `vrecedet`, `vingredi`, …) y `login.dbc` tiene 6 vistas. Los SCX
+  referencian esas vistas como `ControlSource`.
+- **Sin FK persistentes**: el sistema no declara relaciones FK en el DBC; la
+  integridad se maneja en las vistas y en código `.prg`.
+- **Datos reales en `ZZ_EJECUTABLES/`**: los DBF de `datos/` eran minúsculas
+  (4 rows); los de `ZZ_EJECUTABLES/` tenían los datos reales (hasta 10 408 rows).
 
 ## 🔄 Convención de trabajo
 

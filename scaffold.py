@@ -39,6 +39,27 @@ def _norm(s):
     return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
 
 
+_DO_FORM_RE = re.compile(r'\bDO\s+FORM\s+(\w+)', re.IGNORECASE)
+
+
+def _menu_to_tabla(texto, accion, table_index):
+    """Resuelve ítem de menú → key de tabla (o None).
+    Prueba primero la etiqueta visible y luego el nombre del form de la acción.
+    Usa coincidencia parcial para cubrir prefijos/sufijos (ej. 'Recetas' ↔ 'rececab'
+    si el nombre empieza con la raíz normalizada)."""
+    candidates = [_norm(texto)]
+    m = _DO_FORM_RE.search(accion or "")
+    if m:
+        candidates.append(_norm(m.group(1)))
+    for cand in candidates:
+        if not cand:
+            continue
+        for tn, tk in table_index.items():
+            if tn and (cand == tn or tn.startswith(cand) or cand.startswith(tn)):
+                return tk
+    return None
+
+
 def _sanitize_validaciones(items, field_names):
     """Valida/limpia las reglas ejecutables que propone la IA. Solo deja ops
     conocidas, campos reales y valores con el tipo correcto (anti-inyección)."""
@@ -139,6 +160,26 @@ def build_meta(inventory, title, enrich=None):
     """
     enrich = enrich or {}
     forms_index = _forms_index(inventory)
+
+    # Datos del .dbc: relaciones entre tablas y propiedades persistentes de campos.
+    dbs = inventory.get("databases") or []
+    campo_props_dbc = {}   # {tabla_key: {campo_key: {caption, defaultvalue, ...}}}
+    relations = []         # [{parent_table, parent_field, child_table, child_field}]
+    for db in dbs:
+        relations.extend(db.get("relaciones") or [])
+        for tkey, flds in (db.get("campos") or {}).items():
+            for fkey, props in flds.items():
+                campo_props_dbc.setdefault(tkey, {})[fkey] = props
+    # FK lookup: {child_table_slug: {child_field_slug: {table, field}}}
+    fk_map = {}
+    for rel in relations:
+        ct = rel.get("child_table")
+        cf = rel.get("child_field")
+        pt = rel.get("parent_table")
+        pf = rel.get("parent_field")
+        if ct and cf and pt:
+            fk_map.setdefault(ct, {})[cf] = {"table": pt, "field": pf or "id"}
+
     tablas, tables_sql, seen = [], {}, set()
     for t in inventory.get("tables", []):
         key = _slug(t.get("name"))
@@ -166,15 +207,33 @@ def build_meta(inventory, title, enrich=None):
         }
         # Layout real del formulario .scx: etiquetas (Caption) y orden (Top).
         fi = forms_index.get(key)
+        scx_labeled = set()
         if fi:
             for c in campos:
                 if c["name"] in fi["labels"]:
                     c["label"] = fi["labels"][c["name"]]
+                    scx_labeled.add(c["name"])
             campos.sort(key=lambda c: fi["order"].get(c["name"], 999))
             tabla["origen_formulario"] = True
+        # Etiquetas del .dbc (Caption) donde el .scx no aportó ninguna.
+        dbc_fields = campo_props_dbc.get(key, {})
+        for c in campos:
+            if c["name"] not in scx_labeled:
+                dbc = dbc_fields.get(c["name"], {})
+                if dbc.get("caption"):
+                    c["label"] = str(dbc["caption"])[:60]
         # La IA (si se usó) puede refinar título/etiquetas/reglas por encima.
         _apply_enrich(tabla, enrich.get(key))
         tablas.append(tabla)
+
+    # Relaciones del .dbc: marcar campos FK (solo si la tabla padre existe en la app).
+    for tabla in tablas:
+        fks = fk_map.get(tabla["key"], {})
+        for campo in tabla["campos"]:
+            if campo["name"] in fks:
+                fk = fks[campo["name"]]
+                if fk["table"] in tables_sql:
+                    campo["fk"] = fk
 
     # Reportes -> intentamos asociarlos a una tabla por nombre.
     table_index = {_norm(x["name"]): x["key"] for x in tablas}
@@ -190,8 +249,21 @@ def build_meta(inventory, title, enrich=None):
         reportes.append({"name": stem, "tabla": match})
 
     formularios = [re.sub(r"\.\w+$", "", str(f)) for f in inventory.get("forms", [])]
-    menus = inventory.get("menus", []) or []
+
+    # Menús: resolver cada ítem a una tabla (clave "tabla") para que la SPA
+    # pueda navegar directamente al ABM correspondiente.
+    menus = []
+    for grp in (inventory.get("menus", []) or []):
+        items = []
+        for it in (grp.get("items", []) or []):
+            tabla = _menu_to_tabla(it.get("texto", ""), it.get("accion", ""), table_index)
+            items.append({**it, "tabla": tabla})
+        menus.append({**grp, "items": items})
+
     proyecto = inventory.get("project") or None
+
+    relaciones_activas = sum(1 for t in tablas for c in t["campos"] if c.get("fk"))
+    sp_count = sum(len(db.get("stored_procs") or []) for db in dbs)
 
     meta = {
         "titulo": title,
@@ -207,6 +279,8 @@ def build_meta(inventory, title, enrich=None):
             "enriquecidas": sum(1 for t in tablas if t.get("enriquecido")),
             "archivos_proyecto": len(proyecto["archivos"]) if proyecto else 0,
             "programa_principal": (proyecto or {}).get("principal", ""),
+            "relaciones": relaciones_activas,
+            "stored_procs": sp_count,
         },
     }
     return meta, tables_sql
@@ -230,6 +304,8 @@ def _coverage_md(meta):
         f"| Menús (navegación) | {len(meta['menus'])} | ✅ generado |",
         f"| Reportes (vista/consulta) | {s['reportes']} | ✅ generado |",
         f"| Formularios originales | {s['formularios']} | 🟡 listados |",
+        f"| Relaciones FK (del .dbc) | {s.get('relaciones', 0)} | ✅ generado |",
+        f"| Stored procedures | {s.get('stored_procs', 0)} | 🟡 informativo |",
         "",
         "## Tablas → ABM",
         "",
@@ -264,6 +340,16 @@ def _coverage_md(meta):
                 "| Archivo | Tipo | Excluido |", "|---------|------|:--------:|"]
         for a in pj.get("archivos", [])[:200]:
             out.append(f"| {a['name']} | {a['type_name']} | {'sí' if a['excluido'] else ''} |")
+
+    # Relaciones entre tablas del .dbc
+    rel_campos = [(t, c) for t in meta["tablas"] for c in t["campos"] if c.get("fk")]
+    if rel_campos:
+        out += ["", "## Relaciones entre tablas (.dbc)", ""]
+        for t, c in rel_campos:
+            fk = c["fk"]
+            out.append(
+                f"- **{t['name']}.{c.get('label') or c['name']}** → "
+                f"**{fk['table']}.{fk['field']}** (FK)")
 
     out += ["", "---", "_Generado por LegacyMigrator (cobertura total)._"]
     return "\n".join(out)
@@ -620,8 +706,8 @@ button.sm{padding:5px 9px;font-size:12px}
 .bar a:hover{color:var(--brand)}
 form.abm{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px;box-shadow:var(--shadow)}
 form.abm label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:4px;font-weight:600}
-form.abm input,form.abm textarea{padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--panel2);color:var(--text);font-weight:400}
-form.abm input:focus,form.abm textarea:focus{outline:2px solid var(--brand-bg);border-color:var(--brand)}
+form.abm input,form.abm textarea,form.abm select{padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--panel2);color:var(--text);font-weight:400}
+form.abm input:focus,form.abm textarea:focus,form.abm select:focus{outline:2px solid var(--brand-bg);border-color:var(--brand)}
 form.abm input.bad{border-color:var(--danger)}
 form.abm .err{color:var(--danger);font-size:11px;min-height:0}
 form.abm .full{grid-column:1 / -1;display:flex;gap:8px}
@@ -642,6 +728,14 @@ APP_JS = r'''let META = null, COUNTS = {};
 const $ = (s) => document.querySelector(s);
 // Estado de la vista de cada tabla (búsqueda/orden/página).
 const VS = {};
+// Caché de datos de tablas padre para dropdowns FK.
+const FK_CACHE = {};
+async function loadFkOptions(table) {
+  if (FK_CACHE[table]) return FK_CACHE[table];
+  try { FK_CACHE[table] = ((await (await fetch(`/api/t/${table}?size=1000`)).json()).rows) || []; }
+  catch (_) { FK_CACHE[table] = []; }
+  return FK_CACHE[table];
+}
 
 async function boot() {
   initTheme();
@@ -668,8 +762,9 @@ function buildNav() {
   (META.menus || []).forEach((m, mi) => {
     h += `<div class="grp">${esc(m.titulo || 'Menú')}</div>`;
     (m.items || []).forEach((it, ii) => {
+      // it.tabla viene pre-computado por Python; byName como fallback para meta.json antiguo.
       const t = byName(it.texto);
-      const href = t ? `#/abm/${t.key}` : `#/info/${mi}/${ii}`;
+      const href = it.tabla ? `#/abm/${it.tabla}` : (t ? `#/abm/${t.key}` : `#/info/${mi}/${ii}`);
       h += `<a href="${href}">${esc(it.texto || '')}</a>`;
     });
   });
@@ -716,7 +811,7 @@ function viewHome() {
   const cards = [
     ['Tablas', s.tablas||0], ['Registros', s.registros_importados||0],
     ['Reportes', s.reportes||0], ['Índices', s.indices||0],
-    ['Imágenes', s.imagenes||0], ['Pantallas enriquecidas', s.enriquecidas||0],
+    ['Relaciones FK', s.relaciones||0], ['Imágenes', s.imagenes||0],
   ].map(([l,n]) => `<div class="metric"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
   const max = Math.max(1, ...tablas.map(t => COUNTS[t.key]||0));
   const bars = tablas.slice().sort((a,b)=>(COUNTS[b.key]||0)-(COUNTS[a.key]||0)).map(t => {
@@ -727,10 +822,18 @@ function viewHome() {
   const pjHtml = pj ? `<div class="card"><b>📦 Proyecto original (.pjx)</b>
     <p class="sub" style="margin:6px 0 0">Programa principal: <b>${esc(pj.principal||'(no declarado)')}</b> · ${(pj.archivos||[]).length} archivos declarados</p>
     <div style="margin-top:8px">${Object.entries(pj.por_tipo||{}).map(([k,v])=>`<span class="tag">${esc(k)}: ${v}</span>`).join('')}</div></div>` : '';
+  const fkRels = [];
+  (META.tablas||[]).forEach(t => {
+    (t.campos||[]).filter(f=>f.fk).forEach(f => {
+      const pt = tableByKey(f.fk.table);
+      fkRels.push(`<span class="tag">📎 ${esc(t.name)}.${esc(f.label||f.name)} → ${esc(pt?pt.name:f.fk.table)}</span>`);
+    });
+  });
+  const relsHtml = fkRels.length ? `<div class="card"><b>🔗 Relaciones entre tablas</b><div style="margin-top:8px">${fkRels.join('')}</div></div>` : '';
   $('#main').innerHTML = `<h1>${esc(META.titulo||'App migrada')}</h1>
     <p class="sub">Sistema migrado con todas sus utilidades. Datos reales importados del sistema original.</p>
     <div class="grid">${cards}</div>
-    ${pjHtml}
+    ${pjHtml}${relsHtml}
     <div class="card"><b>Registros por tabla</b><div class="bars" style="margin-top:12px">${bars||'<span class="muted">Sin datos importados.</span>'}</div></div>`;
 }
 
@@ -740,6 +843,9 @@ function vstate(key){ return VS[key] || (VS[key] = { q:'', sort:'', dir:'asc', p
 async function viewAbm(key) {
   const t = tableByKey(key);
   if (!t) { $('#main').innerHTML = '<p>Tabla no encontrada.</p>'; return; }
+  // Pre-cargar opciones FK antes de renderizar el formulario.
+  const fkTables = [...new Set((t.campos||[]).filter(f=>f.fk).map(f=>f.fk.table))];
+  if (fkTables.length) await Promise.all(fkTables.map(loadFkOptions));
   const st = vstate(key);
   const qs = new URLSearchParams({ q:st.q, sort:st.sort, dir:st.dir, page:st.page, size:st.size });
   const res = await (await fetch(`/api/t/${key}?${qs}`)).json();
@@ -780,9 +886,27 @@ function formHtml(t, key) {
     const tip = f.ayuda ? `title="${esc(f.ayuda).replace(/"/g,'&quot;')}"` : '';
     const star = f.requerido ? ' *' : '';
     const onv = ` oninput="liveVal('${key}','${f.name}')"`;
-    const ctl = f.input === 'textarea'
-      ? `<textarea id="f_${f.name}" ${req} ${tip}${onv}></textarea>`
-      : `<input id="f_${f.name}" type="${f.input==='checkbox'?'text':f.input}" ${req} ${tip}${onv}${f.es_imagen ? ` oninput="document.getElementById('pv_${f.name}').src=assetSrc(this.value);liveVal('${key}','${f.name}')"` : ''}>`;
+    let ctl;
+    if (f.fk) {
+      // Campo FK: dropdown con opciones de la tabla padre.
+      const opts = FK_CACHE[f.fk.table] || [];
+      const pt = tableByKey(f.fk.table);
+      // Primer campo de texto de la tabla padre como etiqueta visible.
+      const dispF = pt ? (pt.campos.find(c => c.type==='C' && c.name!==f.fk.field) || pt.campos[0]) : null;
+      const dKey = dispF ? dispF.name : f.fk.field;
+      const selOpts = opts.map(r => {
+        const v = r[f.fk.field] != null ? String(r[f.fk.field]) : '';
+        const d = dispF && r[dKey] != null ? String(r[dKey]) : v;
+        return `<option value="${esc(v)}">${esc(d || v)}</option>`;
+      }).join('');
+      ctl = `<select id="f_${f.name}" ${req} ${tip} onchange="liveVal('${key}','${f.name}')"><option value="">— Seleccionar —</option>${selOpts}</select>`;
+    } else if (f.input === 'textarea') {
+      ctl = `<textarea id="f_${f.name}" ${req} ${tip}${onv}></textarea>`;
+    } else if (f.es_imagen) {
+      ctl = `<input id="f_${f.name}" type="text" ${req} ${tip} oninput="document.getElementById('pv_${f.name}').src=assetSrc(this.value);liveVal('${key}','${f.name}')">`;
+    } else {
+      ctl = `<input id="f_${f.name}" type="${f.input==='checkbox'?'text':f.input}" ${req} ${tip}${onv}>`;
+    }
     const pv = f.es_imagen ? `<img id="pv_${f.name}" class="thumb" alt="" onerror="this.style.display='none'">` : '';
     form += `<label>${esc(f.label || f.name)}${star}${ctl}${pv}<span class="err" id="e_${f.name}"></span></label>`;
   });

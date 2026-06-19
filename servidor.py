@@ -52,7 +52,7 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # Por defecto un modelo de código LIVIANO: rápido en CPU (sin GPU). Para más
 # calidad y si tenés recursos, usá OLLAMA_MODEL=qwen2.5-coder (7B) o mayor.
 OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:1.5b")
-# Tope de tokens a generar en Ollama: evita que una fase tarde "infinito" en CPU.
+# Tope de tokens a generar en Ollama: evita que una llamada tarde "infinito" en CPU.
 # 4000 es un equilibrio razonable para CPUs modestas (sin GPU).
 OLLAMA_MAX_PREDICT = int(os.environ.get("OLLAMA_MAX_PREDICT", "4000"))
 # Tiempo máximo de espera de una respuesta de Ollama (segundos).
@@ -63,10 +63,10 @@ def _ollama_timeout_msg(model):
     """Mensaje claro y accionable cuando una generación de Ollama no termina."""
     return (
         f"El modelo local '{model}' no terminó a tiempo (timeout de {OLLAMA_TIMEOUT} s). "
-        f"El análisis y las fases chicas suelen andar; las fases grandes son las "
-        f"que más tardan en CPU. Probá: (1) reintentá la fase; (2) generá con "
-        f"menos tokens iniciando el server con OLLAMA_MAX_PREDICT=3000; "
-        f"(3) usá un modelo aún más chico:  ollama pull qwen2.5-coder:0.5b"
+        f"El enriquecimiento por pantalla es chico pero en CPU puede tardar. "
+        f"Probá: (1) reintentá; (2) generá con menos tokens iniciando el server "
+        f"con OLLAMA_MAX_PREDICT=3000; (3) usá un modelo aún más chico: "
+        f"ollama pull qwen2.5-coder:0.5b; (4) usá 📦 (sin IA), que es instantáneo."
     )
 
 # --- Rendimiento del modo gratuito --------------------------------------------
@@ -111,6 +111,18 @@ EXT_CATEGORY = {
     ".mnx": "menus", ".mpr": "menus",
     ".pjx": "project", ".pjt": "project",
     ".cbl": "programs", ".cob": "programs", ".cpy": "copybooks",
+    ".h": "includes",   # archivos de include VFP (#DEFINE, constantes)
+    ".txt": "docs",     # documentación / notas
+}
+
+# Tablas de sistema de VFP/FoxPro que NO son datos de negocio.
+# Se excluyen del análisis para no generar ABMs inútiles.
+VFP_SYSTEM_TABLES = {
+    "foxuser",    # preferencias del IDE/runtime
+    "vfpgraph",   # soporte de gráficos del IDE
+    "foxcode",    # catálogo de código IntelliSense
+    "foxtask",    # tareas del proyecto
+    "foxref",     # referencias de proyectos
 }
 
 # Códigos de TYPE en el proyecto .pjx -> tipo legible.
@@ -357,11 +369,18 @@ def build_seed_from_zip(raw_bytes, inventory):
     Devuelve (seed, indexes, total_filas) con claves = slug del nombre de tabla."""
     zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
     names = [n for n in zf.namelist() if not n.endswith("/")]
-    by_stem = {}   # nombre base sin extensión (lower) -> {ext: ruta real}
+    # by_stem: nombre base sin extensión (lower) -> {ext: ruta real}
+    # Cuando hay duplicados (p.ej. datos/ vs ZZ_EJECUTABLES/) preferimos el
+    # archivo más GRANDE porque suele tener los datos reales de producción.
+    by_stem = {}
+    file_sizes = {n: zf.getinfo(n).file_size for n in names}
     for n in names:
         base = os.path.basename(n)
         stem, ext = os.path.splitext(base)
-        by_stem.setdefault(stem.lower(), {})[ext.lower()] = n
+        sk, ek = stem.lower(), ext.lower()
+        prev = by_stem.get(sk, {}).get(ek)
+        if prev is None or file_sizes.get(n, 0) > file_sizes.get(prev, 0):
+            by_stem.setdefault(sk, {})[ek] = n
 
     seed, indexes, total = {}, {}, 0
     for t in inventory.get("tables", []):
@@ -457,6 +476,103 @@ def parse_pjx(pjx_bytes, pjt_bytes):
         if not principal and typ == "H":
             principal = item["name"]
     return {"archivos": archivos, "principal": principal, "por_tipo": por_tipo}
+
+
+def _dbc_get_prop(text, key):
+    """Extrae el valor de una propiedad del bloque PROPERTY de un objeto .dbc."""
+    m = re.search(r'(?:^|\n)\s*' + re.escape(key) + r'\s*=\s*"?([^"\r\n]*)"?', text, re.I)
+    return m.group(1).strip().strip('"') if m else ""
+
+
+def parse_dbc(dbc_bytes, dct_bytes):
+    """Lee el Database Container de VFP (.dbc + memo .dct).
+
+    Un .dbc es un DBF especial: cada registro describe un objeto de la base
+    de datos (tabla, campo, relación, vista, stored procedure, etc.).
+    Se identifica el tipo por el campo OBJECTTYPE y la jerarquía por PARENTID.
+
+    Devuelve:
+    - relaciones: [{parent_table, parent_field, child_table, child_field}]
+    - campos:     {tabla_slug: {campo_slug: {caption, defaultvalue, inputmask, ...}}}
+    - stored_procs: [{name, code}]
+    - vistas: [name]
+    """
+    rows = read_dbf_records(dbc_bytes, dct_bytes, max_records=10000)
+    if not rows:
+        return {"relaciones": [], "campos": {}, "stored_procs": [], "vistas": []}
+
+    # Índice OBJECTID → fila para resolver parentid (jerarquía tabla→campo/relación).
+    by_id = {}
+    for r in rows:
+        oid = r.get("objectid")
+        if oid is not None:
+            try:
+                by_id[int(oid)] = r
+            except (TypeError, ValueError):
+                pass
+
+    relaciones, campos_props, stored_procs, vistas = [], {}, [], []
+    seen_rels = set()
+
+    for r in rows:
+        otype = str(r.get("objecttype") or "").strip().lower()
+        oname = str(r.get("objectname") or "").strip()
+        prop  = str(r.get("property") or "").strip()
+        code  = str(r.get("code") or "").strip()
+        try:
+            parent_id = int(r.get("parentid") or 0)
+        except (TypeError, ValueError):
+            parent_id = 0
+
+        if otype == "relation":
+            # Relación 1-N entre tablas (la tabla padre es el padre del registro).
+            pt_row = by_id.get(parent_id) if parent_id else None
+            parent_table = str(pt_row.get("objectname") or "") if pt_row else ""
+            parent_tag  = _dbc_get_prop(prop, "ParentTagName")
+            child_table = _dbc_get_prop(prop, "ChildTableName")
+            child_tag   = _dbc_get_prop(prop, "ChildTagName")
+            pt = scaffold._slug(parent_table)
+            ct = scaffold._slug(child_table)
+            pf = scaffold._slug(parent_tag)
+            cf = scaffold._slug(child_tag)
+            sig = (pt, pf, ct, cf)
+            if ct and cf and sig not in seen_rels:
+                seen_rels.add(sig)
+                relaciones.append({
+                    "parent_table": pt, "parent_field": pf,
+                    "child_table":  ct, "child_field":  cf,
+                })
+
+        elif otype == "field":
+            # Propiedades persistentes de un campo (Caption, Default, etc.).
+            pt_row = by_id.get(parent_id) if parent_id else None
+            if pt_row and str(pt_row.get("objecttype") or "").strip().lower() == "table":
+                tabla_key = scaffold._slug(str(pt_row.get("objectname") or "").strip())
+                campo_key = scaffold._slug(oname)
+                if tabla_key and campo_key:
+                    props = {}
+                    for k in ("Caption", "DefaultValue", "InputMask",
+                              "RuleExpression", "RuleText"):
+                        v = _dbc_get_prop(prop, k)
+                        if v:
+                            props[k.lower()] = v
+                    if props:
+                        campos_props.setdefault(tabla_key, {})[campo_key] = props
+
+        elif otype in ("storedprocedurecode", "storedprocedure"):
+            if oname and code:
+                stored_procs.append({"name": oname, "code": code[:3000]})
+
+        elif otype in ("view", "localview", "remoteview"):
+            if oname:
+                vistas.append(oname)
+
+    return {
+        "relaciones": relaciones,
+        "campos": campos_props,
+        "stored_procs": stored_procs[:20],
+        "vistas": vistas[:50],
+    }
 
 
 def _read_memo(sct, blocknum, blocksize):
@@ -617,36 +733,103 @@ def parse_mpr_menu(text):
     return menus
 
 
-def parse_mnx_menu(head_and_body):
-    """Fallback: extrae los PROMPT de un .mnx (es una tabla DBF) como lista plana."""
-    struct = parse_dbf_structure(head_and_body[:32 + 32 * 64])
-    if not struct:
-        return []
-    # Buscamos el campo "prompt" y leemos su columna en cada registro.
-    try:
-        header_len = int.from_bytes(head_and_body[8:10], "little")
-        rec_len = int.from_bytes(head_and_body[10:12], "little")
-    except Exception:
-        return []
-    offset, length = None, 0
-    pos = 1
-    for f in struct["fields"]:
-        if f["name"].lower() == "prompt":
-            offset, length = pos, f["len"]
-            break
-        pos += f["len"]
-    if offset is None:
-        return []
-    items, n = [], int.from_bytes(head_and_body[4:8], "little")
-    for r in range(min(n, 300)):
-        start = header_len + r * rec_len + offset
-        raw = head_and_body[start:start + length]
-        if len(raw) < length:
-            break
-        txt = _clean_prompt(raw.decode("latin-1", "replace").replace("\x00", ""))
-        if txt:
-            items.append({"texto": txt, "accion": ""})
+def parse_mnx_menu(mnx_bytes, mnt_bytes=b""):
+    """Fallback: extrae los ítems de un .mnx (tabla DBF) como lista plana.
+
+    Acepta el memo .mnt para poder leer campos Memo (PROCEDURE, MESSAGE, etc.).
+    Usa read_dbf_records para soportar ambos tipos de campo correctamente.
+    """
+    rows = read_dbf_records(mnx_bytes, mnt_bytes, max_records=500)
+    items = []
+    for r in rows:
+        txt = _clean_prompt(str(r.get("prompt") or "").replace("\x00", ""))
+        if not txt:
+            continue
+        accion = str(r.get("procedure") or r.get("action") or
+                     r.get("command") or "")[:120].strip()
+        items.append({"texto": txt, "accion": accion})
     return [{"titulo": "Menú", "items": items}] if items else []
+
+
+def parse_vcx_methods(vcx_bytes, vct_bytes):
+    """Extrae los métodos (código) de una biblioteca de clases VFP (.vcx + .vct).
+
+    Un .vcx es un DBF donde cada registro es un miembro de clase. El campo
+    OBJCODE (memo, en el .vct) contiene el código PRG del método.
+
+    Devuelve lista de {name, class_name, code} con los métodos no vacíos.
+    """
+    rows = read_dbf_records(vcx_bytes, vct_bytes, max_records=2000)
+    methods = []
+    for r in rows:
+        code = str(r.get("objcode") or "").strip()
+        if not code or len(code) < 15:
+            continue
+        # El campo OBJCODE puede contener código compilado (binario). Si el primer
+        # carácter es no-imprimible el bloque entero es código objeto → descartarlo.
+        if ord(code[0]) < 32:
+            continue
+        # Verificación adicional: descartar si más del 20 % son caracteres no-ASCII.
+        non_ascii = sum(1 for c in code[:200] if ord(c) > 127 or ord(c) < 9)
+        if non_ascii > len(code[:200]) * 0.20:
+            continue
+        objname  = str(r.get("objname")  or "").strip()
+        baseclass = str(r.get("baseclass") or "").strip()
+        methods.append({
+            "name":       objname,
+            "class_name": baseclass,
+            "code":       code[:MAX_SAMPLE_BYTES],
+        })
+    return methods
+
+
+def _parse_programa_menu(prog_bytes, menues_bytes=b""):
+    """Construye navegación desde programa.dbf + menues.dbf (patrón de menú
+    dinámico común en sistemas VFP que no usan .mpr/.mnx estándar).
+
+    programa.dbf tiene: nombre (form), menu (label), tipo (FORM/MENU),
+    nmenu (nro de menú), smenu (nro de submenú).
+    menues.dbf tiene: numero, menu (nombre del grupo de menú).
+    """
+    prog_rows = read_dbf_records(prog_bytes, b"", max_records=500)
+    if not prog_rows:
+        return []
+
+    # menues.dbf: {numero -> nombre del grupo}
+    menu_names = {}
+    if menues_bytes:
+        for r in read_dbf_records(menues_bytes, b"", max_records=50):
+            num = r.get("numero")
+            name = str(r.get("menu") or "").strip()
+            if num is not None and name:
+                try:
+                    menu_names[int(num)] = name
+                except (TypeError, ValueError):
+                    pass
+
+    # Agrupar FORMs por nmenu
+    by_menu = {}
+    for r in prog_rows:
+        if str(r.get("tipo") or "").strip().upper() != "FORM":
+            continue
+        nombre = str(r.get("nombre") or "").strip()
+        label  = str(r.get("menu")   or "").strip()
+        nmenu  = r.get("nmenu")
+        if not nombre or not label or nmenu is None:
+            continue
+        try:
+            nmenu = int(nmenu)
+        except (TypeError, ValueError):
+            continue
+        titulo = menu_names.get(nmenu, f"Menú {nmenu}")
+        if nmenu not in by_menu:
+            by_menu[nmenu] = {"titulo": titulo, "items": []}
+        by_menu[nmenu]["items"].append({
+            "texto":  label,
+            "accion": f"DO FORM {nombre}",
+        })
+
+    return [by_menu[k] for k in sorted(by_menu) if by_menu[k]["items"]]
 
 
 def analyze_zip(raw_bytes):
@@ -666,6 +849,43 @@ def analyze_zip(raw_bytes):
             project = parse_pjx(zf.read(pjx_name), pjt_bytes)
         except Exception:
             project = None
+
+    # 2) Bases de datos .dbc: relaciones entre tablas, propiedades de campos,
+    #    stored procedures y vistas. Muy útil para FK constraints y etiquetas.
+    # Deduplicamos por nombre base: si hay duplicados (p.ej. ZZ_EJECUTABLES/ vs
+    # datos/) preferimos la copia en la carpeta más "profunda" (datos de producción).
+    databases = []
+    dbc_by_stem = {}   # stem_lower -> nombre real elegido
+    for dbc_name in sorted(n for n in names if n.lower().endswith(".dbc")):
+        stem_key = os.path.splitext(os.path.basename(dbc_name))[0].lower()
+        prev = dbc_by_stem.get(stem_key)
+        # Preferir rutas con "datos" en la ruta sobre "ejecutables" u otras
+        if prev is None:
+            dbc_by_stem[stem_key] = dbc_name
+        else:
+            parts_new = dbc_name.lower().split("/")
+            parts_old = prev.lower().split("/")
+            # Si el nuevo tiene "dato" y el viejo no, o si el nuevo es más profundo
+            has_datos_new = any("dato" in p for p in parts_new)
+            has_datos_old = any("dato" in p for p in parts_old)
+            if has_datos_new and not has_datos_old:
+                dbc_by_stem[stem_key] = dbc_name
+    for dbc_name in dbc_by_stem.values():
+        try:
+            dbc_bytes = zf.read(dbc_name)
+            stem = os.path.splitext(dbc_name)[0]
+            dct_real = lower_map.get(stem.lower() + ".dct")
+            dct_bytes = zf.read(dct_real) if dct_real else b""
+            db_info = parse_dbc(dbc_bytes, dct_bytes)
+            db_info["name"] = os.path.splitext(os.path.basename(dbc_name))[0]
+            databases.append(db_info)
+            if db_info["relaciones"] or db_info["stored_procs"] or db_info["vistas"]:
+                print(f"  .dbc: {db_info['name']} — "
+                      f"{len(db_info['relaciones'])} rels, "
+                      f"{len(db_info['stored_procs'])} procs, "
+                      f"{len(db_info['vistas'])} vistas")
+        except Exception:
+            pass
 
     by_ext = {}
     counts = {}
@@ -696,8 +916,10 @@ def analyze_zip(raw_bytes):
             programs.append(base)
 
         # Estructura real de las tablas .dbf (leyendo solo el header).
+        # Excluimos las tablas de sistema de VFP que no son datos de negocio.
         tname = os.path.splitext(base)[0].lower()
-        if ext == ".dbf" and len(tables) < MAX_TABLES and tname not in seen_tables:
+        if (ext == ".dbf" and len(tables) < MAX_TABLES
+                and tname not in seen_tables and tname not in VFP_SYSTEM_TABLES):
             try:
                 with zf.open(name) as fp:
                     head = fp.read(32 + 32 * 256)  # suficiente para todos los campos
@@ -747,8 +969,9 @@ def analyze_zip(raw_bytes):
         elif ext == ".mnx":
             mnx_pending.append(name)
 
-        # Muestras de código fuente real (programas pequeños).
-        if ext in (".prg", ".cbl", ".cob") and len(samples) < MAX_SAMPLES:
+        # Muestras de código fuente real: .prg, .cbl, .cob, y también archivos
+        # de include .h (constantes #DEFINE) y .txt (notas/documentación).
+        if ext in (".prg", ".cbl", ".cob", ".h", ".txt") and len(samples) < MAX_SAMPLES:
             try:
                 info = zf.getinfo(name)
                 if info.file_size <= MAX_SAMPLE_BYTES * 3:
@@ -761,13 +984,57 @@ def analyze_zip(raw_bytes):
             except Exception:
                 pass
 
-    # Si no hubo menús .mpr, intentamos con los .mnx (DBF) como fallback plano.
+    # Clases VFP (.vcx + .vct): extraer métodos como muestras adicionales de código.
+    # Son reutilizables y contienen lógica de negocio en sus event handlers.
+    vcx_names = [n for n in sorted(names) if n.lower().endswith(".vcx")]
+    for vcx_name in vcx_names[:15]:  # máx 15 archivos de clase
+        try:
+            vcx_bytes = zf.read(vcx_name)
+            stem = os.path.splitext(vcx_name)[0]
+            vct_real = lower_map.get(stem.lower() + ".vct")
+            vct_bytes = zf.read(vct_real) if vct_real else b""
+            vcx_base = os.path.basename(vcx_name)
+            for m in parse_vcx_methods(vcx_bytes, vct_bytes)[:6]:
+                if len(samples) >= MAX_SAMPLES:
+                    break
+                samples.append({
+                    "name": f"{vcx_base}.{m['name']}",
+                    "content": m["code"],
+                })
+        except Exception:
+            pass
+
+    # Si no hubo menús .mpr, intentamos con los .mnx (DBF + memo .mnt) como fallback.
     if not menus and mnx_pending:
         for name in mnx_pending[:5]:
             try:
                 with zf.open(name) as fp:
                     body = fp.read(200000)
-                menus.extend(parse_mnx_menu(body))
+                mnt_real = lower_map.get(os.path.splitext(name)[0].lower() + ".mnt")
+                mnt_bytes = zf.read(mnt_real) if mnt_real else b""
+                menus.extend(parse_mnx_menu(body, mnt_bytes))
+            except Exception:
+                pass
+
+    # Fallback adicional: sistemas que usan menú dinámico desde programa.dbf.
+    # Si los menús extraídos hasta ahora tienen < 3 ítems en total, buscamos
+    # programa.dbf (cualquier copia, preferimos la más grande) + menues.dbf.
+    total_items = sum(len(m.get("items", [])) for m in menus)
+    if total_items < 3:
+        prog_candidates = [n for n in names if os.path.basename(n).lower() == "programa.dbf"]
+        if prog_candidates:
+            # La más grande suele ser la de producción
+            prog_name = max(prog_candidates, key=lambda n: zf.getinfo(n).file_size)
+            try:
+                prog_bytes = zf.read(prog_name)
+                men_name = next(
+                    (n for n in names if os.path.basename(n).lower() == "menues.dbf"), None)
+                men_bytes = zf.read(men_name) if men_name else b""
+                prog_menus = _parse_programa_menu(prog_bytes, men_bytes)
+                if len(prog_menus) > 0:
+                    menus = prog_menus  # reemplaza los menús placeholder
+                    print(f"  menú dinámico: {sum(len(m['items']) for m in menus)} "
+                          f"ítems en {len(menus)} grupos (desde programa.dbf)")
             except Exception:
                 pass
 
@@ -784,6 +1051,7 @@ def analyze_zip(raw_bytes):
         "samples": samples,
         "menus": menus,
         "project": project,
+        "databases": databases,
     }
 
 
@@ -791,69 +1059,6 @@ def safe_name(name, default):
     """Evita rutas peligrosas: deja solo el nombre de archivo."""
     name = os.path.basename(str(name or "")).strip().replace("\\", "").replace("/", "")
     return name or default
-
-
-def test_filename(target):
-    """Nombre/ubicación del archivo de tests según la tecnología destino."""
-    t = (target or "").lower()
-    if "python" in t or "django" in t or "fastapi" in t:
-        return "tests/test_fase.py"
-    if "node" in t or "express" in t:
-        return "tests/fase.test.js"
-    if ".net" in t or "c#" in t or "blazor" in t:
-        return "tests/FaseTests.cs"
-    if "java" in t or "spring" in t:
-        return "tests/FaseTests.java"
-    return "tests/tests.txt"
-
-
-def build_readme(phase, d, source, target):
-    """Arma el README.md de la fase con explicación e instrucciones."""
-    num = phase.get("numero", "")
-    titulo = phase.get("titulo", "Fase")
-    out = [f"# Fase {num}: {titulo}", "", f"**Migración:** {source} → {target}"]
-    if phase.get("descripcion"):
-        out += ["", phase["descripcion"]]
-    if d.get("explicacion"):
-        out += ["", "## Explicación", "", d["explicacion"]]
-    archivos = d.get("archivos") or []
-    if archivos:
-        out += ["", "## Archivos generados (carpeta `src/`)", ""]
-        for f in archivos:
-            out.append(f"- `{f.get('nombre', '')}` — {f.get('descripcion', '')}")
-    if d.get("tests"):
-        out += ["", f"Incluye tests automatizados en `{test_filename(target)}`."]
-    if d.get("instrucciones"):
-        out += ["", "## Instrucciones de instalación", "", d["instrucciones"]]
-    if d.get("interfaz_descripcion"):
-        out += ["", "## Interfaz", "", d["interfaz_descripcion"]]
-    out += ["", "---", "_Generado por LegacyMigrator._"]
-    return "\n".join(out)
-
-
-def build_phase_zip(payload):
-    """Construye en memoria el ZIP descargable de una fase generada."""
-    phase = payload.get("phase", {}) or {}
-    d = payload.get("data", {}) or {}
-    source = payload.get("source", "")
-    target = payload.get("target", "")
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        used = set()
-        for f in d.get("archivos") or []:
-            name = safe_name(f.get("nombre"), "archivo.txt")
-            stem, ext = os.path.splitext(name)
-            i = 1
-            while name in used:  # evita colisiones de nombres
-                name = f"{stem}_{i}{ext}"
-                i += 1
-            used.add(name)
-            z.writestr(f"src/{name}", f.get("codigo") or "")
-        if d.get("tests"):
-            z.writestr(test_filename(target), d["tests"])
-        z.writestr("README.md", build_readme(phase, d, source, target))
-    return buf.getvalue()
 
 
 class Handler(http.server.BaseHTTPRequestHandler):
@@ -950,27 +1155,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_json(400, {"error": {"message": "El archivo no es un ZIP válido"}})
             except Exception as e:
                 self.send_json(500, {"error": {"message": f"Error al leer el ZIP: {e}"}})
-            return
-
-        if self.path == "/api/zip":
-            try:
-                payload = json.loads(self.read_body() or b"{}")
-            except Exception:
-                self.send_json(400, {"error": {"message": "JSON inválido"}})
-                return
-            try:
-                data = build_phase_zip(payload)
-            except Exception as e:
-                self.send_json(500, {"error": {"message": f"Error al armar el ZIP: {e}"}})
-                return
-            fname = safe_name(payload.get("filename"), "fase.zip")
-            self.send_response(200)
-            self.send_cors()
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
             return
 
         if self.path == "/api/scaffold":
