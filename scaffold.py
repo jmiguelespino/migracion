@@ -729,7 +729,7 @@ INDEX_HTML = r'''<!DOCTYPE html>
 <body>
 <header>
   <button id="burger" class="icon" title="Menú" aria-label="Menú">☰</button>
-  <b id="apptitle">App migrada</b>
+  <div class="brand"><span class="brand-dot"></span><b id="apptitle">App migrada</b></div>
   <span id="stats" class="muted"></span>
   <button id="theme" class="icon" title="Tema claro/oscuro" aria-label="Tema">🌙</button>
 </header>
@@ -738,88 +738,165 @@ INDEX_HTML = r'''<!DOCTYPE html>
   <div id="backdrop"></div>
   <main id="main"></main>
 </div>
+<div id="modalRoot"></div>
 <script src="app.js"></script>
 </body></html>
 '''
 
 
 STYLE_CSS = r''':root{
-  --bg:#f4f5f7; --panel:#ffffff; --panel2:#fafafa; --text:#1a1d21; --muted:#6b7280;
-  --border:#e5e7eb; --brand:#5b54d6; --brand-d:#4239b8; --brand-bg:#eeedfe;
-  --accent:#0ea5a3; --danger:#dc2626; --shadow:0 1px 3px rgba(0,0,0,.06),0 1px 2px rgba(0,0,0,.04);
+  --bg:#f7f8fa; --panel:#ffffff; --panel2:#f4f5f7; --text:#16181d; --muted:#71757e;
+  --border:#ebecef; --border2:#e0e2e6;
+  --brand:#5b54d6; --brand-d:#4a43c4; --brand-bg:#f0effe; --brand-ring:rgba(91,84,214,.18);
+  --accent:#0ea5a3; --danger:#e0483d; --danger-bg:#fdeceb;
+  --shadow-sm:0 1px 2px rgba(16,18,29,.05);
+  --shadow:0 4px 12px rgba(16,18,29,.06),0 1px 3px rgba(16,18,29,.04);
+  --shadow-lg:0 20px 50px rgba(16,18,29,.18);
+  --radius:14px; --radius-sm:9px;
 }
 [data-theme=dark]{
-  --bg:#0f1216; --panel:#171b21; --panel2:#1d222a; --text:#e6e8eb; --muted:#9aa3af;
-  --border:#2a3039; --brand:#8b84ff; --brand-d:#6d64f0; --brand-bg:#21264f;
-  --accent:#2dd4bf; --danger:#f87171; --shadow:0 1px 3px rgba(0,0,0,.4);
+  --bg:#0c0e12; --panel:#15181e; --panel2:#1b1f27; --text:#e7e9ed; --muted:#9aa0ac;
+  --border:#262b34; --border2:#2f3540;
+  --brand:#8e88ff; --brand-d:#a59fff; --brand-bg:#1e2042; --brand-ring:rgba(142,136,255,.25);
+  --accent:#2dd4bf; --danger:#f4796f; --danger-bg:#2a1715;
+  --shadow-sm:0 1px 2px rgba(0,0,0,.3);
+  --shadow:0 4px 14px rgba(0,0,0,.4);
+  --shadow-lg:0 24px 60px rgba(0,0,0,.6);
 }
 *{box-sizing:border-box;margin:0;padding:0}
-body{font-family:-apple-system,BlinkMacSystemFont,Segoe UI,Roboto,sans-serif;color:var(--text);background:var(--bg);font-size:14px}
-header{background:var(--panel);border-bottom:1px solid var(--border);padding:0 16px;height:54px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:20}
-header b{font-size:16px;color:var(--brand)}
-header #stats{flex:1;font-size:12px}
-.icon{background:transparent;border:1px solid transparent;color:var(--text);font-size:18px;cursor:pointer;border-radius:8px;padding:4px 9px;line-height:1}
-.icon:hover{background:var(--panel2);border-color:var(--border)}
+html{-webkit-text-size-adjust:100%}
+body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Inter,sans-serif;color:var(--text);background:var(--bg);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased}
+::selection{background:var(--brand-bg)}
+code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:12px;background:var(--panel2);padding:2px 6px;border-radius:5px}
+
+/* header */
+header{background:rgba(255,255,255,.82);backdrop-filter:saturate(180%) blur(12px);border-bottom:1px solid var(--border);padding:0 18px;height:56px;display:flex;align-items:center;gap:12px;position:sticky;top:0;z-index:40}
+[data-theme=dark] header{background:rgba(21,24,30,.82)}
+.brand{display:flex;align-items:center;gap:9px}
+.brand-dot{width:22px;height:22px;border-radius:7px;background:linear-gradient(135deg,var(--brand),var(--accent));box-shadow:var(--shadow-sm)}
+header b{font-size:15px;font-weight:700;letter-spacing:-.01em}
+header #stats{flex:1;font-size:12.5px;color:var(--muted)}
+.icon{background:transparent;border:1px solid transparent;color:var(--muted);font-size:17px;cursor:pointer;border-radius:9px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;transition:.15s}
+.icon:hover{background:var(--panel2);color:var(--text)}
 #burger{display:none}
-.layout{display:flex;min-height:calc(100vh - 54px)}
-nav{width:260px;background:var(--panel);border-right:1px solid var(--border);overflow:auto;padding:10px;flex-shrink:0;position:sticky;top:54px;height:calc(100vh - 54px)}
-nav .grp{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;margin:14px 8px 5px}
-nav a{display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--text);text-decoration:none}
+
+/* layout */
+.layout{display:flex;min-height:calc(100vh - 56px)}
+nav{width:248px;background:var(--panel);border-right:1px solid var(--border);overflow:auto;padding:12px 10px;flex-shrink:0;position:sticky;top:56px;height:calc(100vh - 56px)}
+nav .grp{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:700;margin:16px 10px 6px}
+nav a{display:flex;align-items:center;gap:9px;padding:8px 11px;border-radius:9px;cursor:pointer;font-size:13.5px;color:var(--text);text-decoration:none;font-weight:500;transition:.12s;position:relative}
 nav a:hover{background:var(--panel2)}
 nav a.active{background:var(--brand-bg);color:var(--brand-d);font-weight:600}
-nav a .cnt{margin-left:auto;font-size:11px;color:var(--muted);background:var(--panel2);border-radius:10px;padding:1px 7px}
+nav a.active::before{content:"";position:absolute;left:0;top:18%;bottom:18%;width:3px;border-radius:3px;background:var(--brand)}
+nav a .cnt{margin-left:auto;font-size:11px;color:var(--muted);background:var(--panel2);border:1px solid var(--border);border-radius:20px;padding:1px 8px;font-weight:600}
+nav a.active .cnt{background:var(--panel);color:var(--brand-d)}
 #backdrop{display:none}
-main{flex:1;overflow:auto;padding:22px;max-width:100%}
-h1{font-size:22px;margin-bottom:4px}
-h2{font-size:19px;margin-bottom:4px}
-.sub{color:var(--muted);margin-bottom:16px}
+main{flex:1;overflow:auto;padding:28px 32px;max-width:1280px;width:100%;margin:0 auto}
+
+/* typography */
+h1{font-size:25px;font-weight:700;letter-spacing:-.02em}
+h2{font-size:21px;font-weight:700;letter-spacing:-.02em}
+h3{font-size:16px;font-weight:700;letter-spacing:-.01em}
+.sub{color:var(--muted);font-size:13.5px}
 .muted{color:var(--muted)}
-.toolbar{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:14px 0}
+
+/* page header */
+.page-head{display:flex;align-items:flex-start;gap:16px;margin-bottom:22px}
+.page-head .ttl{flex:1;min-width:0}
+.page-head h1,.page-head h2{margin-bottom:3px}
+.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:.08em;color:var(--brand-d);font-weight:700;margin-bottom:6px}
+
+/* buttons */
+button,.btn{font-family:inherit;background:var(--brand);color:#fff;border:1px solid var(--brand);border-radius:var(--radius-sm);padding:9px 15px;cursor:pointer;font-weight:600;font-size:13px;transition:.15s;display:inline-flex;align-items:center;gap:7px;white-space:nowrap}
+button:hover{background:var(--brand-d);border-color:var(--brand-d)}
+button:active{transform:translateY(1px)}
+button.sec{background:var(--panel);color:var(--text);border:1px solid var(--border2)}
+button.sec:hover{background:var(--panel2);border-color:var(--muted)}
+button.del{background:var(--danger);border-color:var(--danger)}
+button.del:hover{filter:brightness(.94)}
+button.sm{padding:6px 11px;font-size:12px}
+button.ghost{background:transparent;border-color:transparent;color:var(--muted);padding:6px 8px}
+button.ghost:hover{background:var(--panel2);color:var(--text)}
+button:disabled{opacity:.45;cursor:not-allowed}
+
+/* toolbar + search */
+.toolbar{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 14px}
 .toolbar .sp{flex:1}
-input.search{padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--panel);color:var(--text);font-size:13px;min-width:200px}
-.tablewrap{background:var(--panel);border:1px solid var(--border);border-radius:12px;box-shadow:var(--shadow);overflow:auto}
+.search-wrap{position:relative;flex:1;max-width:380px;min-width:190px}
+.search-wrap .si{position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--muted);font-size:14px;pointer-events:none}
+input.search{width:100%;padding:9px 12px 9px 34px;border:1px solid var(--border2);border-radius:var(--radius-sm);background:var(--panel);color:var(--text);font-size:13px;transition:.15s}
+input.search:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-ring)}
+
+/* table */
+.tablewrap{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:auto}
 table{border-collapse:collapse;width:100%}
-th,td{padding:9px 12px;border-bottom:1px solid var(--border);font-size:13px;text-align:left;white-space:nowrap}
-th{background:var(--panel2);font-weight:600;position:sticky;top:0;cursor:pointer;user-select:none}
-th:hover{color:var(--brand)}
-th .ar{font-size:10px;color:var(--brand)}
+th,td{padding:11px 16px;text-align:left;font-size:13px;white-space:nowrap}
+thead th{font-weight:600;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);position:sticky;top:0;cursor:pointer;user-select:none;border-bottom:1px solid var(--border);background:var(--panel)}
+th:hover{color:var(--text)}
+th .ar{font-size:9px;color:var(--brand);margin-left:3px}
+tbody td{border-bottom:1px solid var(--border)}
+tbody tr:last-child td{border-bottom:none}
+tbody tr{transition:background .1s}
 tbody tr:hover{background:var(--panel2)}
 td.actions{text-align:right;white-space:nowrap}
-img.thumb{max-width:72px;max-height:54px;border-radius:6px;border:1px solid var(--border);vertical-align:middle;object-fit:contain}
-button{background:var(--brand);color:#fff;border:none;border-radius:8px;padding:8px 14px;cursor:pointer;font-weight:600;font-size:13px}
-button:hover{background:var(--brand-d)}
-button.sec{background:var(--panel);color:var(--brand);border:1px solid var(--border)}
-button.sec:hover{background:var(--panel2)}
-button.del{background:var(--danger)}
-button.sm{padding:5px 9px;font-size:12px}
-.pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:12px;flex-wrap:wrap}
-.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:12px;margin-bottom:20px}
-.metric{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;box-shadow:var(--shadow);text-decoration:none;color:var(--text);display:block}
-.metric:hover{border-color:var(--brand)}
-.metric .n{font-size:26px;font-weight:700;color:var(--brand)}
-.metric .l{font-size:12px;color:var(--muted);margin-top:2px}
-.bars{display:flex;flex-direction:column;gap:7px}
-.bar{display:grid;grid-template-columns:160px 1fr 70px;gap:10px;align-items:center;font-size:12px}
-.bar .track{background:var(--panel2);border-radius:6px;height:18px;overflow:hidden}
-.bar .fill{background:linear-gradient(90deg,var(--brand),var(--accent));height:100%;border-radius:6px}
-.bar a{color:var(--text);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.bar a:hover{color:var(--brand)}
-form.abm{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr;gap:14px;box-shadow:var(--shadow)}
-form.abm label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:4px;font-weight:600}
-form.abm input,form.abm textarea,form.abm select{padding:8px 10px;border:1px solid var(--border);border-radius:8px;font-size:13px;background:var(--panel2);color:var(--text);font-weight:400}
-form.abm input:focus,form.abm textarea:focus,form.abm select:focus{outline:2px solid var(--brand-bg);border-color:var(--brand)}
-form.abm input.bad{border-color:var(--danger)}
-form.abm .err{color:var(--danger);font-size:11px;min-height:0}
-form.abm .full{grid-column:1 / -1;display:flex;gap:8px}
-.card{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px;box-shadow:var(--shadow)}
+td.actions button{opacity:.55;transition:.12s}
+tr:hover td.actions button{opacity:1}
+img.thumb{max-width:64px;max-height:48px;border-radius:6px;border:1px solid var(--border);vertical-align:middle;object-fit:cover}
+
+/* pager */
+.pager{display:flex;gap:8px;align-items:center;justify-content:flex-end;margin-top:14px;flex-wrap:wrap;font-size:13px}
+
+/* cards / metrics */
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(176px,1fr));gap:14px;margin-bottom:22px}
+.metric{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px;box-shadow:var(--shadow-sm);text-decoration:none;color:var(--text);display:block;transition:.15s}
+.metric:hover{box-shadow:var(--shadow);transform:translateY(-2px);border-color:var(--border2)}
+.metric .n{font-size:28px;font-weight:700;letter-spacing:-.02em}
+.metric .l{font-size:12.5px;color:var(--muted);margin-top:3px;font-weight:500}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:18px 20px;margin-bottom:16px;box-shadow:var(--shadow-sm)}
+.card>b{font-size:14px;font-weight:700}
 .card.rules{border-left:3px solid var(--accent)}
-.tag{display:inline-block;background:var(--brand-bg);color:var(--brand-d);border-radius:6px;padding:2px 8px;font-size:11px;margin:2px 4px 2px 0}
+.bars{display:flex;flex-direction:column;gap:9px}
+.bar{display:grid;grid-template-columns:170px 1fr 64px;gap:12px;align-items:center;font-size:12.5px}
+.bar .track{background:var(--panel2);border-radius:6px;height:10px;overflow:hidden}
+.bar .fill{background:linear-gradient(90deg,var(--brand),var(--accent));height:100%;border-radius:6px}
+.bar a{color:var(--text);text-decoration:none;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-weight:500}
+.bar a:hover{color:var(--brand)}
+.bar .v{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+.tag{display:inline-flex;align-items:center;background:var(--brand-bg);color:var(--brand-d);border-radius:7px;padding:3px 9px;font-size:11.5px;margin:2px 5px 2px 0;font-weight:600}
+
+/* empty state */
+.empty{text-align:center;padding:56px 20px;color:var(--muted)}
+.empty .ei{font-size:38px;margin-bottom:10px;opacity:.6}
+.empty p{font-size:14px}
+
+/* modal */
+.modal-backdrop{position:fixed;inset:0;background:rgba(16,18,29,.45);backdrop-filter:blur(3px);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;z-index:60;opacity:0;transition:opacity .18s;overflow:auto}
+.modal-backdrop.show{opacity:1}
+.modal{background:var(--panel);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-lg);width:100%;max-width:620px;margin:auto;transform:translateY(8px) scale(.98);transition:transform .2s;overflow:hidden}
+.modal-backdrop.show .modal{transform:none}
+.modal-head{display:flex;align-items:center;gap:12px;padding:18px 22px;border-bottom:1px solid var(--border)}
+.modal-head h3{flex:1}
+.modal-body{padding:22px;max-height:70vh;overflow:auto}
+
+/* form */
+form.abm{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+form.abm label{display:flex;flex-direction:column;font-size:12px;color:var(--muted);gap:5px;font-weight:600}
+form.abm input,form.abm textarea,form.abm select{padding:9px 11px;border:1px solid var(--border2);border-radius:var(--radius-sm);font-size:13.5px;background:var(--panel);color:var(--text);font-weight:400;font-family:inherit;transition:.15s}
+form.abm textarea{min-height:72px;resize:vertical}
+form.abm input:focus,form.abm textarea:focus,form.abm select:focus{outline:none;border-color:var(--brand);box-shadow:0 0 0 3px var(--brand-ring)}
+form.abm input.bad{border-color:var(--danger);box-shadow:0 0 0 3px var(--danger-bg)}
+form.abm .err{color:var(--danger);font-size:11px;font-weight:600;min-height:0}
+form.abm .full{grid-column:1 / -1}
+.modal-foot{grid-column:1 / -1;display:flex;gap:10px;justify-content:flex-end;margin-top:6px;padding-top:16px;border-top:1px solid var(--border)}
+
 @media(max-width:860px){
-  #burger{display:inline-block}
-  nav{position:fixed;left:-280px;top:54px;z-index:30;transition:left .2s;box-shadow:var(--shadow)}
+  #burger{display:inline-flex}
+  main{padding:20px 16px}
+  nav{position:fixed;left:-280px;top:56px;z-index:50;transition:left .2s;box-shadow:var(--shadow-lg)}
   nav.open{left:0}
-  #backdrop.show{display:block;position:fixed;inset:54px 0 0 0;background:rgba(0,0,0,.4);z-index:25}
+  #backdrop.show{display:block;position:fixed;inset:56px 0 0 0;background:rgba(0,0,0,.4);z-index:45}
   form.abm{grid-template-columns:1fr}
+  .bar{grid-template-columns:110px 1fr 50px}
 }
 '''
 
@@ -848,6 +925,7 @@ async function boot() {
   $('#burger').onclick = () => { $('#nav').classList.toggle('open'); $('#backdrop').classList.toggle('show'); };
   $('#backdrop').onclick = closeNav;
   $('#theme').onclick = toggleTheme;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeModal(); });
   route();
 }
 window.addEventListener('hashchange', () => { closeNav(); route(); });
@@ -907,23 +985,25 @@ function route() {
 function tableByKey(k){return (META.tablas||[]).find(t=>t.key===k);}
 
 // ---------- DASHBOARD ----------
+function nf(n){ return (Number(n)||0).toLocaleString('es'); }
+
 function viewHome() {
   const s = META.stats || {};
   const tablas = META.tablas || [];
   const cards = [
     ['Tablas', s.tablas||0], ['Registros', s.registros_importados||0],
     ['Reportes', s.reportes||0], ['Índices', s.indices||0],
-    ['Relaciones FK', s.relaciones||0], ['Imágenes', s.imagenes||0],
-  ].map(([l,n]) => `<div class="metric"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
+    ['Relaciones', s.relaciones||0], ['Imágenes', s.imagenes||0],
+  ].map(([l,n]) => `<div class="metric"><div class="n">${nf(n)}</div><div class="l">${l}</div></div>`).join('');
   const max = Math.max(1, ...tablas.map(t => COUNTS[t.key]||0));
   const bars = tablas.slice().sort((a,b)=>(COUNTS[b.key]||0)-(COUNTS[a.key]||0)).map(t => {
     const c = COUNTS[t.key]||0; const w = Math.round((c/max)*100);
-    return `<div class="bar"><a href="#/abm/${t.key}">${esc(t.name)}</a><div class="track"><div class="fill" style="width:${w}%"></div></div><span class="muted">${c}</span></div>`;
+    return `<div class="bar"><a href="#/abm/${t.key}">${esc(t.name)}</a><div class="track"><div class="fill" style="width:${w}%"></div></div><span class="v">${nf(c)}</span></div>`;
   }).join('');
   const pj = META.proyecto;
-  const pjHtml = pj ? `<div class="card"><b>📦 Proyecto original (.pjx)</b>
+  const pjHtml = pj ? `<div class="card"><b>📦 Proyecto original</b>
     <p class="sub" style="margin:6px 0 0">Programa principal: <b>${esc(pj.principal||'(no declarado)')}</b> · ${(pj.archivos||[]).length} archivos declarados</p>
-    <div style="margin-top:8px">${Object.entries(pj.por_tipo||{}).map(([k,v])=>`<span class="tag">${esc(k)}: ${v}</span>`).join('')}</div></div>` : '';
+    <div style="margin-top:10px">${Object.entries(pj.por_tipo||{}).map(([k,v])=>`<span class="tag">${esc(k)}: ${v}</span>`).join('')}</div></div>` : '';
   const fkRels = [];
   (META.tablas||[]).forEach(t => {
     (t.campos||[]).filter(f=>f.fk).forEach(f => {
@@ -931,12 +1011,13 @@ function viewHome() {
       fkRels.push(`<span class="tag">📎 ${esc(t.name)}.${esc(f.label||f.name)} → ${esc(pt?pt.name:f.fk.table)}</span>`);
     });
   });
-  const relsHtml = fkRels.length ? `<div class="card"><b>🔗 Relaciones entre tablas</b><div style="margin-top:8px">${fkRels.join('')}</div></div>` : '';
-  $('#main').innerHTML = `<h1>${esc(META.titulo||'App migrada')}</h1>
-    <p class="sub">Sistema migrado con todas sus utilidades. Datos reales importados del sistema original.</p>
+  const relsHtml = fkRels.length ? `<div class="card"><b>🔗 Relaciones entre tablas</b><div style="margin-top:10px">${fkRels.join('')}</div></div>` : '';
+  $('#main').innerHTML = `<div class="page-head"><div class="ttl"><div class="eyebrow">Panel</div>
+      <h1>${esc(META.titulo||'App migrada')}</h1>
+      <p class="sub">Sistema migrado con todas sus utilidades · datos reales del sistema original.</p></div></div>
     <div class="grid">${cards}</div>
     ${pjHtml}${relsHtml}
-    <div class="card"><b>Registros por tabla</b><div class="bars" style="margin-top:12px">${bars||'<span class="muted">Sin datos importados.</span>'}</div></div>`;
+    <div class="card"><b>Registros por tabla</b><div class="bars" style="margin-top:14px">${bars||'<span class="muted">Sin datos importados.</span>'}</div></div>`;
 }
 
 // ---------- ABM ----------
@@ -945,9 +1026,6 @@ function vstate(key){ return VS[key] || (VS[key] = { q:'', sort:'', dir:'asc', p
 async function viewAbm(key) {
   const t = tableByKey(key);
   if (!t) { $('#main').innerHTML = '<p>Tabla no encontrada.</p>'; return; }
-  // Pre-cargar opciones FK antes de renderizar el formulario.
-  const fkTables = [...new Set((t.campos||[]).filter(f=>f.fk).map(f=>f.fk.table))];
-  if (fkTables.length) await Promise.all(fkTables.map(loadFkOptions));
   const st = vstate(key);
   const qs = new URLSearchParams({ q:st.q, sort:st.sort, dir:st.dir, page:st.page, size:st.size });
   const res = await (await fetch(`/api/t/${key}?${qs}`)).json();
@@ -955,30 +1033,40 @@ async function viewAbm(key) {
   const pages = Math.max(1, Math.ceil(total / st.size));
   const fields = t.campos;
 
-  const form = formHtml(t, key);
   const head = '<tr>' + fields.map(f => {
     const ar = st.sort === f.name ? `<span class="ar">${st.dir==='asc'?'▲':'▼'}</span>` : '';
-    return `<th onclick="sortBy('${key}','${f.name}')">${esc(f.label || f.name)} ${ar}</th>`;
+    return `<th onclick="sortBy('${key}','${f.name}')">${esc(f.label || f.name)}${ar}</th>`;
   }).join('') + '<th></th></tr>';
-  const body = rows.map(r => '<tr>' + fields.map(f => `<td>${cellHtml(f, r[f.name])}</td>`).join('') +
-    `<td class="actions"><button class="sec sm" onclick='editRow(${JSON.stringify(r).replace(/'/g,"&#39;")})'>✎</button>
-     <button class="del sm" onclick="delRow('${key}',${r.id})">🗑</button></td></tr>`).join('');
+  const body = rows.map(r => {
+    const j = JSON.stringify(r).replace(/'/g, "&#39;");
+    return '<tr>' + fields.map(f => `<td>${cellHtml(f, r[f.name])}</td>`).join('') +
+      `<td class="actions"><button class="ghost sm" title="Editar" onclick='openForm("${key}", ${j})'>✎</button>` +
+      `<button class="ghost sm" title="Borrar" onclick="delRow('${key}',${r.id})">🗑</button></td></tr>`;
+  }).join('');
 
-  $('#main').innerHTML = `<h2>${esc(t.titulo || t.name)}</h2>
-    <p class="sub">${esc(t.descripcion || '')} <span class="muted">${total} registros</span></p>
+  const tableHtml = rows.length
+    ? `<div class="tablewrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>
+       <div class="pager">
+         <span class="muted">Página ${st.page} de ${pages} · ${nf(total)} registros</span>
+         <button class="sec sm" ${st.page<=1?'disabled':''} onclick="goPage('${key}',${st.page-1})">‹ Anterior</button>
+         <button class="sec sm" ${st.page>=pages?'disabled':''} onclick="goPage('${key}',${st.page+1})">Siguiente ›</button>
+       </div>`
+    : `<div class="tablewrap"><div class="empty"><div class="ei">${st.q?'🔍':'📭'}</div>
+         <p>${st.q?'Sin resultados para tu búsqueda.':'Todavía no hay registros.'}</p>
+         ${st.q?'':`<p style="margin-top:14px"><button onclick="openForm('${key}')">＋ Crear el primero</button></p>`}</div></div>`;
+
+  $('#main').innerHTML = `<div class="page-head">
+      <div class="ttl"><h2>${esc(t.titulo || t.name)}</h2>
+      <p class="sub">${esc(t.descripcion || '')}${t.descripcion?' · ':''}${nf(total)} registros</p></div>
+      <button onclick="openForm('${key}')">＋ Nuevo</button>
+    </div>
     ${reglasHtml(t)}
-    ${form}
     <div class="toolbar">
-      <input class="search" id="q" placeholder="🔎 Buscar..." value="${esc(st.q)}" oninput="onSearch('${key}',this.value)">
+      <div class="search-wrap"><span class="si">🔎</span><input class="search" id="q" placeholder="Buscar en ${esc(t.name)}..." value="${esc(st.q)}" oninput="onSearch('${key}',this.value)"></div>
       <span class="sp"></span>
       <button class="sec sm" onclick="window.open('/api/t/${key}/export.csv')">⬇ Exportar CSV</button>
     </div>
-    <div class="tablewrap"><table><thead>${head}</thead><tbody>${body || '<tr><td class="muted" style="padding:16px">Sin registros.</td></tr>'}</tbody></table></div>
-    <div class="pager">
-      <span class="muted">Página ${st.page} de ${pages}</span>
-      <button class="sec sm" ${st.page<=1?'disabled':''} onclick="goPage('${key}',${st.page-1})">‹ Anterior</button>
-      <button class="sec sm" ${st.page>=pages?'disabled':''} onclick="goPage('${key}',${st.page+1})">Siguiente ›</button>
-    </div>`;
+    ${tableHtml}`;
 }
 
 function formHtml(t, key) {
@@ -1012,9 +1100,42 @@ function formHtml(t, key) {
     const pv = f.es_imagen ? `<img id="pv_${f.name}" class="thumb" alt="" onerror="this.style.display='none'">` : '';
     form += `<label>${esc(f.label || f.name)}${star}${ctl}${pv}<span class="err" id="e_${f.name}"></span></label>`;
   });
-  form += `<div class="full"><button type="submit">💾 Guardar</button>
-           <button type="button" class="sec" onclick="clearForm()">Limpiar</button></div></form>`;
+  form += `<div class="modal-foot"><button type="button" class="sec" onclick="closeModal()">Cancelar</button>
+           <button type="submit">Guardar</button></div></form>`;
   return form;
+}
+
+// ---------- MODAL DE ALTA/EDICIÓN ----------
+async function openForm(key, row) {
+  const t = tableByKey(key);
+  if (!t) return;
+  // Pre-cargar opciones FK antes de pintar el formulario.
+  const fkTables = [...new Set((t.campos||[]).filter(f=>f.fk).map(f=>f.fk.table))];
+  if (fkTables.length) await Promise.all(fkTables.map(loadFkOptions));
+  const title = (row ? 'Editar ' : 'Nuevo ') + (t.titulo || t.name);
+  $('#modalRoot').innerHTML = `<div class="modal-backdrop" id="mb" onclick="if(event.target===this)closeModal()">
+    <div class="modal" role="dialog" aria-modal="true">
+      <div class="modal-head"><h3>${esc(title)}</h3><button class="icon" title="Cerrar (Esc)" onclick="closeModal()">✕</button></div>
+      <div class="modal-body">${formHtml(t, key)}</div>
+    </div></div>`;
+  if (row) fillForm(row);
+  requestAnimationFrame(() => {
+    const mb = $('#mb'); if (mb) mb.classList.add('show');
+    const first = document.querySelector('form.abm [id^=f_]:not([type=hidden])');
+    if (first) first.focus();
+  });
+}
+function closeModal() {
+  const mb = $('#mb'); if (!mb) return;
+  mb.classList.remove('show');
+  setTimeout(() => { const r = $('#modalRoot'); if (r) r.innerHTML = ''; }, 180);
+}
+function fillForm(r) {
+  for (const k in r) {
+    const e = document.getElementById('f_' + k); if (e) e.value = r[k] == null ? '' : r[k];
+    const pv = document.getElementById('pv_' + k); if (pv && r[k]) { pv.style.display = ''; pv.src = assetSrc(r[k]); }
+  }
+  const idf = document.getElementById('f_id'); if (idf) idf.value = r.id;
 }
 
 // Validación en vivo en el cliente (espejo de la del backend: requerido/numérico/maxlen).
@@ -1044,9 +1165,6 @@ function reglasHtml(t) {
   return h + `</div>`;
 }
 
-function clearForm(){document.querySelectorAll('form.abm [id^=f_]').forEach(e=>{e.value='';});document.querySelectorAll('form.abm .err').forEach(e=>e.textContent='');document.querySelectorAll('form.abm .bad').forEach(e=>e.classList.remove('bad'));}
-function editRow(r){for(const k in r){const e=document.getElementById('f_'+k);if(e)e.value=r[k]==null?'':r[k];const pv=document.getElementById('pv_'+k);if(pv&&r[k]){pv.style.display='';pv.src=assetSrc(r[k]);}}document.getElementById('f_id').value=r.id;window.scrollTo({top:0,behavior:'smooth'});}
-
 async function saveRow(key) {
   const t = tableByKey(key);
   let ok = true;
@@ -1063,6 +1181,7 @@ async function saveRow(key) {
     return false;
   }
   try { COUNTS = await (await fetch('/api/_counts')).json(); buildNav(); } catch(_) {}
+  closeModal();
   viewAbm(key);
   return false;
 }
@@ -1076,22 +1195,30 @@ async function delRow(key, id) {
 async function viewReport(i) {
   const r = META.reportes[i];
   if (!r) { $('#main').innerHTML = '<p>Reporte no encontrado.</p>'; return; }
-  if (!r.tabla) { $('#main').innerHTML = `<h2>Reporte: ${esc(r.name)}</h2><div class="card muted">Sin tabla asociada.</div>`; return; }
+  if (!r.tabla) {
+    $('#main').innerHTML = `<div class="page-head"><div class="ttl"><div class="eyebrow">📊 Reporte</div><h2>${esc(r.name)}</h2></div></div>
+      <div class="empty"><div class="ei">📊</div><p>Reporte sin tabla de datos asociada.</p></div>`;
+    return;
+  }
   const t = tableByKey(r.tabla);
   const res = await (await fetch(`/api/t/${r.tabla}?size=500`).catch(()=>({json:()=>({rows:[]})}))).json();
   const rows = res.rows || [];
   const head = '<tr>' + t.campos.map(f => `<th>${esc(f.label||f.name)}</th>`).join('') + '</tr>';
   const body = rows.map(x => '<tr>' + t.campos.map(f => `<td>${cellHtml(f, x[f.name])}</td>`).join('') + '</tr>').join('');
-  $('#main').innerHTML = `<h2>📊 ${esc(r.name)}</h2>
-    <p class="sub">Reporte sobre la tabla <b>${esc(t.name)}</b> · ${res.total||rows.length} filas</p>
-    <div class="toolbar"><span class="sp"></span><button class="sec sm" onclick="window.open('/api/t/${r.tabla}/export.csv')">⬇ Exportar CSV</button></div>
-    <div class="tablewrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+  $('#main').innerHTML = `<div class="page-head">
+      <div class="ttl"><div class="eyebrow">📊 Reporte</div><h2>${esc(r.name)}</h2>
+      <p class="sub">Sobre <b>${esc(t.name)}</b> · ${nf(res.total||rows.length)} filas</p></div>
+      <button class="sec" onclick="window.open('/api/t/${r.tabla}/export.csv')">⬇ Exportar CSV</button>
+    </div>
+    <div class="tablewrap"><table><thead>${head}</thead><tbody>${body || '<tr><td class="muted" style="padding:16px">Sin datos.</td></tr>'}</tbody></table></div>`;
 }
 
 function viewInfo(mi, ii) {
   const it = ((META.menus[mi] || {}).items || [])[ii] || {};
-  $('#main').innerHTML = `<h2>${esc(it.texto || 'Pantalla')}</h2>
-    <div class="card">Utilidad del sistema original.<br><span class="muted">Acción legacy: ${esc(it.accion || '—')}</span></div>`;
+  $('#main').innerHTML = `<div class="page-head"><div class="ttl"><div class="eyebrow">Utilidad</div><h2>${esc(it.texto || 'Pantalla')}</h2></div></div>
+    <div class="empty"><div class="ei">🧩</div>
+    <p>Esta utilidad del sistema original no tiene una pantalla de datos asociada.</p>
+    <p class="muted" style="margin-top:10px;font-size:12px">Acción legacy: <code>${esc(it.accion || '—')}</code></p></div>`;
 }
 
 boot();
