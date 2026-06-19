@@ -231,6 +231,63 @@ def _forms_index(inventory):
     return idx
 
 
+# Prefijos de campos descriptivos (la "etiqueta" legible de una tabla maestra).
+_DESC_PREFIXES = ("des", "desc", "descr", "nombre", "nom", "detalle", "glosa", "razon")
+# Tokens que delatan un campo "código/clave".
+_CODE_RE = re.compile(r"(cod|nro|clave|codigo|numero|^id$|^cd)", re.I)
+
+
+def _disp_field(tabla):
+    """Campo descriptivo (legible) de una tabla maestra: des_*, nombre, etc.;
+    si no hay, el primer campo de texto."""
+    for c in tabla["campos"]:
+        if c.get("type") in ("C", "M") and c["name"].startswith(_DESC_PREFIXES):
+            return c["name"]
+    for c in tabla["campos"]:
+        if c.get("type") == "C":
+            return c["name"]
+    return None
+
+
+def _is_code_field(c):
+    return c.get("type") in ("N", "I") and bool(_CODE_RE.search(c["name"]))
+
+
+def _infer_relaciones(tablas, tables_sql):
+    """Infiere FK por convención de nombres cuando el .dbc no las declara.
+
+    Una tabla "posee" un código si es su primer campo-código y además tiene un
+    campo descriptivo (par COD_x/DES_x). Cualquier OTRA tabla que repita ese
+    nombre de código lo referencia (FK), y se muestra la descripción del dueño.
+    """
+    owners = {}   # nombre_codigo -> {table, field, display}
+    for t in tablas:
+        disp = _disp_field(t)
+        if not disp:
+            continue  # sin descripción no es tabla maestra (ej. tabla de detalle)
+        keyc = next((c["name"] for c in t["campos"] if _is_code_field(c)), None)
+        if keyc:
+            owners.setdefault(keyc, {"table": t["key"], "field": keyc, "display": disp})
+
+    for t in tablas:
+        for c in t["campos"]:
+            if c.get("fk"):
+                continue
+            o = owners.get(c["name"])
+            if o and o["table"] != t["key"] and o["table"] in tables_sql:
+                c["fk"] = {"table": o["table"], "field": o["field"], "display": o["display"]}
+
+    # Asegurar que TODA FK (también las del .dbc) tenga campo "display" para la grilla.
+    tdict = {t["key"]: t for t in tablas}
+    for t in tablas:
+        for c in t["campos"]:
+            fk = c.get("fk")
+            if fk and not fk.get("display"):
+                pt = tdict.get(fk["table"])
+                if pt:
+                    fk["display"] = _disp_field(pt)
+
+
 def build_meta(inventory, title, enrich=None):
     """Arma la metadata para el backend y la SPA a partir del inventario.
 
@@ -314,6 +371,13 @@ def build_meta(inventory, title, enrich=None):
                 fk = fks[campo["name"]]
                 if fk["table"] in tables_sql:
                     campo["fk"] = fk
+
+    # Inferencia de relaciones cuando el .dbc NO las declara (caso típico de
+    # FoxPro: las uniones viven en vistas y en código). Se infieren por la
+    # convención de nombres COD_x / DES_x: la tabla "dueña" de un código es la
+    # que también tiene su descripción; las demás que repiten ese código lo
+    # referencian (FK). Así recedet.cod_ingr → ingredie (muestra des_ingr).
+    _infer_relaciones(tablas, tables_sql)
 
     # Reportes -> intentamos asociarlos a una tabla por nombre.
     table_index = {_norm(x["name"]): x["key"] for x in tablas}
@@ -404,7 +468,7 @@ def _coverage_md(meta):
         f"| Menús (navegación) | {len(meta['menus'])} | ✅ generado |",
         f"| Reportes (vista/consulta) | {s['reportes']} | ✅ generado |",
         f"| Formularios originales | {s['formularios']} | 🟡 listados |",
-        f"| Relaciones FK (del .dbc) | {s.get('relaciones', 0)} | ✅ generado |",
+        f"| Relaciones FK (del .dbc + inferidas) | {s.get('relaciones', 0)} | ✅ uniones con descripción del padre |",
         f"| Stored procedures | {s.get('stored_procs', 0)} | 🟡 informativo |",
         "",
         "## Tablas → ABM",
@@ -618,27 +682,58 @@ def counts():
     return out
 
 
+def _fks(table):
+    """FK de una tabla, según META: [(col, tabla_padre, campo_join, campo_desc)].
+    Permite resolver el código a la descripción del padre (LEFT JOIN)."""
+    t = next((x for x in META.get("tablas", []) if x.get("key") == table), None)
+    out = []
+    if t:
+        for c in t.get("campos", []):
+            fk = c.get("fk")
+            if fk and fk.get("table") in TABLES and fk.get("display"):
+                out.append((c["name"], fk["table"], fk.get("field") or c["name"], fk["display"]))
+    return out
+
+
 @app.get("/api/t/{table}")
 def list_rows(table: str, q: str = "", sort: str = "", dir: str = "asc",
               page: int = 1, size: int = 50):
-    """Listado con búsqueda, orden y paginación del lado del servidor."""
+    """Listado con búsqueda, orden y paginación del lado del servidor.
+    Resuelve las FK con LEFT JOIN para devolver también la descripción del
+    padre como columna "<col>__d" (ej. cod_ingr__d = des_ingr del ingrediente)."""
     if table not in TABLES:
         raise HTTPException(404, "tabla desconocida")
     cols = [cn for cn, _ in TABLES[table]]
+    fks = _fks(table)
+    # SELECT con las descripciones de los padres + JOINs.
+    sel = ['m.*']
+    joins = ''
+    desc_cols = []
+    for i, (col, pt, pf, pd) in enumerate(fks):
+        a = 'j%d' % i
+        joins += ' LEFT JOIN "%s" %s ON %s."%s" = m."%s"' % (pt, a, a, pf, col)
+        alias = '%s__d' % col
+        sel.append('%s."%s" AS "%s"' % (a, pd, alias))
+        desc_cols.append(alias)
+    base = 'FROM "%s" m%s' % (table, joins)
     where, params = "", []
     if q:
-        where = " WHERE " + " OR ".join('CAST("%s" AS TEXT) LIKE ?' % c for c in cols)
-        params = ["%" + q + "%"] * len(cols)
+        searchable = ['m."%s"' % c for c in cols] + ['j%d."%s"' % (i, fks[i][3]) for i in range(len(fks))]
+        where = " WHERE " + " OR ".join('CAST(%s AS TEXT) LIKE ?' % s for s in searchable)
+        params = ["%" + q + "%"] * len(searchable)
     if sort in cols or sort == "id":
-        order = ' ORDER BY "%s" %s' % (sort, "DESC" if str(dir).lower() == "desc" else "ASC")
+        order = ' ORDER BY m."%s" %s' % (sort, "DESC" if str(dir).lower() == "desc" else "ASC")
     else:
-        order = " ORDER BY id DESC"
+        order = ' ORDER BY m.id DESC'
     size = max(1, min(int(size or 50), 500))
     page = max(1, int(page or 1))
     c = conn()
-    total = c.execute('SELECT COUNT(*) FROM "%s"%s' % (table, where), params).fetchone()[0]
+    if where:
+        total = c.execute('SELECT COUNT(*) %s%s' % (base, where), params).fetchone()[0]
+    else:
+        total = c.execute('SELECT COUNT(*) FROM "%s"' % table).fetchone()[0]
     rows = [dict(r) for r in c.execute(
-        'SELECT * FROM "%s"%s%s LIMIT ? OFFSET ?' % (table, where, order),
+        'SELECT %s %s%s%s LIMIT ? OFFSET ?' % (", ".join(sel), base, where, order),
         params + [size, (page - 1) * size])]
     c.close()
     return {"rows": rows, "total": total, "page": page, "size": size}
@@ -967,8 +1062,12 @@ function byName(txt) {
 function norm(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
 function assetSrc(val){ const s=String(val||'').trim().replace(/\\/g,'/'); return 'assets/' + encodeURIComponent(s.split('/').pop()); }
-function cellHtml(f, val){
+function cellHtml(f, val, row){
   if (f.es_imagen && val) return `<img class="thumb" src="${assetSrc(val)}" alt="${esc(val)}" title="${esc(val)}" onerror="this.replaceWith(document.createTextNode('${esc(val)}'))">`;
+  if (f.fk && row){
+    const d = row[f.name + '__d'];
+    if (d != null && d !== '') return `<span title="código: ${esc(val)}">${esc(d)} <span class="muted" style="font-size:11px">#${esc(val)}</span></span>`;
+  }
   if (f.input === 'checkbox') return (val==1||val===true||val==='1') ? '✅' : (val==null||val==='' ? '' : '—');
   return esc(val);
 }
@@ -1039,7 +1138,7 @@ async function viewAbm(key) {
   }).join('') + '<th></th></tr>';
   const body = rows.map(r => {
     const j = JSON.stringify(r).replace(/'/g, "&#39;");
-    return '<tr>' + fields.map(f => `<td>${cellHtml(f, r[f.name])}</td>`).join('') +
+    return '<tr>' + fields.map(f => `<td>${cellHtml(f, r[f.name], r)}</td>`).join('') +
       `<td class="actions"><button class="ghost sm" title="Editar" onclick='openForm("${key}", ${j})'>✎</button>` +
       `<button class="ghost sm" title="Borrar" onclick="delRow('${key}',${r.id})">🗑</button></td></tr>`;
   }).join('');
@@ -1081,13 +1180,13 @@ function formHtml(t, key) {
       // Campo FK: dropdown con opciones de la tabla padre.
       const opts = FK_CACHE[f.fk.table] || [];
       const pt = tableByKey(f.fk.table);
-      // Primer campo de texto de la tabla padre como etiqueta visible.
+      // Descripción del padre como etiqueta visible (fk.display si vino inferida).
       const dispF = pt ? (pt.campos.find(c => c.type==='C' && c.name!==f.fk.field) || pt.campos[0]) : null;
-      const dKey = dispF ? dispF.name : f.fk.field;
+      const dKey = f.fk.display || (dispF ? dispF.name : f.fk.field);
       const selOpts = opts.map(r => {
         const v = r[f.fk.field] != null ? String(r[f.fk.field]) : '';
-        const d = dispF && r[dKey] != null ? String(r[dKey]) : v;
-        return `<option value="${esc(v)}">${esc(d || v)}</option>`;
+        const d = r[dKey] != null ? String(r[dKey]) : v;
+        return `<option value="${esc(v)}">${esc(d || v)} (#${esc(v)})</option>`;
       }).join('');
       ctl = `<select id="f_${f.name}" ${req} ${tip} onchange="liveVal('${key}','${f.name}')"><option value="">— Seleccionar —</option>${selOpts}</select>`;
     } else if (f.input === 'textarea') {
@@ -1204,7 +1303,7 @@ async function viewReport(i) {
   const res = await (await fetch(`/api/t/${r.tabla}?size=500`).catch(()=>({json:()=>({rows:[]})}))).json();
   const rows = res.rows || [];
   const head = '<tr>' + t.campos.map(f => `<th>${esc(f.label||f.name)}</th>`).join('') + '</tr>';
-  const body = rows.map(x => '<tr>' + t.campos.map(f => `<td>${cellHtml(f, x[f.name])}</td>`).join('') + '</tr>').join('');
+  const body = rows.map(x => '<tr>' + t.campos.map(f => `<td>${cellHtml(f, x[f.name], x)}</td>`).join('') + '</tr>').join('');
   $('#main').innerHTML = `<div class="page-head">
       <div class="ttl"><div class="eyebrow">📊 Reporte</div><h2>${esc(r.name)}</h2>
       <p class="sub">Sobre <b>${esc(t.name)}</b> · ${nf(res.total||rows.length)} filas</p></div>

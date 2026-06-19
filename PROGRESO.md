@@ -136,6 +136,20 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
 - [x] **Deduplicación de `.dbf` en seed**: cuando hay dos copias del mismo DBF, se
       importa la **más grande** (más registros = datos de producción).
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
+- [x] **Inferencia de relaciones (FK) cuando el `.dbc` no las declara** + mostrar
+      la **descripción del padre** en la grilla/reportes (no el código crudo).
+      `_infer_relaciones` en `scaffold.py` usa la convención FoxPro `COD_x`/`DES_x`:
+      la tabla "dueña" de un código es la que también tiene su descripción; las
+      demás que repiten ese código lo referencian. El backend generado resuelve
+      las FK con **LEFT JOIN** (`<col>__d` = descripción) y la búsqueda alcanza
+      también esas descripciones. Verificado con el ZIP real Recetas:
+      `recedet.cod_rece→rececab (DES_RECE)`, `recedet.cod_ingr→ingredie (DES_INGR)`,
+      `ingredie.cod_rubr→rubro (DES_RUBR)` → 3 relaciones, antes 0. La grilla de
+      recedet muestra receta + ingrediente por nombre; backend arranca, CRUD OK.
+      **Nota imágenes**: este sistema no guarda fotos por registro (el memo
+      COCINA está vacío y ningún campo referencia archivos); las 143 imágenes del
+      ZIP son chrome de UI (íconos/logos). La detección de campos-imagen sigue
+      activa para sistemas que sí las usen.
 - [x] **Wireo robusto de ítems de menú → utilidad real** (`_menu_to_tabla` /
       `_menu_to_reporte` en `scaffold.py`): resuelve `DO FORM xxx` a su ABM
       tolerando prefijo numérico de orden (`0300_servic` → `servicios`), prefijos
