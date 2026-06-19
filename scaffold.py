@@ -697,10 +697,12 @@ def _fks(table):
 
 @app.get("/api/t/{table}")
 def list_rows(table: str, q: str = "", sort: str = "", dir: str = "asc",
-              page: int = 1, size: int = 50):
+              page: int = 1, size: int = 50, field: str = "", value: str = ""):
     """Listado con búsqueda, orden y paginación del lado del servidor.
     Resuelve las FK con LEFT JOIN para devolver también la descripción del
-    padre como columna "<col>__d" (ej. cod_ingr__d = des_ingr del ingrediente)."""
+    padre como columna "<col>__d" (ej. cod_ingr__d = des_ingr del ingrediente).
+    Si se pasan `field`+`value`, filtra por ese campo exacto (sirve para traer
+    los hijos de un registro maestro: recedet de una receta)."""
     if table not in TABLES:
         raise HTTPException(404, "tabla desconocida")
     cols = [cn for cn, _ in TABLES[table]]
@@ -708,19 +710,20 @@ def list_rows(table: str, q: str = "", sort: str = "", dir: str = "asc",
     # SELECT con las descripciones de los padres + JOINs.
     sel = ['m.*']
     joins = ''
-    desc_cols = []
     for i, (col, pt, pf, pd) in enumerate(fks):
         a = 'j%d' % i
         joins += ' LEFT JOIN "%s" %s ON %s."%s" = m."%s"' % (pt, a, a, pf, col)
-        alias = '%s__d' % col
-        sel.append('%s."%s" AS "%s"' % (a, pd, alias))
-        desc_cols.append(alias)
+        sel.append('%s."%s" AS "%s__d"' % (a, pd, col))
     base = 'FROM "%s" m%s' % (table, joins)
-    where, params = "", []
+    clauses, params = [], []
+    if (field in cols or field == "id") and value != "":
+        clauses.append('m."%s" = ?' % field)
+        params.append(value)
     if q:
         searchable = ['m."%s"' % c for c in cols] + ['j%d."%s"' % (i, fks[i][3]) for i in range(len(fks))]
-        where = " WHERE " + " OR ".join('CAST(%s AS TEXT) LIKE ?' % s for s in searchable)
-        params = ["%" + q + "%"] * len(searchable)
+        clauses.append("(" + " OR ".join('CAST(%s AS TEXT) LIKE ?' % s for s in searchable) + ")")
+        params += ["%" + q + "%"] * len(searchable)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     if sort in cols or sort == "id":
         order = ' ORDER BY m."%s" %s' % (sort, "DESC" if str(dir).lower() == "desc" else "ASC")
     else:
@@ -959,6 +962,17 @@ img.thumb{max-width:64px;max-height:48px;border-radius:6px;border:1px solid var(
 .bar .v{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
 .tag{display:inline-flex;align-items:center;background:var(--brand-bg);color:var(--brand-d);border-radius:7px;padding:3px 9px;font-size:11.5px;margin:2px 5px 2px 0;font-weight:600}
 
+/* ficha de registro (maestro-detalle) */
+.backlink{display:inline-flex;align-items:center;gap:5px;color:var(--muted);text-decoration:none;font-size:13px;font-weight:500;margin-bottom:14px}
+.backlink:hover{color:var(--brand)}
+.rec-fields{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:2px 24px}
+.fld{display:flex;flex-direction:column;gap:2px;padding:9px 0;border-bottom:1px solid var(--border)}
+.fld .fl{font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:600}
+.fld .fv{font-size:14px}
+.detail-sec{margin-top:22px}
+.detail-sec h3{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.detail-sec h3 .cnt{font-size:12px;font-weight:600;color:var(--muted);background:var(--panel2);border:1px solid var(--border);border-radius:20px;padding:1px 9px}
+
 /* empty state */
 .empty{text-align:center;padding:56px 20px;color:var(--muted)}
 .empty .ei{font-size:38px;margin-bottom:10px;opacity:.6}
@@ -1077,11 +1091,25 @@ function route() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === hash));
   const p = hash.split('/');
   if (p[1] === 'abm') return viewAbm(p[2]);
+  if (p[1] === 'rec') return viewRecord(p[2], +p[3]);
   if (p[1] === 'rep') return viewReport(+p[2]);
   if (p[1] === 'info') return viewInfo(+p[2], +p[3]);
   return viewHome();
 }
 function tableByKey(k){return (META.tablas||[]).find(t=>t.key===k);}
+// Tablas hijas de `key`: las que tienen una FK apuntando a esta tabla.
+function childrenOf(key){
+  const out=[];
+  (META.tablas||[]).forEach(t=>{
+    (t.campos||[]).forEach(c=>{ if(c.fk && c.fk.table===key) out.push({table:t.key, field:c.name, parentField:c.fk.field}); });
+  });
+  return out;
+}
+// Campo descriptivo de un registro (para el título de la ficha).
+function dispFieldOf(t){
+  return (t.campos||[]).find(c=>/^(des|desc|nombre|nom)/.test(c.name) && (c.type==='C'||c.type==='M'))
+      || (t.campos||[]).find(c=>c.type==='C') || null;
+}
 
 // ---------- DASHBOARD ----------
 function nf(n){ return (Number(n)||0).toLocaleString('es'); }
@@ -1132,15 +1160,19 @@ async function viewAbm(key) {
   const pages = Math.max(1, Math.ceil(total / st.size));
   const fields = t.campos;
 
+  const isMaster = childrenOf(key).length > 0;  // ¿tiene tablas hijas? → fila abre ficha
   const head = '<tr>' + fields.map(f => {
     const ar = st.sort === f.name ? `<span class="ar">${st.dir==='asc'?'▲':'▼'}</span>` : '';
     return `<th onclick="sortBy('${key}','${f.name}')">${esc(f.label || f.name)}${ar}</th>`;
   }).join('') + '<th></th></tr>';
   const body = rows.map(r => {
     const j = JSON.stringify(r).replace(/'/g, "&#39;");
-    return '<tr>' + fields.map(f => `<td>${cellHtml(f, r[f.name], r)}</td>`).join('') +
-      `<td class="actions"><button class="ghost sm" title="Editar" onclick='openForm("${key}", ${j})'>✎</button>` +
-      `<button class="ghost sm" title="Borrar" onclick="delRow('${key}',${r.id})">🗑</button></td></tr>`;
+    const rowAttr = isMaster ? ` style="cursor:pointer" onclick="location.hash='#/rec/${key}/${r.id}'"` : '';
+    const stop = isMaster ? 'event.stopPropagation(); ' : '';
+    return `<tr${rowAttr}>` + fields.map(f => `<td>${cellHtml(f, r[f.name], r)}</td>`).join('') +
+      `<td class="actions">${isMaster?`<button class="ghost sm" title="Ver ficha" onclick="${stop}location.hash='#/rec/${key}/${r.id}'">👁</button>`:''}` +
+      `<button class="ghost sm" title="Editar" onclick='${stop}openForm("${key}", ${j})'>✎</button>` +
+      `<button class="ghost sm" title="Borrar" onclick="${stop}delRow('${key}',${r.id})">🗑</button></td></tr>`;
   }).join('');
 
   const tableHtml = rows.length
@@ -1281,7 +1313,7 @@ async function saveRow(key) {
   }
   try { COUNTS = await (await fetch('/api/_counts')).json(); buildNav(); } catch(_) {}
   closeModal();
-  viewAbm(key);
+  route();
   return false;
 }
 async function delRow(key, id) {
@@ -1289,6 +1321,48 @@ async function delRow(key, id) {
   await fetch(`/api/t/${key}/${id}`, { method: 'DELETE' });
   try { COUNTS = await (await fetch('/api/_counts')).json(); buildNav(); } catch(_) {}
   viewAbm(key);
+}
+
+// ---------- FICHA (maestro-detalle) ----------
+async function viewRecord(key, id) {
+  const t = tableByKey(key);
+  if (!t) { $('#main').innerHTML = '<p>Tabla no encontrada.</p>'; return; }
+  const res = await (await fetch(`/api/t/${key}?field=id&value=${id}&size=1`)).json();
+  const row = (res.rows || [])[0];
+  if (!row) { $('#main').innerHTML = '<p>Registro no encontrado.</p>'; return; }
+  const j = JSON.stringify(row).replace(/'/g, "&#39;");
+  const dispF = dispFieldOf(t);
+  const title = (dispF && row[dispF.name]) ? row[dispF.name] : `${t.titulo || t.name} #${id}`;
+
+  // Ficha de campos del registro maestro.
+  const fieldsHtml = t.campos.map(f =>
+    `<div class="fld"><span class="fl">${esc(f.label || f.name)}</span><span class="fv">${cellHtml(f, row[f.name], row) || '<span class="muted">—</span>'}</span></div>`
+  ).join('');
+
+  // Secciones de detalle (tablas hijas).
+  let detailHtml = '';
+  for (const ch of childrenOf(key)) {
+    const ct = tableByKey(ch.table);
+    if (!ct) continue;
+    const val = row[ch.parentField];
+    const cres = await (await fetch(`/api/t/${ch.table}?field=${ch.field}&value=${encodeURIComponent(val)}&size=500`)).json();
+    const crows = cres.rows || [];
+    // Mostramos las columnas del hijo salvo la que apunta de vuelta al maestro.
+    const ccols = ct.campos.filter(c => c.name !== ch.field);
+    const chead = '<tr>' + ccols.map(c => `<th>${esc(c.label || c.name)}</th>`).join('') + '</tr>';
+    const cbody = crows.map(cr => '<tr>' + ccols.map(c => `<td>${cellHtml(c, cr[c.name], cr)}</td>`).join('') + '</tr>').join('');
+    detailHtml += `<div class="detail-sec">
+      <h3>${esc(ct.titulo || ct.name)} <span class="cnt">${nf(cres.total || crows.length)}</span></h3>
+      <div class="tablewrap"><table><thead>${chead}</thead><tbody>${cbody || `<tr><td class="muted" style="padding:16px">Sin registros relacionados.</td></tr>`}</tbody></table></div>
+    </div>`;
+  }
+
+  $('#main').innerHTML = `<a class="backlink" href="#/abm/${key}">‹ Volver a ${esc(t.titulo || t.name)}</a>
+    <div class="page-head"><div class="ttl"><div class="eyebrow">${esc(t.titulo || t.name)}</div>
+      <h2>${esc(title)}</h2></div>
+      <button class="sec" onclick='openForm("${key}", ${j})'>✎ Editar</button></div>
+    <div class="card"><div class="rec-fields">${fieldsHtml}</div></div>
+    ${detailHtml}`;
 }
 
 async function viewReport(i) {
