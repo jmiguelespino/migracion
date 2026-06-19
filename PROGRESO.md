@@ -136,7 +136,16 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
 - [x] **Deduplicación de `.dbf` en seed**: cuando hay dos copias del mismo DBF, se
       importa la **más grande** (más registros = datos de producción).
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
-- [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
+- [x] **Wireo robusto de ítems de menú → utilidad real** (`_menu_to_tabla` /
+      `_menu_to_reporte` en `scaffold.py`): resuelve `DO FORM xxx` a su ABM
+      tolerando prefijo numérico de orden (`0300_servic` → `servicios`), prefijos
+      de verbo/abreviatura en etiqueta y form (`frmPedidos`, `ABM Clientes`,
+      `Buscar cliente`, `Ver pedido` → su ABM) y usando el ControlSource del
+      `.scx`. Los ítems `REPORT FORM xxx` van a la vista de reporte si existe el
+      `.frx`; si no, caen al ABM de la tabla más cercana (listado + export). Antes
+      muchos ítems quedaban como placeholder muerto ("Acción legacy: DO FORM…").
+      Validado end-to-end con `test_recetas.zip`: 6/6 ítems wireados, backend
+      arranca (GET / → 200), JS válido.
 
 ## 🔍 Hallazgos del sistema Recetas (ZIP real)
 

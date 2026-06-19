@@ -39,24 +39,104 @@ def _norm(s):
     return re.sub(r"[^a-z0-9]", "", str(s or "").lower())
 
 
-_DO_FORM_RE = re.compile(r'\bDO\s+FORM\s+(\w+)', re.IGNORECASE)
+_DO_FORM_RE = re.compile(r'\bDO\s+FORM\s+([\w./\\]+)', re.IGNORECASE)
+_REPORT_RE = re.compile(r'\bREPORT\s+FORM\s+([\w./\\]+)', re.IGNORECASE)
+
+# Prefijos comunes (verbos/abreviaturas) que envuelven el nombre real de la
+# utilidad, tanto en la etiqueta visible ('ABM Clientes', 'Buscar cliente') como
+# en el nombre del form ('frmPedidos', 'frmDetallePedido'). Se quitan SOLO al
+# inicio para quedarnos con el sustantivo ('clientes', 'pedido').
+_PREFIJOS_RE = re.compile(
+    r'^(?:frm|abm|alta|baja|modif(?:icar|icacion)?|consult(?:a|ar)?|buscar|'
+    r'busqueda|ver|listar|listado|mantenimiento|mantenim|detalle|edic(?:ion)?|'
+    r'editar|nuevo|gestion|administr(?:ar|acion)|registro|rpt|reporte|informe)+'
+)
 
 
-def _menu_to_tabla(texto, accion, table_index):
-    """Resuelve ítem de menú → key de tabla (o None).
-    Prueba primero la etiqueta visible y luego el nombre del form de la acción.
-    Usa coincidencia parcial para cubrir prefijos/sufijos (ej. 'Recetas' ↔ 'rececab'
-    si el nombre empieza con la raíz normalizada)."""
-    candidates = [_norm(texto)]
+def _form_name(raw):
+    """Nombre de form sin ruta ni extensión: 'forms\\0300_servic.scx' -> '0300_servic'."""
+    s = str(raw or "").replace("\\", "/").rsplit("/", 1)[-1]
+    return re.sub(r"\.\w+$", "", s)
+
+
+def _cands(raw):
+    """Candidatos normalizados para resolver un nombre de utilidad → tabla.
+    Genera, en orden de confianza: el nombre tal cual, sin prefijo numérico de
+    orden ('0300_servic' → 'servic'), y sin prefijos de verbo/abreviatura
+    ('frmPedidos' → 'pedidos', 'Buscar cliente' → 'cliente')."""
+    out = []
+    n = _norm(raw)
+    if n:
+        out.append(n)
+    sin_num = _norm(re.sub(r"^[\d_\-.\s]+", "", str(raw or "")))
+    if sin_num and sin_num not in out:
+        out.append(sin_num)
+    base = _PREFIJOS_RE.sub("", n)
+    if base and len(base) >= 3 and base not in out:
+        out.append(base)
+    return out
+
+
+def _match_tabla(cand, table_index):
+    """Match de un candidato contra el índice de tablas: exacto, o por contención
+    (nombre de tabla dentro del candidato o viceversa) prefiriendo el más largo.
+    Mínimo 4 chars para la contención, así no matchea espurio."""
+    for tn, tk in table_index.items():
+        if tn and cand == tn:
+            return tk
+    best = None
+    for tn, tk in table_index.items():
+        if not tn:
+            continue
+        if (len(tn) >= 4 and tn in cand) or (len(cand) >= 4 and cand in tn):
+            if best is None or len(tn) > best[0]:
+                best = (len(tn), tk)
+    return best[1] if best else None
+
+
+def _menu_to_tabla(texto, accion, table_index, forms_by_name=None):
+    """Resuelve un ítem de menú → key de tabla (o None).
+
+    Prueba candidatos en orden de confianza:
+      1. la etiqueta visible del menú ('Servicios', 'ABM Clientes');
+      2. el nombre del form de la acción ('0300_servic', 'frmPedidos'),
+         tolerando prefijo numérico de orden y prefijos de verbo (frm/abm/ver…);
+      3. la tabla/vista real a la que el `.scx` está atado (ControlSource).
+    Devuelve la primera tabla que matchea (exacto o por contención)."""
+    forms_by_name = forms_by_name or {}
+    candidates = list(_cands(texto))
     m = _DO_FORM_RE.search(accion or "")
     if m:
-        candidates.append(_norm(m.group(1)))
+        fname = _form_name(m.group(1))
+        for c in _cands(fname):
+            if c not in candidates:
+                candidates.append(c)
+        src = (forms_by_name.get(_norm(fname))
+               or forms_by_name.get(_norm(re.sub(r"^[\d_\-.]+", "", fname))))
+        if src:
+            for c in _cands(src):
+                if c not in candidates:
+                    candidates.append(c)
     for cand in candidates:
         if not cand:
             continue
-        for tn, tk in table_index.items():
-            if tn and (cand == tn or tn.startswith(cand) or cand.startswith(tn)):
-                return tk
+        tk = _match_tabla(cand, table_index)
+        if tk:
+            return tk
+    return None
+
+
+def _menu_to_reporte(accion, report_index):
+    """Resuelve un ítem de menú con 'REPORT FORM xxx' → índice de reporte (o None)."""
+    m = _REPORT_RE.search(accion or "")
+    if not m:
+        return None
+    rname = _form_name(m.group(1))
+    for cand in _cands(rname):
+        for rn, ri in report_index.items():
+            if rn and (cand == rn or (len(rn) >= 4 and rn in cand)
+                       or (len(cand) >= 4 and cand in rn)):
+                return ri
     return None
 
 
@@ -250,13 +330,33 @@ def build_meta(inventory, title, enrich=None):
 
     formularios = [re.sub(r"\.\w+$", "", str(f)) for f in inventory.get("forms", [])]
 
-    # Menús: resolver cada ítem a una tabla (clave "tabla") para que la SPA
-    # pueda navegar directamente al ABM correspondiente.
+    # Mapa nombre-de-formulario → tabla/vista a la que está atado (ControlSource),
+    # para resolver acciones de menú tipo "DO FORM 0300_servic" a su ABM real.
+    forms_by_name = {}
+    for f in inventory.get("forms_detail", []):
+        nm = _norm(f.get("name"))
+        tb = f.get("tabla")
+        if nm and tb:
+            forms_by_name[nm] = tb
+
+    # Índice de reportes por nombre normalizado, para wirear ítems "REPORT FORM xxx".
+    report_index = {_norm(r["name"]): i for i, r in enumerate(reportes) if r.get("name")}
+
+    # Menús: resolver cada ítem a una tabla (clave "tabla") o a un reporte (clave
+    # "reporte") para que la SPA navegue directo a la utilidad correspondiente.
     menus = []
     for grp in (inventory.get("menus", []) or []):
         items = []
         for it in (grp.get("items", []) or []):
-            tabla = _menu_to_tabla(it.get("texto", ""), it.get("accion", ""), table_index)
+            accion = it.get("accion", "")
+            # 'REPORT FORM xxx' es señal explícita de reporte: si existe el .frx,
+            # va a la vista de reporte; si no, cae al ABM de la tabla más cercana.
+            rep = _menu_to_reporte(accion, report_index)
+            if rep is not None:
+                items.append({**it, "tabla": None, "reporte": rep})
+                continue
+            tabla = _menu_to_tabla(it.get("texto", ""), accion,
+                                   table_index, forms_by_name)
             items.append({**it, "tabla": tabla})
         menus.append({**grp, "items": items})
 
@@ -762,9 +862,11 @@ function buildNav() {
   (META.menus || []).forEach((m, mi) => {
     h += `<div class="grp">${esc(m.titulo || 'Menú')}</div>`;
     (m.items || []).forEach((it, ii) => {
-      // it.tabla viene pre-computado por Python; byName como fallback para meta.json antiguo.
+      // it.tabla / it.reporte vienen pre-computados por Python; byName como fallback.
       const t = byName(it.texto);
-      const href = it.tabla ? `#/abm/${it.tabla}` : (t ? `#/abm/${t.key}` : `#/info/${mi}/${ii}`);
+      const href = it.tabla ? `#/abm/${it.tabla}`
+        : (it.reporte != null ? `#/rep/${it.reporte}`
+        : (t ? `#/abm/${t.key}` : `#/info/${mi}/${ii}`));
       h += `<a href="${href}">${esc(it.texto || '')}</a>`;
     });
   });
