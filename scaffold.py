@@ -743,17 +743,33 @@ def list_rows(table: str, q: str = "", sort: str = "", dir: str = "asc",
 
 
 @app.get("/api/t/{table}/export.csv")
-def export_csv(table: str):
+def export_csv(table: str, field: str = "", value: str = ""):
+    """Exporta a CSV. Incluye las descripciones de las FK (col_desc) y permite
+    filtrar por campo (ej. los ingredientes de UNA receta: field=cod_rece)."""
     if table not in TABLES:
         raise HTTPException(404)
     import csv
+    cols = [cn for cn, _ in TABLES[table]]
+    fks = _fks(table)
+    sel = ['m.id AS id'] + ['m."%s" AS "%s"' % (c, c) for c in cols]
+    joins = ''
+    out_fields = [("id", "id")] + [(c, c) for c in cols]
+    for i, (col, pt, pf, pd) in enumerate(fks):
+        a = 'j%d' % i
+        joins += ' LEFT JOIN "%s" %s ON %s."%s" = m."%s"' % (pt, a, a, pf, col)
+        sel.append('%s."%s" AS "%s__d"' % (a, pd, col))
+        out_fields.append((col + "_desc", col + "__d"))
+    clauses, params = [], []
+    if (field in cols or field == "id") and value != "":
+        clauses.append('m."%s" = ?' % field)
+        params.append(value)
+    where = (" WHERE " + " AND ".join(clauses)) if clauses else ""
     out = io.StringIO()
-    cols = ["id"] + [cn for cn, _ in TABLES[table]]
     w = csv.writer(out)
-    w.writerow(cols)
+    w.writerow([h for h, _ in out_fields])
     c = conn()
-    for r in c.execute('SELECT * FROM "%s" ORDER BY id' % table):
-        w.writerow([r[cn] for cn in cols])
+    for r in c.execute('SELECT %s FROM "%s" m%s%s ORDER BY m.id' % (", ".join(sel), table, joins, where), params):
+        w.writerow([r[k] for _, k in out_fields])
     c.close()
     return Response(out.getvalue(), media_type="text/csv",
                     headers={"Content-Disposition": 'attachment; filename="%s.csv"' % table})
@@ -985,6 +1001,18 @@ img.thumb{max-width:64px;max-height:48px;border-radius:6px;border:1px solid var(
 .bitem .bsub{font-size:11px;color:var(--muted)}
 .bdetail{flex:1;min-width:0}
 @media(max-width:860px){ .split{flex-direction:column} .bpane{width:100%;position:static;max-height:320px} }
+
+/* impresión: solo la ficha (sin menú, header ni botones) → guardar como PDF */
+@media print{
+  header,nav,#backdrop,.backlink,.toolbar,.pager,td.actions,.page-head button,.bpane,.no-print{display:none!important}
+  .layout{display:block}
+  main{padding:0;max-width:none;margin:0}
+  .bdetail{width:100%}
+  .card,.tablewrap{box-shadow:none;border-color:#ccc;break-inside:avoid}
+  thead th{position:static}
+  body{background:#fff}
+  .detail-sec{break-inside:avoid}
+}
 
 /* empty state */
 .empty{text-align:center;padding:56px 20px;color:var(--muted)}
@@ -1369,13 +1397,17 @@ async function buildRecord(key, id) {
     const ccols = ct.campos.filter(c => c.name !== ch.field);
     const chead = '<tr>' + ccols.map(c => `<th>${esc(c.label || c.name)}</th>`).join('') + '</tr>';
     const cbody = crows.map(cr => '<tr>' + ccols.map(c => `<td>${cellHtml(c, cr[c.name], cr)}</td>`).join('') + '</tr>').join('');
+    const csvUrl = `/api/t/${ch.table}/export.csv?field=${encodeURIComponent(ch.field)}&value=${encodeURIComponent(val)}`;
     detailHtml += `<div class="detail-sec">
-      <h3>${esc(ct.titulo || ct.name)} <span class="cnt">${nf(cres.total || crows.length)}</span></h3>
+      <h3>${esc(ct.titulo || ct.name)} <span class="cnt">${nf(cres.total || crows.length)}</span>
+        <button class="sec sm no-print" style="margin-left:auto" onclick="window.open('${csvUrl}')">⬇ CSV</button></h3>
       <div class="tablewrap"><table><thead>${chead}</thead><tbody>${cbody || `<tr><td class="muted" style="padding:16px">Sin registros relacionados.</td></tr>`}</tbody></table></div>
     </div>`;
   }
   const html = `<div class="card"><div class="rec-fields">${fieldsHtml}</div></div>${detailHtml}`;
-  return { title, html, editBtn: `<button class="sec" onclick='openForm("${key}", ${j})'>✎ Editar</button>` };
+  const actions = `<button class="sec no-print" onclick="window.print()">🖨 Imprimir</button>
+    <button class="sec no-print" onclick='openForm("${key}", ${j})'>✎ Editar</button>`;
+  return { title, html, actions };
 }
 
 async function viewRecord(key, id) {
@@ -1384,7 +1416,7 @@ async function viewRecord(key, id) {
   if (!r) { $('#main').innerHTML = '<p>Registro no encontrado.</p>'; return; }
   $('#main').innerHTML = `<a class="backlink" href="#/abm/${key}">‹ Volver a ${esc(t.titulo || t.name)}</a>
     <div class="page-head"><div class="ttl"><div class="eyebrow">${esc(t.titulo || t.name)}</div>
-      <h2>${esc(r.title)}</h2></div>${r.editBtn}</div>
+      <h2>${esc(r.title)}</h2></div><div style="display:flex;gap:8px">${r.actions}</div></div>
     ${r.html}`;
 }
 
@@ -1411,7 +1443,8 @@ async function loadBrowseList(key, q) {
   const dispF = dispFieldOf(t);
   const sort = dispF ? dispF.name : 'id';
   const res = await (await fetch(`/api/t/${key}?q=${encodeURIComponent(q)}&sort=${sort}&dir=asc&size=500`)).json();
-  const rows = res.rows || [];
+  // El buscador es "por nombre": ocultamos registros sin descripción (no se hallan por texto).
+  const rows = (res.rows || []).filter(r => !dispF || (r[dispF.name] != null && String(r[dispF.name]).trim() !== ''));
   const sub = t.campos.find(c => /^cod|nro|codigo/.test(c.name));
   const list = rows.map(r => {
     const label = (dispF && r[dispF.name] != null && String(r[dispF.name]).trim()) ? r[dispF.name] : `(sin descripción)`;
@@ -1433,7 +1466,7 @@ async function selectBrowse(key, id) {
   const det = document.getElementById('bdetail');
   if (det) det.innerHTML = '<div class="empty"><p class="muted">Cargando…</p></div>';
   const r = await buildRecord(key, id);
-  if (det && r) det.innerHTML = `<div class="page-head"><div class="ttl"><h2>${esc(r.title)}</h2></div>${r.editBtn}</div>${r.html}`;
+  if (det && r) det.innerHTML = `<div class="page-head"><div class="ttl"><h2>${esc(r.title)}</h2></div><div style="display:flex;gap:8px">${r.actions}</div></div>${r.html}`;
 }
 
 async function viewReport(i) {
