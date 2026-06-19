@@ -973,6 +973,19 @@ img.thumb{max-width:64px;max-height:48px;border-radius:6px;border:1px solid var(
 .detail-sec h3{display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .detail-sec h3 .cnt{font-size:12px;font-weight:600;color:var(--muted);background:var(--panel2);border:1px solid var(--border);border-radius:20px;padding:1px 9px}
 
+/* buscador de dos paneles (maestro a la izq., detalle a la der.) */
+.split{display:flex;gap:20px;align-items:flex-start}
+.bpane{width:320px;flex-shrink:0;position:sticky;top:78px;max-height:calc(100vh - 100px);display:flex;flex-direction:column;background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);box-shadow:var(--shadow-sm);overflow:hidden}
+.bpane .bsearch{padding:12px;border-bottom:1px solid var(--border)}
+.bpane .blist{overflow:auto}
+.bitem{display:block;padding:10px 14px;border-bottom:1px solid var(--border);cursor:pointer;text-decoration:none;color:var(--text);font-size:13.5px}
+.bitem:last-child{border-bottom:none}
+.bitem:hover{background:var(--panel2)}
+.bitem.active{background:var(--brand-bg);color:var(--brand-d);font-weight:600}
+.bitem .bsub{font-size:11px;color:var(--muted)}
+.bdetail{flex:1;min-width:0}
+@media(max-width:860px){ .split{flex-direction:column} .bpane{width:100%;position:static;max-height:320px} }
+
 /* empty state */
 .empty{text-align:center;padding:56px 20px;color:var(--muted)}
 .empty .ei{font-size:38px;margin-bottom:10px;opacity:.6}
@@ -1057,6 +1070,12 @@ function buildNav() {
       h += `<a href="${href}">${esc(it.texto || '')}</a>`;
     });
   });
+  // Buscador de dos paneles para cada tabla maestra (que tiene tablas hijas).
+  const masters = (META.tablas || []).filter(t => childrenOf(t.key).length > 0);
+  if (masters.length) {
+    h += `<div class="grp">Buscar</div>`;
+    masters.forEach(t => { h += `<a href="#/browse/${t.key}">🔍 Buscar ${esc(t.name)}</a>`; });
+  }
   h += `<div class="grp">Tablas (ABM)</div>`;
   (META.tablas || []).forEach(t => {
     const c = COUNTS[t.key]; const badge = (c != null) ? `<span class="cnt">${c}</span>` : '';
@@ -1091,6 +1110,7 @@ function route() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === hash));
   const p = hash.split('/');
   if (p[1] === 'abm') return viewAbm(p[2]);
+  if (p[1] === 'browse') return viewBrowse(p[2]);
   if (p[1] === 'rec') return viewRecord(p[2], +p[3]);
   if (p[1] === 'rep') return viewReport(+p[2]);
   if (p[1] === 'info') return viewInfo(+p[2], +p[3]);
@@ -1324,22 +1344,21 @@ async function delRow(key, id) {
 }
 
 // ---------- FICHA (maestro-detalle) ----------
-async function viewRecord(key, id) {
+// Construye la ficha de un registro: {title, html} con campos + tablas hijas.
+async function buildRecord(key, id) {
   const t = tableByKey(key);
-  if (!t) { $('#main').innerHTML = '<p>Tabla no encontrada.</p>'; return; }
+  if (!t) return null;
   const res = await (await fetch(`/api/t/${key}?field=id&value=${id}&size=1`)).json();
   const row = (res.rows || [])[0];
-  if (!row) { $('#main').innerHTML = '<p>Registro no encontrado.</p>'; return; }
-  const j = JSON.stringify(row).replace(/'/g, "&#39;");
+  if (!row) return null;
   const dispF = dispFieldOf(t);
   const title = (dispF && row[dispF.name]) ? row[dispF.name] : `${t.titulo || t.name} #${id}`;
+  const j = JSON.stringify(row).replace(/'/g, "&#39;");
 
-  // Ficha de campos del registro maestro.
   const fieldsHtml = t.campos.map(f =>
     `<div class="fld"><span class="fl">${esc(f.label || f.name)}</span><span class="fv">${cellHtml(f, row[f.name], row) || '<span class="muted">—</span>'}</span></div>`
   ).join('');
 
-  // Secciones de detalle (tablas hijas).
   let detailHtml = '';
   for (const ch of childrenOf(key)) {
     const ct = tableByKey(ch.table);
@@ -1347,7 +1366,6 @@ async function viewRecord(key, id) {
     const val = row[ch.parentField];
     const cres = await (await fetch(`/api/t/${ch.table}?field=${ch.field}&value=${encodeURIComponent(val)}&size=500`)).json();
     const crows = cres.rows || [];
-    // Mostramos las columnas del hijo salvo la que apunta de vuelta al maestro.
     const ccols = ct.campos.filter(c => c.name !== ch.field);
     const chead = '<tr>' + ccols.map(c => `<th>${esc(c.label || c.name)}</th>`).join('') + '</tr>';
     const cbody = crows.map(cr => '<tr>' + ccols.map(c => `<td>${cellHtml(c, cr[c.name], cr)}</td>`).join('') + '</tr>').join('');
@@ -1356,13 +1374,66 @@ async function viewRecord(key, id) {
       <div class="tablewrap"><table><thead>${chead}</thead><tbody>${cbody || `<tr><td class="muted" style="padding:16px">Sin registros relacionados.</td></tr>`}</tbody></table></div>
     </div>`;
   }
+  const html = `<div class="card"><div class="rec-fields">${fieldsHtml}</div></div>${detailHtml}`;
+  return { title, html, editBtn: `<button class="sec" onclick='openForm("${key}", ${j})'>✎ Editar</button>` };
+}
 
+async function viewRecord(key, id) {
+  const t = tableByKey(key);
+  const r = await buildRecord(key, id);
+  if (!r) { $('#main').innerHTML = '<p>Registro no encontrado.</p>'; return; }
   $('#main').innerHTML = `<a class="backlink" href="#/abm/${key}">‹ Volver a ${esc(t.titulo || t.name)}</a>
     <div class="page-head"><div class="ttl"><div class="eyebrow">${esc(t.titulo || t.name)}</div>
-      <h2>${esc(title)}</h2></div>
-      <button class="sec" onclick='openForm("${key}", ${j})'>✎ Editar</button></div>
-    <div class="card"><div class="rec-fields">${fieldsHtml}</div></div>
-    ${detailHtml}`;
+      <h2>${esc(r.title)}</h2></div>${r.editBtn}</div>
+    ${r.html}`;
+}
+
+// ---------- BUSCADOR DE DOS PANELES ----------
+const BROWSE = {};  // estado por tabla: {sel}
+async function viewBrowse(key) {
+  const t = tableByKey(key);
+  if (!t) { $('#main').innerHTML = '<p>Tabla no encontrada.</p>'; return; }
+  $('#main').innerHTML = `<div class="page-head"><div class="ttl"><div class="eyebrow">Buscar</div>
+      <h2>Buscar ${esc(t.titulo || t.name)}</h2>
+      <p class="sub">Elegí un registro de la izquierda para ver su detalle.</p></div></div>
+    <div class="split">
+      <div class="bpane">
+        <div class="bsearch"><div class="search-wrap"><span class="si">🔎</span>
+          <input class="search" id="bq" placeholder="Buscar ${esc(t.name)}..." oninput="onBrowseSearch('${key}',this.value)"></div></div>
+        <div class="blist" id="blist"><div class="empty" style="padding:24px"><p class="muted">Cargando…</p></div></div>
+      </div>
+      <div class="bdetail" id="bdetail"><div class="empty"><div class="ei">👈</div><p>Elegí ${esc(t.titulo || t.name)} de la lista.</p></div></div>
+    </div>`;
+  await loadBrowseList(key, '');
+}
+async function loadBrowseList(key, q) {
+  const t = tableByKey(key);
+  const dispF = dispFieldOf(t);
+  const sort = dispF ? dispF.name : 'id';
+  const res = await (await fetch(`/api/t/${key}?q=${encodeURIComponent(q)}&sort=${sort}&dir=asc&size=500`)).json();
+  const rows = res.rows || [];
+  const sub = t.campos.find(c => /^cod|nro|codigo/.test(c.name));
+  const list = rows.map(r => {
+    const label = (dispF && r[dispF.name] != null && String(r[dispF.name]).trim()) ? r[dispF.name] : `(sin descripción)`;
+    const subv = sub ? `<span class="bsub">#${esc(r[sub.name])}</span>` : '';
+    const act = BROWSE[key] && BROWSE[key].sel === r.id ? ' active' : '';
+    return `<a class="bitem${act}" id="bi_${r.id}" onclick="selectBrowse('${key}',${r.id})">${esc(label)} ${subv}</a>`;
+  }).join('');
+  const el = document.getElementById('blist');
+  if (el) el.innerHTML = list || `<div class="empty" style="padding:24px"><p class="muted">Sin resultados.</p></div>`;
+}
+function onBrowseSearch(key, v) {
+  clearTimeout(window._bt);
+  window._bt = setTimeout(() => loadBrowseList(key, v), 250);
+}
+async function selectBrowse(key, id) {
+  BROWSE[key] = { sel: id };
+  document.querySelectorAll('.bitem').forEach(a => a.classList.remove('active'));
+  const it = document.getElementById('bi_' + id); if (it) it.classList.add('active');
+  const det = document.getElementById('bdetail');
+  if (det) det.innerHTML = '<div class="empty"><p class="muted">Cargando…</p></div>';
+  const r = await buildRecord(key, id);
+  if (det && r) det.innerHTML = `<div class="page-head"><div class="ttl"><h2>${esc(r.title)}</h2></div>${r.editBtn}</div>${r.html}`;
 }
 
 async function viewReport(i) {
