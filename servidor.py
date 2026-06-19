@@ -52,7 +52,7 @@ OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
 # Por defecto un modelo de código LIVIANO: rápido en CPU (sin GPU). Para más
 # calidad y si tenés recursos, usá OLLAMA_MODEL=qwen2.5-coder (7B) o mayor.
 OLLAMA_DEFAULT_MODEL = os.environ.get("OLLAMA_MODEL", "qwen2.5-coder:1.5b")
-# Tope de tokens a generar en Ollama: evita que una fase tarde "infinito" en CPU.
+# Tope de tokens a generar en Ollama: evita que una llamada tarde "infinito" en CPU.
 # 4000 es un equilibrio razonable para CPUs modestas (sin GPU).
 OLLAMA_MAX_PREDICT = int(os.environ.get("OLLAMA_MAX_PREDICT", "4000"))
 # Tiempo máximo de espera de una respuesta de Ollama (segundos).
@@ -63,10 +63,10 @@ def _ollama_timeout_msg(model):
     """Mensaje claro y accionable cuando una generación de Ollama no termina."""
     return (
         f"El modelo local '{model}' no terminó a tiempo (timeout de {OLLAMA_TIMEOUT} s). "
-        f"El análisis y las fases chicas suelen andar; las fases grandes son las "
-        f"que más tardan en CPU. Probá: (1) reintentá la fase; (2) generá con "
-        f"menos tokens iniciando el server con OLLAMA_MAX_PREDICT=3000; "
-        f"(3) usá un modelo aún más chico:  ollama pull qwen2.5-coder:0.5b"
+        f"El enriquecimiento por pantalla es chico pero en CPU puede tardar. "
+        f"Probá: (1) reintentá; (2) generá con menos tokens iniciando el server "
+        f"con OLLAMA_MAX_PREDICT=3000; (3) usá un modelo aún más chico: "
+        f"ollama pull qwen2.5-coder:0.5b; (4) usá 📦 (sin IA), que es instantáneo."
     )
 
 # --- Rendimiento del modo gratuito --------------------------------------------
@@ -1061,69 +1061,6 @@ def safe_name(name, default):
     return name or default
 
 
-def test_filename(target):
-    """Nombre/ubicación del archivo de tests según la tecnología destino."""
-    t = (target or "").lower()
-    if "python" in t or "django" in t or "fastapi" in t:
-        return "tests/test_fase.py"
-    if "node" in t or "express" in t:
-        return "tests/fase.test.js"
-    if ".net" in t or "c#" in t or "blazor" in t:
-        return "tests/FaseTests.cs"
-    if "java" in t or "spring" in t:
-        return "tests/FaseTests.java"
-    return "tests/tests.txt"
-
-
-def build_readme(phase, d, source, target):
-    """Arma el README.md de la fase con explicación e instrucciones."""
-    num = phase.get("numero", "")
-    titulo = phase.get("titulo", "Fase")
-    out = [f"# Fase {num}: {titulo}", "", f"**Migración:** {source} → {target}"]
-    if phase.get("descripcion"):
-        out += ["", phase["descripcion"]]
-    if d.get("explicacion"):
-        out += ["", "## Explicación", "", d["explicacion"]]
-    archivos = d.get("archivos") or []
-    if archivos:
-        out += ["", "## Archivos generados (carpeta `src/`)", ""]
-        for f in archivos:
-            out.append(f"- `{f.get('nombre', '')}` — {f.get('descripcion', '')}")
-    if d.get("tests"):
-        out += ["", f"Incluye tests automatizados en `{test_filename(target)}`."]
-    if d.get("instrucciones"):
-        out += ["", "## Instrucciones de instalación", "", d["instrucciones"]]
-    if d.get("interfaz_descripcion"):
-        out += ["", "## Interfaz", "", d["interfaz_descripcion"]]
-    out += ["", "---", "_Generado por LegacyMigrator._"]
-    return "\n".join(out)
-
-
-def build_phase_zip(payload):
-    """Construye en memoria el ZIP descargable de una fase generada."""
-    phase = payload.get("phase", {}) or {}
-    d = payload.get("data", {}) or {}
-    source = payload.get("source", "")
-    target = payload.get("target", "")
-
-    buf = io.BytesIO()
-    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
-        used = set()
-        for f in d.get("archivos") or []:
-            name = safe_name(f.get("nombre"), "archivo.txt")
-            stem, ext = os.path.splitext(name)
-            i = 1
-            while name in used:  # evita colisiones de nombres
-                name = f"{stem}_{i}{ext}"
-                i += 1
-            used.add(name)
-            z.writestr(f"src/{name}", f.get("codigo") or "")
-        if d.get("tests"):
-            z.writestr(test_filename(target), d["tests"])
-        z.writestr("README.md", build_readme(phase, d, source, target))
-    return buf.getvalue()
-
-
 class Handler(http.server.BaseHTTPRequestHandler):
 
     def handle(self):
@@ -1218,27 +1155,6 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_json(400, {"error": {"message": "El archivo no es un ZIP válido"}})
             except Exception as e:
                 self.send_json(500, {"error": {"message": f"Error al leer el ZIP: {e}"}})
-            return
-
-        if self.path == "/api/zip":
-            try:
-                payload = json.loads(self.read_body() or b"{}")
-            except Exception:
-                self.send_json(400, {"error": {"message": "JSON inválido"}})
-                return
-            try:
-                data = build_phase_zip(payload)
-            except Exception as e:
-                self.send_json(500, {"error": {"message": f"Error al armar el ZIP: {e}"}})
-                return
-            fname = safe_name(payload.get("filename"), "fase.zip")
-            self.send_response(200)
-            self.send_cors()
-            self.send_header("Content-Type", "application/zip")
-            self.send_header("Content-Disposition", f'attachment; filename="{fname}"')
-            self.send_header("Content-Length", str(len(data)))
-            self.end_headers()
-            self.wfile.write(data)
             return
 
         if self.path == "/api/scaffold":

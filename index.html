@@ -46,9 +46,6 @@ body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; backg
   border-top:2px solid var(--purple);
   background:var(--bg2);
 }
-/* zona de fases: aparece después del análisis */
-.sb-phases { flex-shrink:0; max-height:200px; overflow-y:auto; border-top:1px solid var(--border); }
-
 .sblk { padding:12px 14px; border-bottom:1px solid var(--border); }
 .sblbl { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text3); display:block; margin-bottom:8px; }
 
@@ -87,17 +84,6 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 .ban:disabled { opacity:.35; cursor:not-allowed; }
 .hint { font-size:11px; color:var(--text3); text-align:center; margin-top:6px; min-height:16px; }
 
-/* FASES SIDEBAR */
-.pi { padding:8px 11px; border-radius:var(--rs); cursor:pointer; margin:2px 6px; border:1px solid transparent; transition:all .12s; }
-.pi:hover { background:var(--bg3); border-color:var(--border); }
-.pi.active { background:var(--pbg); border-color:var(--purple); }
-.pi.done { background:var(--tbg); border-color:#9FE1CB; }
-.pn { font-size:10px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--text3); }
-.pi.active .pn { color:var(--purple); }
-.pi.done .pn { color:var(--teal); }
-.pt { font-size:12px; font-weight:600; }
-.ps { font-size:11px; color:var(--text3); }
-
 /* MAIN */
 .main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
 .tbar { background:var(--bg2); border-bottom:1px solid var(--border); padding:10px 18px; display:flex; align-items:center; gap:8px; flex-shrink:0; }
@@ -128,67 +114,6 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 .ldg p { color:var(--text2); font-size:14px; font-weight:600; }
 .ldg .ls { font-size:12px; color:var(--text3); margin-top:6px; }
 
-/* ANALYSIS */
-.ahead { background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:16px; margin-bottom:16px; }
-.ahead h3 { font-size:15px; font-weight:800; margin-bottom:4px; }
-.ahead p { color:var(--text2); font-size:13px; }
-.stats { display:flex; gap:8px; margin-top:12px; }
-.stat { flex:1; padding:8px; border-radius:var(--rs); background:var(--bg3); border:1px solid var(--border); text-align:center; }
-.stn { font-size:17px; font-weight:800; color:var(--purple); }
-.stl { font-size:10px; color:var(--text3); margin-top:1px; }
-.pgrid { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
-.pc { background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:14px; cursor:pointer; transition:all .15s; }
-.pc:hover { border-color:var(--border2); box-shadow:0 2px 8px rgba(0,0,0,.07); transform:translateY(-1px); }
-.pch { display:flex; align-items:center; gap:9px; margin-bottom:8px; }
-.pci { width:32px; height:32px; border-radius:7px; display:flex; align-items:center; justify-content:center; font-size:16px; }
-.pci.purple { background:var(--pbg); }
-.pci.teal { background:var(--tbg); }
-.pci.coral { background:var(--cbg); }
-.pci.amber { background:var(--abg); }
-.pc h4 { font-size:13px; font-weight:700; }
-.pc .pcs { font-size:11px; color:var(--text3); }
-.pc>p { font-size:12px; color:var(--text2); margin-bottom:8px; }
-.pc ul { list-style:none; }
-.pc ul li { font-size:11px; color:var(--text2); padding:2px 0; border-bottom:1px solid var(--border); }
-.pc ul li:last-child { border:none; }
-.bgen { width:100%; margin-top:10px; padding:7px; background:var(--purple); color:white; border:none; border-radius:var(--rs); font-size:12px; font-weight:700; cursor:pointer; }
-.bgen:hover { opacity:.9; }
-
-/* PHASE VIEW */
-.dlbar { display:none; background:var(--tbg); border:1px solid #9FE1CB; border-radius:var(--r); padding:12px 16px; margin-bottom:16px; align-items:center; gap:12px; }
-.dlbar.show { display:flex; }
-.dlbar .dli { font-size:22px; }
-.dlbar h4 { font-size:13px; font-weight:700; color:var(--ttxt); }
-.dlbar p { font-size:11px; color:var(--teal); }
-.dlbar .dlb { margin-left:auto; display:flex; gap:6px; }
-.tabs { display:flex; margin-bottom:14px; border-bottom:1px solid var(--border); }
-.tb { padding:7px 14px; font-size:12px; font-weight:600; border:none; background:none; cursor:pointer; color:var(--text3); border-bottom:2px solid transparent; margin-bottom:-1px; transition:all .1s; }
-.tb:hover { color:var(--text); }
-.tb.active { color:var(--purple); border-bottom-color:var(--purple); }
-.pane { display:none; }
-.pane.active { display:block; }
-.expl { background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:16px; margin-bottom:14px; }
-.expl h4 { font-size:14px; font-weight:700; margin-bottom:10px; }
-.expl p { font-size:13px; color:var(--text2); line-height:1.8; white-space:pre-wrap; }
-.ins { margin-top:12px; padding:12px; background:var(--bg3); border-radius:var(--rs); border:1px solid var(--border); }
-.ins h5 { font-size:12px; font-weight:700; margin-bottom:5px; }
-.ins pre { background:transparent; color:var(--text); font-size:11px; padding:0; }
-.cb { margin-bottom:16px; }
-.ch { display:flex; align-items:center; gap:7px; margin-bottom:7px; }
-.ch h4 { font-size:13px; font-weight:700; flex:1; }
-.tag { font-size:10px; padding:2px 7px; border-radius:20px; font-weight:700; background:#e5e7eb; color:#374151; }
-.tag.python { background:#dbeafe; color:#1e40af; }
-.tag.jsx { background:#fef3c7; color:#92400e; }
-.tag.js { background:#fef9c3; color:#713f12; }
-.tag.ts { background:#dbeafe; color:#1e3a8a; }
-.tag.sql { background:#d1fae5; color:#065f46; }
-.tag.csharp { background:#ede9fe; color:#5b21b6; }
-.tag.java { background:#ffe4e6; color:#9f1239; }
-pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; font-size:11px; line-height:1.7; overflow-x:auto; font-family:'Courier New',monospace; white-space:pre-wrap; word-break:break-word; }
-.filelist { list-style:none; margin-top:8px; }
-.filelist li { font-size:13px; color:var(--text2); padding:6px 0; border-bottom:1px solid var(--border); }
-.filelist li:last-child { border:none; }
-.filelist code { background:var(--bg3); border:1px solid var(--border); border-radius:4px; padding:1px 6px; font-size:12px; color:var(--ptxt); }
 .ebox { background:var(--rbg); border:1px solid #F09595; border-radius:var(--r); padding:12px 16px; margin-bottom:14px; font-size:13px; color:var(--red); display:none; }
 .ebox.show { display:block; }
 .wbox { background:var(--abg); border:1px solid #E0B872; border-radius:var(--r); padding:10px 14px; margin-bottom:14px; font-size:12px; color:var(--amber); display:none; }
@@ -267,17 +192,13 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
         </div>
       </div>
 
-      <!-- FASES (aparecen después del análisis) -->
-      <div class="sb-phases" id="plist"></div>
-
     </div><!-- fin sb-top -->
 
     <!-- ZONA INFERIOR: BOTÓN SIEMPRE VISIBLE -->
     <div class="sb-bot">
-      <button class="ban" id="ban" onclick="analyzeSystem()" disabled title="Experimental — para Claude API. En CPU/Ollama usá 📦 o ✨" style="opacity:0.75">⚡ Analizar sistema (por fases) <span style="font-size:0.7em;opacity:0.8">[experimental]</span></button>
-      <button class="ban" id="bapp" onclick="generateFullApp()" disabled style="margin-top:8px;background:var(--teal)">📦 Generar app completa</button>
+      <button class="ban" id="bapp" onclick="generateFullApp()" disabled style="background:var(--teal)">📦 Generar app completa</button>
       <button class="ban" id="bappai" onclick="generateEnrichedApp()" disabled style="margin-top:8px;background:var(--coral)">✨ App completa + IA</button>
-      <div class="hint" id="hint">Completá la API key y subí un ZIP</div>
+      <div class="hint" id="hint">Subí un ZIP para generar la app</div>
     </div>
 
   </aside>
@@ -286,7 +207,6 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
     <div class="tbar">
       <h2 id="ttl">Bienvenido</h2>
       <button class="bsm" id="bnew" onclick="clearState()" style="display:none">🗑 Nuevo proyecto</button>
-      <button class="bsm ok" id="bdl" onclick="downloadPhase()" style="display:none">⬇ Descargar fase</button>
     </div>
     <div class="content">
       <div class="ebox" id="ebox"></div>
@@ -297,12 +217,12 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
         <div class="wel">
           <div class="wi">⚙️</div>
           <h2>Migrador de sistemas legacy</h2>
-          <p>Subí tu sistema VFP, COBOL o FoxPro y el agente lo analiza, genera un plan por fases y escribe el código moderno listo para usar.</p>
+          <p>Subí tu sistema VFP, COBOL o FoxPro y el agente genera una app moderna con TODAS las utilidades del original (ABM por tabla, menús, reportes, datos reales), lista para correr.</p>
           <div class="steps">
-            <div class="sc"><div class="sn">1</div><div class="st">Elegí motor</div><div class="sd">Claude (API key) o Gratis (Ollama local)</div></div>
-            <div class="sc"><div class="sn">2</div><div class="st">Subir ZIP</div><div class="sd">El sistema completo con todo el código fuente</div></div>
-            <div class="sc"><div class="sn">3</div><div class="st">Analizar</div><div class="sd">El agente lee el ZIP y sugiere fases reales</div></div>
-            <div class="sc"><div class="sn">4</div><div class="st">Generar y descargar</div><div class="sd">Cada fase con código, tests e interfaz</div></div>
+            <div class="sc"><div class="sn">1</div><div class="st">Subir ZIP</div><div class="sd">El sistema completo con datos y código fuente</div></div>
+            <div class="sc"><div class="sn">2</div><div class="st">📦 Generar app completa</div><div class="sd">Cobertura total, sin IA, instantáneo. La app arranca y trae los datos reales</div></div>
+            <div class="sc"><div class="sn">3</div><div class="st">✨ App completa + IA (opcional)</div><div class="sd">Enriquece etiquetas, obligatorios y reglas con Claude u Ollama</div></div>
+            <div class="sc"><div class="sn">4</div><div class="st">Descargar y correr</div><div class="sd">app-migrada.zip con COBERTURA.md y FastAPI listo</div></div>
           </div>
         </div>
       </div>
@@ -310,32 +230,20 @@ pre { background:#1e1e2e; color:#cdd6f4; border-radius:var(--r); padding:14px; f
       <!-- LOADING -->
       <div class="ldg" id="vl">
         <div class="spin"></div>
-        <p id="lmsg">Analizando...</p>
+        <p id="lmsg">Generando...</p>
         <div class="ls" id="lsub">Esto puede tomar unos segundos</div>
-      </div>
-
-      <!-- ANALYSIS -->
-      <div id="va" style="display:none">
-        <div class="ahead" id="ahead"></div>
-        <h3 style="font-size:14px;font-weight:800;margin-bottom:12px">Fases sugeridas — hacé clic en una para generarla</h3>
-        <div class="pgrid" id="pgrid"></div>
-      </div>
-
-      <!-- PHASE: confirmación de descarga (sin renderizar el código) -->
-      <div id="vp" style="display:none">
-        <div id="dlcard"></div>
       </div>
     </div>
   </main>
 </div>
 
 <script>
-const S = { apiKey:'', file:null, savedFileName:'', engine:'claude', ollamaModel:'', sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null, phases:[], currentPhase:null, currentPhaseData:null, completedPhases:[], generatedFiles:{} };
+const S = { apiKey:'', file:null, savedFileName:'', engine:'claude', ollamaModel:'', sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null };
 let ollamaAvailable = false;
 
 // --- PERSISTENCIA DEL PROYECTO (localStorage) ---
-// No guardamos la API key (seguridad) ni el File. Sí el análisis y las fases,
-// para no perder el trabajo al recargar la página.
+// No guardamos la API key (seguridad) ni el File. Sí el inventario del ZIP,
+// para poder generar la app al reabrir sin volver a subirlo.
 const LS_KEY = 'lm_proyecto';
 // El zipInfo puede ser grande; si no entra en la cuota, lo guardamos sin las
 // muestras de código (lo más pesado) y, si tampoco, sin zipInfo.
@@ -347,8 +255,7 @@ function liteZip(z) {
 function saveState() {
   const base = {
     sourceLang:S.sourceLang, targetLang:S.targetLang, engine:S.engine, ollamaModel:S.ollamaModel,
-    fileName:(S.file ? S.file.name : (S.savedFileName||'')),
-    systemInfo:S.systemInfo, phases:S.phases, completedPhases:S.completedPhases
+    fileName:(S.file ? S.file.name : (S.savedFileName||''))
   };
   const tries = [
     () => JSON.stringify({ ...base, zipInfo:S.zipInfo }),
@@ -362,17 +269,17 @@ function saveState() {
 function loadState() {
   try {
     const d = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-    // Reanudamos si hay fases analizadas O un inventario del ZIP guardado.
-    if (!d || !(d.zipInfo || ((d.phases||[]).length && d.systemInfo))) return false;
+    // Reanudamos si hay un inventario del ZIP guardado.
+    if (!d || !d.zipInfo) return false;
     const engine = (d.engine === 'free') ? 'free' : 'claude';   // 'demo' (obsoleto) -> claude
     Object.assign(S, { sourceLang:d.sourceLang||S.sourceLang, targetLang:d.targetLang||S.targetLang,
       engine, ollamaModel:d.ollamaModel||'', savedFileName:d.fileName||'',
-      zipInfo:d.zipInfo||null, systemInfo:d.systemInfo||null, phases:d.phases||[], completedPhases:d.completedPhases||[] });
+      zipInfo:d.zipInfo||null });
     return true;
   } catch(e) { return false; }
 }
 function clearState() {
-  if (!confirm('¿Empezar un proyecto nuevo? Se borra el análisis guardado.')) return;
+  if (!confirm('¿Empezar un proyecto nuevo? Se borra el sistema guardado.')) return;
   try { localStorage.removeItem(LS_KEY); } catch(e) {}
   location.reload();
 }
@@ -445,19 +352,14 @@ function checkReady() {
     msg = ok
       ? '↩ Sistema restaurado: podés generar la app (📦 o ✨).'
       : '↩ Sistema restaurado: podés usar 📦 (sin key). Para ✨ ingresá la API key.';
-  } else if (S.engine === 'free') {
-    msg = ollamaAvailable
-      ? (S.ollamaModel ? `🆓 Listo con ${S.ollamaModel} (local, sin tokens)` : 'Elegí un modelo local')
-      : 'Ollama no detectado: instalalo y descargá un modelo';
   } else {
-    msg = ok ? '¡Todo listo! Hacé clic para analizar ↑' : 'Falta la API key (o elegí Gratis)';
+    msg = '✅ Listo: generá la app con 📦 (sin IA) o ✨ (con IA).';
   }
 
-  document.getElementById('ban').disabled = !(hf && ok);
   const ba = document.getElementById('bapp');
-  if (ba) ba.disabled = !haveZip;
+  if (ba) ba.disabled = !haveZip;            // 📦 no necesita IA
   const bai = document.getElementById('bappai');
-  if (bai) bai.disabled = !(haveZip && ok);
+  if (bai) bai.disabled = !(haveZip && ok);  // ✨ requiere motor de IA listo
   h.textContent = msg;
 }
 
@@ -482,13 +384,13 @@ async function generateFullApp() {
     a.href = URL.createObjectURL(blob); a.download = 'app-migrada.zip';
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 1500);
-    showView(S.phases && S.phases.length ? 'a' : 'w');
+    showView('w');
     const z = S.zipInfo;
     const imgMsg = imgs ? ` Incluye ${imgs} imágenes del sistema.` : '';
     const dataMsg = (imported ? ` Se importaron ${imported} registros reales de los .dbf.` : ' (Datos no importados: volvé a subir el ZIP/carpeta en esta sesión para incluirlos.)') + imgMsg;
     showWarn(`✅ App completa descargada (app-migrada.zip). Incluye ABM para ${(z.tables||[]).length} tablas, ${(z.menus||[]).length} menús y ${(z.reports||[]).length} reportes.${dataMsg} Adentro: COBERTURA.md y cómo correrla (FastAPI).`);
   } catch (e) {
-    showView(S.phases && S.phases.length ? 'a' : 'w');
+    showView('w');
     showErr('No se pudo generar la app completa: ' + e.message);
   }
 }
@@ -554,11 +456,11 @@ async function generateEnrichedApp(){
     const blob=await r.blob();
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='app-migrada.zip';
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1500);
-    showView(S.phases&&S.phases.length?'a':'w');
+    showView('w');
     const dataMsg=imported?` Se importaron ${imported} registros reales de los .dbf.`:'';
     showWarn(`✅ App descargada: ${okc} de ${all.length} pantallas enriquecidas por IA (etiquetas, obligatorios y reglas de negocio ejecutables) sobre cobertura total.${dataMsg} El resto usa el scaffold + validaciones de esquema. Mirá COBERTURA.md.`);
   }catch(e){
-    showView(S.phases&&S.phases.length?'a':'w');
+    showView('w');
     showErr('No se pudo generar la app con IA: '+e.message);
   }
 }
@@ -697,272 +599,13 @@ async function readZip() {
   return r.json();
 }
 
-// Construye un resumen textual de los datos REALES del ZIP para el prompt.
-function zipSummary(z) {
-  if (!z) return '';
-  const c = z.counts || {};
-  let s = `DATOS REALES EXTRAÍDOS DEL ZIP (usalos, no inventes números):\n`;
-  s += `- Total de archivos: ${z.total_files} (${z.size_mb} MB)\n`;
-  const cats = [['forms','Formularios'],['reports','Reportes'],['tables','Tablas'],['databases','Bases de datos'],['programs','Programas'],['classes','Clases'],['menus','Menús']];
-  s += '- Conteo por categoría: ' + cats.filter(([k])=>c[k]).map(([k,l])=>`${l}=${c[k]}`).join(', ') + '\n';
-  if (z.programs && z.programs.length) s += `- Programas (.prg): ${z.programs.slice(0,40).join(', ')}\n`;
-  if (z.forms && z.forms.length) s += `- Formularios (muestra): ${z.forms.slice(0,40).join(', ')}\n`;
-  if (z.forms_detail && z.forms_detail.length) {
-    s += `- CONTROLES REALES de formularios (.scx):\n`;
-    z.forms_detail.slice(0,20).forEach(f => {
-      const ctl = Object.entries(f.controles||{}).map(([k,v])=>`${v} ${k}`).join(', ');
-      s += `  • ${f.name}: ${ctl}\n`;
-    });
-  }
-  if (z.tables && z.tables.length) {
-    s += `- ESTRUCTURA REAL DE LAS TABLAS (.dbf):\n`;
-    z.tables.slice(0,40).forEach(t => {
-      const fields = (t.fields||[]).slice(0,18).map(f=>`${f.name} ${f.type}(${f.len})`).join(', ');
-      s += `  • ${t.name} [${t.records} reg]: ${fields}\n`;
-    });
-  }
-  return s;
-}
-
-// Muestras de CÓDIGO REAL (.prg) relevantes para una fase concreta.
-function codeForPhase(phase) {
-  const samples = (S.zipInfo && S.zipInfo.samples) || [];
-  if (!samples.length) return '';
-  const words = [].concat(phase.modulos||[], phase.pantallas_legacy||[], phase.tablas||[])
-    .map(w => String(w).toLowerCase().replace(/\.\w+$/,''));
-  let match = samples.filter(s => words.some(w => w && s.name.toLowerCase().includes(w)));
-  if (!match.length) match = samples.slice(0,2);   // fallback: primeras muestras
-  // En modo gratuito (CPU) recortamos el contexto: menos tokens = más rápido.
-  const lite = S.engine === 'free';
-  let out = '\nCÓDIGO FUENTE REAL de programas relacionados (migrá esta lógica de negocio):\n';
-  match.slice(0, lite ? 1 : 3).forEach(s => {
-    out += `\n--- ${s.name} ---\n${String(s.content||'').slice(0, lite ? 1200 : 2500)}\n`;
-  });
-  return out;
-}
-
-// Controles reales de los formularios .scx de una fase concreta.
-function formsForPhase(phase) {
-  const fd = (S.zipInfo && S.zipInfo.forms_detail) || [];
-  if (!fd.length) return '';
-  const wanted = (phase.pantallas_legacy||[]).map(p=>String(p).toLowerCase().replace(/\.\w+$/,''));
-  let match = fd.filter(f => wanted.some(w => w && f.name.toLowerCase().includes(w)));
-  if (!match.length) return '';
-  let s = '\nCONTROLES REALES de las pantallas de esta fase (replicalos en la UI moderna):\n';
-  match.slice(0, S.engine === 'free' ? 4 : 8).forEach(f => {
-    const ctl = Object.entries(f.controles||{}).map(([k,v])=>`${v} ${k}`).join(', ');
-    s += `• ${f.name}: ${ctl}\n`;
-  });
-  return s;
-}
-
-// Resumen acotado de las tablas que pertenecen a una fase concreta.
-function tablesForPhase(phase) {
-  if (!S.zipInfo || !S.zipInfo.tables) return '';
-  const wanted = (phase.tablas||[]).map(t=>String(t).toLowerCase());
-  const match = S.zipInfo.tables.filter(t => wanted.some(w => t.name.toLowerCase().includes(w) || w.includes(t.name.toLowerCase())));
-  if (!match.length) return '';
-  const lite = S.engine === 'free';
-  let s = '\nESTRUCTURA REAL de las tablas de esta fase:\n';
-  match.slice(0, lite ? 6 : 12).forEach(t => {
-    const fields = (t.fields||[]).slice(0, lite ? 15 : 25).map(f=>`${f.name} ${f.type}(${f.len})`).join(', ');
-    s += `• ${t.name} [${t.records} reg]: ${fields}\n`;
-  });
-  return s;
-}
-
-// ANALYZE
-async function analyzeSystem() {
-  hideErr(); hideWarn(); showView('l');
-  document.getElementById('ttl').textContent = 'Análisis del sistema';
-
-  // 1) Leer el ZIP real (si no se leyó antes).
-  try {
-    if (!S.zipInfo) {
-      setLoad('Leyendo el ZIP...', 'Extrayendo archivos y estructura de tablas reales');
-      S.zipInfo = await readZip();
-      saveState();   // persistimos el inventario ya, por si el análisis falla
-    }
-  } catch(e) {
-    // Si falla la lectura, seguimos con análisis básico por nombre/tamaño.
-    showWarn('No se pudo leer el contenido del ZIP (' + e.message + '). El análisis será aproximado.');
-  }
-
-  setLoad('Analizando el sistema legacy...', 'Identificando módulos y generando plan de migración');
-
-  const real = zipSummary(S.zipInfo);
-  const sysName = S.file ? S.file.name : (S.savedFileName || 'sistema legacy');
-  const sysSize = S.file ? `${(S.file.size/1024/1024).toFixed(1)}MB` : '(tamaño desconocido)';
-  const prompt = `Sos un experto en migración de sistemas legacy. El usuario tiene un sistema ${S.sourceLang} llamado "${sysName}" que quiere migrar a ${S.targetLang}.
-
-${real || `Tamaño del archivo: ${sysSize} (no se pudo leer el contenido).`}
-
-Respondé SOLO con JSON válido sin backticks ni texto adicional:
-{
-  "sistema": { "nombre": "nombre del sistema", "descripcion": "qué hace en 2 oraciones, basándote en las tablas y programas reales", "pantallas": 0, "tablas": 0, "reportes": 0, "complejidad": "Alta" },
-  "fases": [
-    { "numero": 1, "titulo": "Login y autenticación", "icono": "🔐", "color": "purple", "descripcion": "Sistema de login, usuarios y permisos", "modulos": ["Login","Usuarios","Grupos","Permisos"], "pantallas_legacy": ["login.scx","logusuar.scx"], "tablas": ["usuarios","grupos"], "dias_estimados": 3, "prioridad": "Alta" }
-  ]
-}
-Generá entre 6 y 8 fases lógicas y ordenadas por prioridad de migración, basándote en las tablas y módulos REALES detectados arriba. En "tablas" de cada fase usá los nombres reales de las tablas .dbf. Colores disponibles: purple, teal, coral, amber.`;
-
-  try {
-    const data = await callModel(prompt, 4000);
-    S.systemInfo = data.sistema; S.phases = data.fases || [];
-    // Preferimos los conteos REALES del ZIP sobre los que estime el modelo.
-    if (S.zipInfo && S.zipInfo.counts) {
-      const c = S.zipInfo.counts;
-      if (c.forms) S.systemInfo.pantallas = c.forms;
-      if (c.tables) S.systemInfo.tablas = c.tables;
-      if (c.reports) S.systemInfo.reportes = c.reports;
-    }
-    renderAnalysis(); renderSidebar(); showView('a'); saveState();
-  } catch(e) { showView('w'); showErr('Error al analizar: ' + e.message); }
-}
-
-function renderAnalysis() {
-  const s = S.systemInfo;
-  document.getElementById('ahead').innerHTML = `<h3>${esc(s.nombre)}</h3><p>${esc(s.descripcion)}</p>
-    <div class="stats">
-      <div class="stat"><div class="stn">${s.pantallas}</div><div class="stl">Pantallas</div></div>
-      <div class="stat"><div class="stn">${s.tablas}</div><div class="stl">Tablas</div></div>
-      <div class="stat"><div class="stn">${s.reportes}</div><div class="stl">Reportes</div></div>
-      <div class="stat"><div class="stn">${S.phases.length}</div><div class="stl">Fases</div></div>
-      <div class="stat"><div class="stn">${esc(s.complejidad)}</div><div class="stl">Complejidad</div></div>
-    </div>`;
-  document.getElementById('pgrid').innerHTML = S.phases.map(p => `
-    <div class="pc" onclick="startPhase(${p.numero})">
-      <div class="pch"><div class="pci ${p.color}">${p.icono}</div>
-        <div><h4>Fase ${p.numero}: ${esc(p.titulo)}</h4><div class="pcs">${p.dias_estimados} días · ${esc(p.prioridad)}</div></div>
-      </div>
-      <p>${esc(p.descripcion)}</p>
-      <ul>${(p.modulos||[]).slice(0,4).map(m=>`<li>${esc(m)}</li>`).join('')}</ul>
-      <button class="bgen">Generar esta fase ›</button>
-    </div>`).join('');
-}
-
-function renderSidebar() {
-  document.getElementById('plist').innerHTML =
-    `<div style="padding:8px 14px 4px;font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--text3)">Fases</div>` +
-    S.phases.map(p => `
-      <div class="pi ${S.completedPhases.includes(p.numero)?'done':''}" id="pi${p.numero}" onclick="startPhase(${p.numero})">
-        <div class="pn">${S.completedPhases.includes(p.numero)?'✓ Lista':'Fase '+p.numero}</div>
-        <div class="pt">${p.icono} ${esc(p.titulo)}</div>
-        <div class="ps">${p.dias_estimados} días · ${(p.modulos||[]).length} módulos</div>
-      </div>`).join('');
-}
-
-// GENERATE PHASE
-async function startPhase(num) {
-  const phase = S.phases.find(p => p.numero === num);
-  if (!phase) return;
-  S.currentPhase = phase; hideErr(); hideWarn();
-  document.querySelectorAll('.pi').forEach(e => e.classList.remove('active'));
-  const pi = document.getElementById('pi'+num); if (pi) pi.classList.add('active');
-  showView('l');
-  setLoad(`Generando Fase ${num}: ${phase.titulo}...`, 'Escribiendo código, tests e interfaz...');
-  document.getElementById('ttl').textContent = `Fase ${num}: ${phase.titulo}`;
-
-  const prompt = `Sos un experto en migración de sistemas legacy.
-Sistema origen: ${S.sourceLang} → Destino: ${S.targetLang}
-Fase ${phase.numero}: ${phase.titulo} — ${phase.descripcion}
-Módulos: ${(phase.modulos||[]).join(', ')}
-Tablas legacy: ${(phase.tablas||[]).join(', ')}
-Pantallas legacy: ${(phase.pantallas_legacy||[]).join(', ')}
-${tablesForPhase(phase)}${formsForPhase(phase)}${codeForPhase(phase)}
-Generá código real y funcional para ${S.targetLang}, respetando los campos reales de las tablas, replicando los controles de las pantallas originales y portando la lógica de negocio del código fuente mostrado arriba.
-
-Respondé SOLO con JSON válido sin backticks ni texto adicional:
-{
-  "explicacion": "Explicación detallada de la lógica de negocio de esta fase. Mínimo 3 párrafos.",
-  "archivos": [
-    {"nombre":"models.py","tipo":"python","descripcion":"Modelos de BD","codigo":"# código completo..."},
-    {"nombre":"api.py","tipo":"python","descripcion":"Endpoints","codigo":"# código completo..."},
-    {"nombre":"App.jsx","tipo":"jsx","descripcion":"Interfaz","codigo":"// código completo..."}
-  ],
-  "tests": "# Tests automatizados\\n...",
-  "interfaz_descripcion": "Descripción detallada de la interfaz web moderna generada.",
-  "instrucciones": "Pasos para instalar y correr esta fase localmente."
-}`;
-
-  try {
-    const data = await callModel(prompt, 8000);
-    S.currentPhaseData = data; S.generatedFiles[num] = data;
-    if (!S.completedPhases.includes(num)) S.completedPhases.push(num);
-    saveState(); renderSidebar();
-    showView('p');
-    document.getElementById('bdl').style.display = 'flex';
-    renderPhaseDownload(phase, data);
-    await downloadPhase();  // descarga automática del ZIP (no se renderiza el código)
-  } catch(e) {
-    showView('a');
-    const extra = S.engine==='free'
-      ? ' Con modelos pequeños (1.5b) el flujo por fases es inestable. Probá con los botones 📦 o ✨ de arriba, que son mucho más confiables.'
-      : '';
-    showErr('Error al generar: ' + e.message + extra);
-  }
-}
-
-// Muestra una confirmación con la lista de archivos del ZIP (no el código).
-function renderPhaseDownload(ph, d) {
-  const zipname = `fase-${ph.numero}-${slug(ph.titulo)}.zip`;
-  const files = (d.archivos||[]).map(f=>`<li><code>src/${esc(f.nombre)}</code> — ${esc(f.descripcion||'')}</li>`).join('');
-  document.getElementById('dlcard').innerHTML = `
-    <div class="dlbar show" style="margin-bottom:16px">
-      <div class="dli">✅</div>
-      <div><h4>Fase ${ph.numero}: ${esc(ph.titulo)} — generada</h4><p>Se descargó <b>${esc(zipname)}</b> con el código, los tests y un README.</p></div>
-      <div class="dlb">
-        <button class="bsm ok" onclick="downloadPhase()">⬇ Descargar de nuevo</button>
-        <button class="bsm pr" onclick="nextPhase()">Siguiente ›</button>
-      </div>
-    </div>
-    <div class="expl">
-      <h4>📦 Contenido del ZIP</h4>
-      <ul class="filelist">
-        ${files || '<li style="color:var(--text3)">(sin archivos generados)</li>'}
-        ${d.tests?'<li><code>tests/…</code> — tests automatizados</li>':''}
-        <li><code>README.md</code> — explicación, lista de archivos e instrucciones de instalación</li>
-      </ul>
-    </div>`;
-}
-
-function nextPhase() {
-  if (!S.currentPhase) return;
-  const idx = S.phases.findIndex(p=>p.numero===S.currentPhase.numero);
-  if (idx < S.phases.length-1) startPhase(S.phases[idx+1].numero);
-  else alert('¡Todas las fases fueron completadas!');
-}
-
-function slug(s){return String(s||'fase').trim().replace(/\s+/g,'-').toLowerCase().replace(/[^a-z0-9\-]/g,'')||'fase';}
-
-async function downloadPhase() {
-  if (!S.currentPhaseData||!S.currentPhase) return;
-  const ph=S.currentPhase;
-  const filename=`fase-${ph.numero}-${slug(ph.titulo)}.zip`;
-  const payload={ phase:ph, source:S.sourceLang, target:S.targetLang, data:S.currentPhaseData, filename };
-  const btn=document.getElementById('bdl'); const prev=btn?btn.innerHTML:'';
-  if(btn) btn.innerHTML='⏳ Generando ZIP...';
-  try{
-    const r=await fetch('/api/zip',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
-    if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error?.message||('HTTP '+r.status)); }
-    const blob=await r.blob();
-    const a=document.createElement('a');
-    a.href=URL.createObjectURL(blob);
-    a.download=filename;
-    document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(()=>URL.revokeObjectURL(a.href),1500);
-  }catch(e){ showErr('No se pudo generar el ZIP: '+e.message); }
-  finally{ if(btn) btn.innerHTML=prev; }
-}
-
 function showView(n) {
-  ['vw','va','vp'].forEach(id=>document.getElementById(id).style.display='none');
+  document.getElementById('vw').style.display = 'none';
   document.getElementById('vl').classList.remove('show');
-  if(n==='w') document.getElementById('vw').style.display='block';
-  else if(n==='l') document.getElementById('vl').classList.add('show');
-  else if(n==='a') document.getElementById('va').style.display='block';
-  else if(n==='p') document.getElementById('vp').style.display='block';
-  document.getElementById('bnew').style.display = (n==='a'||n==='p') ? 'flex' : 'none';
+  if (n==='w') document.getElementById('vw').style.display = 'block';
+  else if (n==='l') document.getElementById('vl').classList.add('show');
+  // El botón "Nuevo proyecto" aparece cuando ya hay un sistema cargado.
+  document.getElementById('bnew').style.display = (S.zipInfo || S.file) ? 'flex' : 'none';
 }
 function setLoad(m,s){document.getElementById('lmsg').textContent=m;document.getElementById('lsub').textContent=s;}
 function showErr(m){const b=document.getElementById('ebox');b.textContent='⚠️ '+m;b.classList.add('show');}
@@ -1079,14 +722,8 @@ function repairTruncatedJson(s){
     document.getElementById('fok').classList.add('show');
   }
 
-  if (S.systemInfo && (S.phases||[]).length) {
-    renderAnalysis(); renderSidebar(); showView('a');
-    document.getElementById('ttl').textContent = 'Análisis del sistema';
-    showWarn('Proyecto anterior restaurado (análisis + fases). También podés generar la app completa. Para empezar de cero: "Nuevo proyecto".');
-  } else {
-    showView('w');
-    showWarn('Sistema anterior restaurado: ya podés generar la app (📦 / ✨) sin volver a subir el ZIP. Para empezar de cero: "Nuevo proyecto".');
-  }
+  showView('w');
+  showWarn('Sistema anterior restaurado: ya podés generar la app (📦 / ✨) sin volver a subir el ZIP. Para empezar de cero: "Nuevo proyecto".');
   document.getElementById('bnew').style.display = 'flex';
   checkReady();
 })();

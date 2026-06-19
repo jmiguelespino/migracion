@@ -27,10 +27,13 @@ reportes y la lógica de negocio. Paridad funcional, no una muestra.
   etiquetas legibles, campos obligatorios, ayuda y **reglas de negocio** (del
   `.prg`). Se hornea en el scaffold. Hasta 12 tablas, con progreso; si una
   falla, esa pantalla queda con el scaffold base (degradación elegante).
-- **Flujo "por fases"** (anterior): analizar → generar fase → descargar ZIP de
-  la fase. Sigue existiendo (botón **⚡ Analizar sistema (por fases)**).
-- **Motores de IA**: **Claude** (API key) y **🆓 Gratis** (Ollama local). El
-  modo **Demo** fue ELIMINADO (era salida simulada, redundante).
+- **Flujo "por fases"** (analizar → generar fase → ZIP por fase): **ELIMINADO**.
+  Dependía 100% de la IA (frágil en CPU/Ollama), no garantizaba cobertura ni que
+  la app arrancara, y entregaba la salida fragmentada. Lo reemplazan 📦 y ✨, que
+  cumplen la premisa rectora (cobertura total + app que corre). Se quitó el botón
+  ⚡, la vista de fases y el endpoint `/api/zip`.
+- **Motores de IA**: **Claude** (API key) y **🆓 Gratis** (Ollama local), usados
+  solo para el enriquecimiento ✨. El modo **Demo** fue ELIMINADO (salida simulada).
 - **Reanudar sesión**: el inventario del ZIP se persiste en `localStorage` apenas
   se lee (con fallback de cuota: sin muestras → sin zipInfo). Al reabrir, se
   restaura y se puede **generar la app sin volver a subir el ZIP**.
@@ -49,7 +52,7 @@ reportes y la lógica de negocio. Paridad funcional, no una muestra.
 ### Endpoints (`servidor.py`)
 - `GET /` y `GET /api/ollama/models`
 - `POST /api/key`, `/api/zipinfo`, `/api/claude`, `/api/ollama`
-- `POST /api/zip` (ZIP de una fase) · `POST /api/scaffold` (app completa)
+- `POST /api/scaffold` (app completa, determinística + enriquecimiento IA)
 
 ## 🔑 Decisiones clave
 
