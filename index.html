@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LegacyMigrator — Agente de migración</title>
+<title>LegacyMigrator — Migrá tu sistema viejo, paso a paso</title>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -20,103 +20,114 @@
 body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:var(--bg); color:var(--text); height:100vh; display:flex; flex-direction:column; font-size:14px; line-height:1.6; overflow:hidden; }
 
 /* HEADER */
-.hdr { background:var(--bg2); border-bottom:1px solid var(--border); padding:0 20px; height:52px; display:flex; align-items:center; gap:10px; flex-shrink:0; }
+.hdr { background:var(--bg2); border-bottom:1px solid var(--border); padding:0 20px; height:54px; display:flex; align-items:center; gap:10px; flex-shrink:0; }
 .logo { width:30px; height:30px; background:var(--purple); border-radius:7px; display:flex; align-items:center; justify-content:center; color:white; font-size:13px; font-weight:800; }
 .hdr h1 { font-size:15px; font-weight:700; }
 .hdr-sub { font-size:11px; color:var(--text3); }
 .sp { flex:1; }
-.badge { font-size:11px; padding:3px 10px; border-radius:20px; background:var(--pbg); color:var(--ptxt); font-weight:600; }
-.dot { width:8px; height:8px; border-radius:50%; background:var(--teal); display:inline-block; margin-right:5px; }
+.badge { font-size:12px; padding:4px 12px; border-radius:20px; background:var(--pbg); color:var(--ptxt); font-weight:700; }
+.bsm { padding:7px 13px; font-size:13px; font-weight:600; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg2); color:var(--text2); cursor:pointer; }
+.bsm:hover { border-color:var(--border2); background:var(--bg3); }
 
 /* LAYOUT */
 .app { display:flex; flex:1; overflow:hidden; }
 
-/* SIDEBAR — clave: 3 zonas, botón siempre al fondo */
-.sidebar {
-  width:270px; min-width:270px;
-  background:var(--bg2); border-right:1px solid var(--border);
-  display:flex; flex-direction:column; overflow:hidden;
-}
-/* zona superior: scrollea si el contenido es largo */
-.sb-top { flex:1; overflow-y:auto; min-height:0; }
-/* zona inferior: botón analizar, SIEMPRE VISIBLE */
-.sb-bot {
-  flex-shrink:0;
-  padding:12px 14px;
-  border-top:2px solid var(--purple);
-  background:var(--bg2);
-}
-.sblk { padding:12px 14px; border-bottom:1px solid var(--border); }
-.sblbl { font-size:11px; font-weight:600; text-transform:uppercase; letter-spacing:.06em; color:var(--text3); display:block; margin-bottom:8px; }
+/* SIDEBAR (recorrido del proyecto) */
+.sidebar { width:300px; min-width:300px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
+.sb-top { flex:1; overflow-y:auto; min-height:0; padding:14px; }
+.sb-bot { flex-shrink:0; padding:14px; border-top:1px solid var(--border); background:var(--bg2); }
+.phdr { margin-bottom:14px; }
+.phdr .pttl { font-size:17px; font-weight:800; display:flex; gap:6px; align-items:center; }
+.pbar { height:9px; background:var(--bg3); border-radius:6px; overflow:hidden; margin:9px 0 5px; }
+.pfill { height:100%; width:0; background:linear-gradient(90deg,var(--purple),var(--teal)); border-radius:6px; transition:width .3s; }
+.pcount { font-size:12px; color:var(--text2); }
+.step { display:flex; gap:10px; align-items:center; padding:10px; border-radius:var(--r); cursor:pointer; border:1px solid transparent; margin-bottom:4px; }
+.step:hover { background:var(--bg3); }
+.step.cur { background:var(--pbg); border-color:var(--purple); }
+.step .num { width:28px; height:28px; border-radius:50%; background:var(--bg3); color:var(--text2); font-weight:800; display:flex; align-items:center; justify-content:center; font-size:13px; flex-shrink:0; }
+.step.cur .num { background:var(--purple); color:#fff; }
+.step.done .num { background:var(--teal); color:#fff; }
+.step .stt { font-size:14px; font-weight:700; }
+.step .stc { font-size:12px; color:var(--text3); }
 
-/* API KEY */
+/* BOTONES DE ACCIÓN */
+.bgo { width:100%; padding:14px; border:none; border-radius:var(--r); font-size:15px; font-weight:800; cursor:pointer; color:#fff; background:var(--teal); }
+.bgo:hover:not(:disabled) { opacity:.92; }
+.bgo:disabled { opacity:.4; cursor:not-allowed; }
+.bgo.ready { animation:pulse 1.6s ease-in-out infinite; }
+@keyframes pulse { 0%,100%{ box-shadow:0 0 0 0 rgba(15,110,86,.4); } 50%{ box-shadow:0 0 0 8px rgba(15,110,86,0); } }
+.bmd { width:100%; margin-top:8px; padding:10px; border:1px solid var(--border); border-radius:var(--r); font-size:13px; font-weight:600; background:var(--bg2); color:var(--text2); cursor:pointer; }
+.bmd:hover { background:var(--bg3); }
+.hint { font-size:12px; color:var(--text3); text-align:center; margin-top:7px; min-height:16px; }
+
+/* OPCIONES IA (colapsable) */
+.iacfg { margin-top:12px; border:1px solid var(--border); border-radius:var(--r); padding:9px 11px; }
+.iacfg summary { cursor:pointer; font-size:13px; font-weight:700; color:var(--coral); }
+.iacfg .inner { margin-top:9px; }
+.lrow { display:flex; gap:5px; margin-bottom:8px; }
+.lb { flex:1; padding:7px 3px; font-size:12px; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg); color:var(--text2); cursor:pointer; text-align:center; font-weight:600; }
+.lb:hover { border-color:var(--border2); }
+.lb.active { background:var(--pbg); border-color:var(--purple); color:var(--ptxt); }
 .apirow { display:flex; gap:6px; }
 .apirow input { flex:1; padding:7px 10px; font-size:12px; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg2); color:var(--text); font-family:monospace; }
 .apirow input:focus { outline:none; border-color:var(--purple); }
-.bsave { padding:7px 11px; font-size:12px; background:var(--purple); color:white; border:none; border-radius:var(--rs); cursor:pointer; font-weight:700; white-space:nowrap; }
-.bsave:hover { opacity:.9; }
-.amsg { font-size:11px; margin-top:5px; }
+.bsave { padding:7px 11px; font-size:12px; background:var(--purple); color:white; border:none; border-radius:var(--rs); cursor:pointer; font-weight:700; }
+select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg2); color:var(--text); cursor:pointer; }
+.amsg { font-size:11px; margin-top:5px; color:var(--text3); }
 .amsg.ok { color:var(--teal); }
 .amsg.err { color:var(--red); }
 
-/* UPLOAD */
-.drop { border:2px dashed var(--border2); border-radius:var(--r); padding:14px; text-align:center; cursor:pointer; background:var(--bg3); transition:all .15s; }
-.drop:hover,.drop.drag { border-color:var(--purple); background:var(--pbg); }
-.drop .di { font-size:22px; margin-bottom:5px; }
-.drop p { font-size:12px; color:var(--text2); font-weight:500; }
-.drop span { font-size:11px; color:var(--text3); }
-#fi { display:none; }
-.fok { display:none; background:var(--tbg); border:1px solid #9FE1CB; border-radius:var(--rs); padding:7px 10px; margin-top:8px; }
-.fok.show { display:block; }
-.fok .fn { font-weight:700; font-size:12px; color:var(--ttxt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-.fok .fm { font-size:11px; color:var(--teal); }
-
-/* CONFIG */
-.lrow { display:flex; gap:5px; margin-bottom:8px; }
-.lb { flex:1; padding:6px 3px; font-size:12px; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg); color:var(--text2); cursor:pointer; text-align:center; font-weight:600; transition:all .1s; }
-.lb:hover { border-color:var(--border2); }
-.lb.active { background:var(--pbg); border-color:var(--purple); color:var(--ptxt); }
-select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg2); color:var(--text); cursor:pointer; }
-
-/* BOTÓN ANALIZAR */
-.ban { width:100%; padding:12px; background:var(--purple); color:white; border:none; border-radius:var(--rs); font-size:14px; font-weight:700; cursor:pointer; transition:all .15s; }
-.ban:hover:not(:disabled) { opacity:.9; }
-.ban:disabled { opacity:.35; cursor:not-allowed; }
-.hint { font-size:11px; color:var(--text3); text-align:center; margin-top:6px; min-height:16px; }
-
 /* MAIN */
 .main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
-.tbar { background:var(--bg2); border-bottom:1px solid var(--border); padding:10px 18px; display:flex; align-items:center; gap:8px; flex-shrink:0; }
-.tbar h2 { font-size:14px; font-weight:700; flex:1; }
-.bsm { padding:6px 12px; font-size:12px; font-weight:600; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg2); color:var(--text2); cursor:pointer; transition:all .1s; display:flex; align-items:center; gap:5px; }
-.bsm:hover { border-color:var(--border2); background:var(--bg3); }
-.bsm.ok { background:var(--teal); color:white; border-color:var(--teal); }
-.bsm.pr { background:var(--purple); color:white; border-color:var(--purple); }
+.content { flex:1; overflow-y:auto; padding:24px; }
 
-.content { flex:1; overflow-y:auto; padding:20px; }
+/* DETALLE DEL PASO */
+.detail { max-width:740px; margin:0 auto; }
+.dhead { display:flex; align-items:center; gap:14px; margin-bottom:18px; }
+.dicon { font-size:42px; line-height:1; }
+.dnum { font-size:12px; color:var(--text3); font-weight:700; text-transform:uppercase; letter-spacing:.05em; }
+.dhead h2 { font-size:25px; font-weight:800; }
+.dbadge { margin-left:auto; background:var(--pbg); color:var(--ptxt); font-weight:700; padding:7px 15px; border-radius:20px; font-size:14px; white-space:nowrap; }
+.dbody { font-size:16px; line-height:1.85; color:var(--text); background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:24px; }
+.dbody p { margin-bottom:12px; }
+.dbody ul { margin:10px 0 14px 22px; }
+.dbody li { margin-bottom:6px; }
+.dbody b { color:var(--ptxt); }
+.dbody .tip { background:var(--abg); border-radius:var(--rs); padding:11px 15px; color:var(--amber); font-size:14px; margin-top:4px; }
+.dnav { display:flex; justify-content:space-between; align-items:center; margin-top:20px; }
+.bbig { background:var(--purple); color:#fff; border:none; border-radius:var(--r); padding:15px 28px; font-size:16px; font-weight:800; cursor:pointer; }
+.bbig:hover { opacity:.92; }
+.bsec { background:var(--bg2); color:var(--text2); border:1px solid var(--border); border-radius:var(--r); padding:13px 22px; font-size:14px; font-weight:600; cursor:pointer; }
+.bsec:hover { background:var(--bg3); }
 
-/* WELCOME */
-.wel { max-width:520px; margin:40px auto; text-align:center; }
-.wi { width:56px; height:56px; background:var(--pbg); border-radius:14px; display:flex; align-items:center; justify-content:center; font-size:26px; margin:0 auto 16px; }
-.wel h2 { font-size:20px; font-weight:800; margin-bottom:10px; }
-.wel>p { color:var(--text2); font-size:14px; line-height:1.7; }
-.steps { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:18px; text-align:left; }
-.sc { padding:12px; border:1px solid var(--border); border-radius:var(--r); background:var(--bg2); }
-.sn { width:22px; height:22px; border-radius:50%; background:var(--pbg); color:var(--ptxt); font-size:11px; font-weight:800; display:flex; align-items:center; justify-content:center; margin-bottom:6px; }
-.st { font-size:12px; font-weight:700; margin-bottom:3px; }
-.sd { font-size:11px; color:var(--text2); }
+/* WELCOME (subir sistema) */
+.wel { max-width:560px; margin:50px auto; text-align:center; }
+.wi { width:64px; height:64px; background:var(--pbg); border-radius:16px; display:flex; align-items:center; justify-content:center; font-size:30px; margin:0 auto 18px; }
+.wel h2 { font-size:27px; font-weight:800; margin-bottom:10px; }
+.wel>p { font-size:16px; color:var(--text2); margin-bottom:24px; line-height:1.7; }
+.drop { border:2px dashed var(--border2); border-radius:var(--r); padding:30px 18px; text-align:center; cursor:pointer; background:var(--bg2); transition:all .15s; }
+.drop:hover, .drop.drag { border-color:var(--purple); background:var(--pbg); }
+.drop .di { font-size:30px; margin-bottom:8px; }
+.drop p { font-size:16px; color:var(--text); font-weight:700; }
+.drop span { font-size:13px; color:var(--text3); }
+#fi { display:none; }
+.fok { display:none; background:var(--tbg); border:1px solid #9FE1CB; border-radius:var(--rs); padding:9px 12px; }
+.fok.show { display:block; }
+.fok .fn { font-weight:700; font-size:13px; color:var(--ttxt); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fok .fm { font-size:12px; color:var(--teal); }
 
 /* LOADING */
-.ldg { display:none; text-align:center; padding:60px 20px; }
+.ldg { display:none; text-align:center; padding:70px 20px; }
 .ldg.show { display:block; }
-.spin { width:36px; height:36px; border:3px solid var(--border); border-top-color:var(--purple); border-radius:50%; animation:spin .8s linear infinite; margin:0 auto 14px; }
+.spin { width:40px; height:40px; border:3px solid var(--border); border-top-color:var(--purple); border-radius:50%; animation:spin .8s linear infinite; margin:0 auto 16px; }
 @keyframes spin { to { transform:rotate(360deg); } }
-.ldg p { color:var(--text2); font-size:14px; font-weight:600; }
-.ldg .ls { font-size:12px; color:var(--text3); margin-top:6px; }
+.ldg p { color:var(--text); font-size:16px; font-weight:700; }
+.ldg .ls { font-size:13px; color:var(--text3); margin-top:7px; }
 
-.ebox { background:var(--rbg); border:1px solid #F09595; border-radius:var(--r); padding:12px 16px; margin-bottom:14px; font-size:13px; color:var(--red); display:none; }
+/* AVISOS */
+.ebox { background:var(--rbg); border:1px solid #F09595; border-radius:var(--r); padding:13px 16px; margin-bottom:14px; font-size:14px; color:var(--red); display:none; }
 .ebox.show { display:block; }
-.wbox { background:var(--abg); border:1px solid #E0B872; border-radius:var(--r); padding:10px 14px; margin-bottom:14px; font-size:12px; color:var(--amber); display:none; }
+.wbox { background:var(--abg); border:1px solid #E0B872; border-radius:var(--r); padding:11px 15px; margin-bottom:14px; font-size:13px; color:var(--amber); display:none; }
 .wbox.show { display:block; }
 </style>
 </head>
@@ -124,138 +135,330 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 
 <header class="hdr">
   <div class="logo">LM</div>
-  <div><h1>LegacyMigrator</h1><div class="hdr-sub">Agente de migración de sistemas legacy</div></div>
+  <div><h1>LegacyMigrator</h1><div class="hdr-sub">Migrá tu sistema viejo, paso a paso</div></div>
   <div class="sp"></div>
-  <span><span class="dot"></span><span style="font-size:12px;color:var(--teal);font-weight:600">Servidor local activo</span></span>
-  &nbsp;&nbsp;<span class="badge">Claude · Ollama (gratis)</span>
+  <span class="badge" id="hpname" style="display:none"></span>
+  <button class="bsm" id="bnew" onclick="clearState()" style="display:none;margin-left:8px">🗑 Nuevo proyecto</button>
 </header>
 
 <div class="app">
-  <aside class="sidebar">
 
-    <!-- ZONA SUPERIOR: scrollea si hace falta -->
+  <!-- RECORRIDO DEL PROYECTO (aparece cuando hay un sistema cargado) -->
+  <aside class="sidebar" id="sidebar" style="display:none">
     <div class="sb-top">
-
-      <!-- API KEY -->
-      <div class="sblk" id="keyblk">
-        <span class="sblbl">🔑 API Key de Anthropic</span>
-        <div class="apirow">
-          <input type="password" id="akey" placeholder="sk-ant-...">
-          <button class="bsave" onclick="saveKey()">OK</button>
-        </div>
-        <div class="amsg" id="amsg">Obtené tu clave en <a href="https://console.anthropic.com" target="_blank" style="color:var(--purple)">console.anthropic.com</a></div>
+      <div class="phdr">
+        <div class="pttl">📋 <span id="pname">Proyecto</span></div>
+        <div class="pbar"><div class="pfill" id="pfill"></div></div>
+        <div class="pcount" id="pcount">0 de 8 áreas revisadas</div>
       </div>
-
-      <!-- UPLOAD -->
-      <div class="sblk">
-        <span class="sblbl">Sistema a migrar</span>
-        <div class="drop" id="drop" onclick="document.getElementById('fi').click()">
-          <div class="di">📁</div>
-          <p>Subir sistema legacy</p>
-          <span>ZIP con código fuente VFP / COBOL / FoxPro</span>
-        </div>
-        <input type="file" id="fi" accept=".zip">
-        <input type="file" id="fdir" webkitdirectory directory multiple style="display:none">
-        <button class="bsm sec" style="width:100%;margin-top:6px" onclick="document.getElementById('fdir').click()">📂 Elegir carpeta (.dbf + imágenes)</button>
-        <div class="fok" id="fok">
-          <div class="fn" id="fname">—</div>
-          <div class="fm" id="fmeta">—</div>
-        </div>
-      </div>
-
-      <!-- CONFIG -->
-      <div class="sblk">
-        <span class="sblbl">Configuración</span>
-        <div style="font-size:11px;color:var(--text3);margin-bottom:5px">Lenguaje origen</div>
-        <div class="lrow" id="langrow">
-          <button class="lb active" onclick="setLang(this,'Visual FoxPro')">VFP</button>
-          <button class="lb" onclick="setLang(this,'FoxPro')">Fox</button>
-          <button class="lb" onclick="setLang(this,'COBOL')">COBOL</button>
-        </div>
-        <div style="font-size:11px;color:var(--text3);margin-bottom:5px">Tecnología destino</div>
-        <select onchange="S.targetLang=this.value">
-          <option value="Python + FastAPI + React">Python + FastAPI + React</option>
-          <option value="Python + Django">Python + Django</option>
-          <option value="Node.js + Express + React">Node.js + Express + React</option>
-          <option value="C# + .NET + Blazor">C# + .NET + Blazor</option>
-          <option value="Java + Spring Boot">Java + Spring Boot</option>
-        </select>
-        <div style="font-size:11px;color:var(--text3);margin:10px 0 5px">Motor de IA</div>
-        <div class="lrow" id="enginerow">
-          <button class="lb active" onclick="setEngine(this,'claude')">Claude</button>
-          <button class="lb" onclick="setEngine(this,'free')">🆓 Gratis</button>
-        </div>
-        <div id="freebox" style="display:none">
-          <div style="font-size:11px;color:var(--text3);margin-bottom:5px">Modelo local (Ollama · sin API key)</div>
-          <select id="ollamaModel" onchange="S.ollamaModel=this.value;checkReady();saveState()"></select>
-          <div class="amsg" id="ollamamsg" style="margin-top:5px"></div>
-        </div>
-      </div>
-
-    </div><!-- fin sb-top -->
-
-    <!-- ZONA INFERIOR: BOTÓN SIEMPRE VISIBLE -->
-    <div class="sb-bot">
-      <button class="ban" id="bapp" onclick="generateFullApp()" disabled style="background:var(--teal)">📦 Generar app completa</button>
-      <button class="ban" id="bappai" onclick="generateEnrichedApp()" disabled style="margin-top:8px;background:var(--coral)">✨ App completa + IA</button>
-      <div class="hint" id="hint">Subí un ZIP para generar la app</div>
+      <div id="stepsList"></div>
     </div>
+    <div class="sb-bot">
+      <button class="bgo" id="bapp" onclick="generateFullApp()" disabled>📦 Generar la app</button>
+      <div class="hint" id="hint"></div>
+      <button class="bmd" id="bmd" onclick="downloadProjectMd()">📄 Descargar PROYECTO.md</button>
 
+      <details class="iacfg" id="iacfg">
+        <summary>✨ Mejorar con IA (opcional)</summary>
+        <div class="inner">
+          <div style="font-size:12px;color:var(--text3);margin:2px 0 5px">Motor de IA</div>
+          <div class="lrow" id="enginerow">
+            <button class="lb active" onclick="setEngine(this,'claude')">Claude</button>
+            <button class="lb" onclick="setEngine(this,'free')">🆓 Gratis</button>
+          </div>
+          <div id="keyblk">
+            <div class="apirow">
+              <input type="password" id="akey" placeholder="sk-ant-...">
+              <button class="bsave" onclick="saveKey()">OK</button>
+            </div>
+            <div class="amsg" id="amsg">Pegá tu clave de console.anthropic.com</div>
+          </div>
+          <div id="freebox" style="display:none">
+            <select id="ollamaModel" onchange="S.ollamaModel=this.value;checkReady();saveState()"></select>
+            <div class="amsg" id="ollamamsg"></div>
+          </div>
+          <button class="bgo" id="bappai" onclick="generateEnrichedApp()" disabled style="background:var(--coral);margin-top:8px">✨ Generar con IA</button>
+        </div>
+      </details>
+    </div>
   </aside>
 
   <main class="main">
-    <div class="tbar">
-      <h2 id="ttl">Bienvenido</h2>
-      <button class="bsm" id="bnew" onclick="clearState()" style="display:none">🗑 Nuevo proyecto</button>
-    </div>
     <div class="content">
       <div class="ebox" id="ebox"></div>
       <div class="wbox" id="wbox"></div>
 
-      <!-- WELCOME -->
+      <!-- BIENVENIDA: subir el sistema -->
       <div id="vw">
         <div class="wel">
-          <div class="wi">⚙️</div>
-          <h2>Migrador de sistemas legacy</h2>
-          <p>Subí tu sistema VFP, COBOL o FoxPro y el agente genera una app moderna con TODAS las utilidades del original (ABM por tabla, menús, reportes, datos reales), lista para correr.</p>
-          <div class="steps">
-            <div class="sc"><div class="sn">1</div><div class="st">Subir ZIP</div><div class="sd">El sistema completo con datos y código fuente</div></div>
-            <div class="sc"><div class="sn">2</div><div class="st">📦 Generar app completa</div><div class="sd">Cobertura total, sin IA, instantáneo. La app arranca y trae los datos reales</div></div>
-            <div class="sc"><div class="sn">3</div><div class="st">✨ App completa + IA (opcional)</div><div class="sd">Enriquece etiquetas, obligatorios y reglas con Claude u Ollama</div></div>
-            <div class="sc"><div class="sn">4</div><div class="st">Descargar y correr</div><div class="sd">app-migrada.zip con COBERTURA.md y FastAPI listo</div></div>
+          <div class="wi">📁</div>
+          <h2>Subí tu sistema viejo</h2>
+          <p>Elegí el archivo <b>ZIP</b> de tu sistema Visual FoxPro / FoxPro (o la carpeta con los archivos).
+             Yo lo leo y te lo voy explicando <b>paso a paso</b>, sin apuro.</p>
+          <div class="drop" id="drop" onclick="document.getElementById('fi').click()">
+            <div class="di">⬆️</div>
+            <p>Hacé clic acá para elegir el ZIP</p>
+            <span>o arrastrá el archivo a esta zona</span>
+          </div>
+          <input type="file" id="fi" accept=".zip">
+          <input type="file" id="fdir" webkitdirectory directory multiple style="display:none">
+          <button class="bmd" style="max-width:340px;margin:10px auto 0" onclick="document.getElementById('fdir').click()">📂 …o elegir una carpeta (.dbf + imágenes)</button>
+          <div class="fok" id="fok" style="max-width:440px;margin:12px auto 0;text-align:left">
+            <div class="fn" id="fname">—</div>
+            <div class="fm" id="fmeta">—</div>
           </div>
         </div>
       </div>
 
-      <!-- LOADING -->
+      <!-- CARGANDO -->
       <div class="ldg" id="vl">
         <div class="spin"></div>
-        <p id="lmsg">Generando...</p>
+        <p id="lmsg">Leyendo el sistema…</p>
         <div class="ls" id="lsub">Esto puede tomar unos segundos</div>
       </div>
+
+      <!-- DETALLE DEL PASO ACTUAL -->
+      <div id="vp"></div>
+
     </div>
   </main>
 </div>
 
 <script>
-const S = { apiKey:'', file:null, savedFileName:'', engine:'claude', ollamaModel:'', sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React', zipInfo:null, systemInfo:null };
+const S = { apiKey:'', file:null, savedFileName:'', engine:'claude', ollamaModel:'',
+  sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React',
+  zipInfo:null, systemInfo:null, reviewed:[], step:0 };
 let ollamaAvailable = false;
 
-// --- PERSISTENCIA DEL PROYECTO (localStorage) ---
-// No guardamos la API key (seguridad) ni el File. Sí el inventario del ZIP,
-// para poder generar la app al reabrir sin volver a subirlo.
-const LS_KEY = 'lm_proyecto';
-// El zipInfo puede ser grande; si no entra en la cuota, lo guardamos sin las
-// muestras de código (lo más pesado) y, si tampoco, sin zipInfo.
-function liteZip(z) {
-  if (!z) return null;
-  const { samples, ...rest } = z;
-  return rest;
+// ======================= RECORRIDO DEL PROYECTO =======================
+// 8 áreas de trabajo. Cada una se explica con los datos REALES del ZIP.
+const STEPS = [
+  { key:'proyecto',  icon:'📦', title:'El proyecto' },
+  { key:'datos',     icon:'🗄️', title:'Bases de datos' },
+  { key:'tablas',    icon:'📊', title:'Tablas y datos' },
+  { key:'imagenes',  icon:'🖼️', title:'Imágenes' },
+  { key:'logica',    icon:'⚙️', title:'Lógica y clases' },
+  { key:'menus',     icon:'🧭', title:'Menús' },
+  { key:'pantallas', icon:'🖥️', title:'Pantallas' },
+  { key:'reportes',  icon:'📄', title:'Reportes' },
+];
+const IMG_EXTS = ['.jpg','.jpeg','.png','.gif','.bmp','.ico','.webp','.tif','.tiff'];
+
+function fmt(n){ return (Number(n)||0).toLocaleString('es-AR'); }
+function imageCount(z){ const be=(z&&z.by_ext)||{}; return IMG_EXTS.reduce((a,e)=>a+(be[e]||0),0); }
+function extCount(z,e){ return ((z&&z.by_ext)||{})[e]||0; }
+function projectName(){ return (S.savedFileName||'Proyecto').replace(/\.zip$/i,'') || 'Proyecto'; }
+
+// Devuelve { countLabel, html } para un área, con datos reales del ZIP (z).
+function stepInfo(key, z){
+  z = z || {};
+  if (key === 'proyecto') {
+    const p = z.project;
+    if (!p) return { countLabel:'sin .pjx', html:
+      `<p>No encontré el archivo de proyecto <b>.pjx</b>. No pasa nada: igual puedo trabajar
+       con las tablas, pantallas y menús que sí están en el ZIP.</p>` };
+    const n = (p.archivos||[]).length;
+    const main = p.principal || '(no declarado)';
+    return { countLabel:`${fmt(n)} archivos`, html:
+      `<p>El archivo <b>.pjx</b> es el <b>índice del sistema</b>: dice qué partes lo forman.</p>
+       <p>Tu sistema declara <b>${fmt(n)} archivos</b> y su programa principal es <b>${esc(main)}</b>.</p>
+       <p class="tip">💡 Con esto sabemos por dónde arranca el sistema viejo y qué piezas tiene.</p>` };
+  }
+  if (key === 'datos') {
+    const dbs = z.databases || [];
+    if (!dbs.length) return { countLabel:'0 bases', html:
+      `<p>No encontré una base de datos <b>.dbc</b>. En VFP a veces las tablas viven sueltas,
+       sin un contenedor. Igual las leo en el paso siguiente.</p>` };
+    const li = dbs.map(d => `<li><b>${esc(d.name)}</b> — ${fmt((d.vistas||[]).length)} vistas, ${fmt((d.relaciones||[]).length)} relaciones</li>`).join('');
+    return { countLabel:`${fmt(dbs.length)} bases`, html:
+      `<p>Una <b>base de datos (.dbc)</b> agrupa las tablas del sistema y guarda sus
+       <b>relaciones</b> y <b>vistas</b> (consultas guardadas).</p>
+       <p>Encontré <b>${fmt(dbs.length)}</b>:</p><ul>${li}</ul>
+       <p class="tip">💡 De acá salen las conexiones entre tablas (por ejemplo, qué cliente tiene cada pedido).</p>` };
+  }
+  if (key === 'tablas') {
+    const ts = (z.tables || []).slice().sort((a,b)=>(b.records||0)-(a.records||0));
+    const total = ts.reduce((a,t)=>a+(t.records||0),0);
+    const top = ts.slice(0,6).map(t=>`<li><b>${esc(t.name)}</b> — ${fmt(t.records)} registros · ${fmt((t.fields||[]).length)} campos</li>`).join('');
+    const more = ts.length>6 ? `<p>…y <b>${fmt(ts.length-6)}</b> tablas más.</p>` : '';
+    return { countLabel:`${fmt(ts.length)} tablas`, html:
+      `<p>Las <b>tablas (.dbf)</b> son el corazón del sistema: ahí están los datos.</p>
+       <p>Encontré <b>${fmt(ts.length)} tablas</b> con <b>${fmt(total)} registros</b> en total. Las más grandes:</p>
+       <ul>${top || '<li>(sin tablas legibles)</li>'}</ul>${more}
+       <p class="tip">💡 En la app nueva, cada tabla tendrá su pantalla para <b>ver, agregar, modificar y borrar</b>,
+       y vamos a <b>importar todos estos datos reales</b>.</p>` };
+  }
+  if (key === 'imagenes') {
+    const c = imageCount(z);
+    if (!c) return { countLabel:'0 imágenes', html:
+      `<p>No encontré imágenes en el ZIP. Si tu sistema usa logos o fotos y no aparecen,
+       probá subir la <b>carpeta completa</b> (botón 📂) para que se incluyan.</p>` };
+    return { countLabel:`${fmt(c)} imágenes`, html:
+      `<p>Tu sistema usa <b>${fmt(c)} imágenes</b> (logos, fotos, íconos).</p>
+       <p>Las voy a <b>copiar a la app nueva</b> y a mostrarlas donde el sistema viejo las usaba.</p>
+       <p class="tip">💡 Así la app nueva se ve igual de familiar que la vieja.</p>` };
+  }
+  if (key === 'logica') {
+    const clases = extCount(z,'.vcx');
+    const progs  = extCount(z,'.prg');
+    return { countLabel:`${fmt(clases+progs)} archivos`, html:
+      `<p>Las <b>clases (.vcx)</b> y los <b>programas (.prg)</b> guardan las
+       <b>reglas del negocio</b>: cómo se calculan cosas, qué está permitido, etc.</p>
+       <p>Encontré <b>${fmt(clases)} clases</b> y <b>${fmt(progs)} programas</b>.</p>
+       <p class="tip">💡 Estas reglas las puedo incorporar a la app nueva con el botón
+       <b>✨ Generar con IA</b> (es opcional). Sin IA, la app igual sale completa.</p>` };
+  }
+  if (key === 'menus') {
+    const ms = z.menus || [];
+    const items = ms.reduce((a,m)=>a+((m.items||[]).length),0);
+    const li = ms.map(m=>`<li><b>${esc(m.titulo||'Menú')}</b>: ${esc((m.items||[]).map(it=>it.texto).join(', '))}</li>`).join('');
+    if (!items) return { countLabel:'0 opciones', html:
+      `<p>No encontré un menú claro. No es grave: en la app nueva igual vas a poder
+       navegar a todas las tablas y reportes desde un menú automático.</p>` };
+    return { countLabel:`${fmt(items)} opciones`, html:
+      `<p>El <b>menú</b> es cómo el usuario se mueve por el sistema.</p>
+       <p>Encontré <b>${fmt(items)} opciones</b>:</p><ul>${li}</ul>
+       <p class="tip">💡 Este mismo menú se convierte en la <b>navegación</b> de la app nueva.</p>` };
+  }
+  if (key === 'pantallas') {
+    const f = extCount(z,'.scx') || (z.forms||[]).length;
+    return { countLabel:`${fmt(f)} pantallas`, html:
+      `<p>Las <b>pantallas (.scx)</b> son los formularios donde el usuario carga y consulta datos.</p>
+       <p>Encontré <b>${fmt(f)} pantallas</b>.</p>
+       <p class="tip">💡 Cada una se recrea como una <b>pantalla web moderna</b>, con los mismos campos.</p>` };
+  }
+  if (key === 'reportes') {
+    const r = extCount(z,'.frx') || (z.reports||[]).length;
+    return { countLabel:`${fmt(r)} reportes`, html:
+      `<p>Los <b>reportes (.frx)</b> son los listados e informes que imprime el sistema.</p>
+       <p>Encontré <b>${fmt(r)} reportes</b>.</p>
+       <p class="tip">💡 Cada uno se convierte en una <b>consulta / listado</b> que podés ver y exportar.</p>` };
+  }
+  return { countLabel:'', html:'' };
 }
-function saveState() {
+
+// Dibuja la barra de avance y la lista de pasos en la barra lateral.
+function renderWalk(){
+  const z = S.zipInfo || {};
+  document.getElementById('pname').textContent = projectName();
+  document.getElementById('hpname').textContent = '📋 ' + projectName();
+  const done = S.reviewed.length;
+  document.getElementById('pcount').textContent = `${done} de ${STEPS.length} áreas revisadas`;
+  document.getElementById('pfill').style.width = Math.round(done/STEPS.length*100) + '%';
+  document.getElementById('stepsList').innerHTML = STEPS.map((s,i)=>{
+    const info = stepInfo(s.key, z);
+    const cls = (S.reviewed.includes(s.key)?'done ':'') + (i===S.step?'cur':'');
+    return `<div class="step ${cls}" onclick="showStep(${i})">
+      <div class="num">${S.reviewed.includes(s.key)?'✓':(i+1)}</div>
+      <div><div class="stt">${s.icon} ${esc(s.title)}</div>
+      <div class="stc">${esc(info.countLabel)}</div></div></div>`;
+  }).join('');
+  // Cuando ya revisó todo, resaltamos el botón de generar.
+  const bapp = document.getElementById('bapp');
+  if (bapp) bapp.classList.toggle('ready', done >= STEPS.length && !bapp.disabled);
+}
+
+// Muestra el detalle del paso i en el panel principal.
+function showStep(i){
+  S.step = Math.max(0, Math.min(STEPS.length-1, i));
+  const s = STEPS[S.step];
+  const info = stepInfo(s.key, S.zipInfo || {});
+  const isLast = S.step === STEPS.length-1;
+  const yaVisto = S.reviewed.includes(s.key);
+  const prev = S.step>0 ? `<button class="bsec" onclick="showStep(${S.step-1})">← Anterior</button>` : '<span></span>';
+  const label = yaVisto
+    ? (isLast ? '✓ Revisado' : 'Siguiente →')
+    : (isLast ? '✓ Entendido — ¡listo para generar!' : '✓ Entendido, siguiente →');
+  document.getElementById('vp').innerHTML = `
+    <div class="detail">
+      <div class="dhead">
+        <div class="dicon">${s.icon}</div>
+        <div><div class="dnum">Paso ${S.step+1} de ${STEPS.length}</div><h2>${esc(s.title)}</h2></div>
+        <div class="dbadge">${esc(info.countLabel)}</div>
+      </div>
+      <div class="dbody">${info.html}</div>
+      <div class="dnav">${prev}<button class="bbig" onclick="markUnderstood()">${label}</button></div>
+    </div>`;
+  renderWalk();
+}
+
+// Marca el paso actual como entendido y avanza al siguiente.
+function markUnderstood(){
+  const key = STEPS[S.step].key;
+  if (!S.reviewed.includes(key)) S.reviewed.push(key);
+  saveState();
+  if (S.step < STEPS.length-1) {
+    showStep(S.step+1);
+  } else {
+    renderWalk();
+    if (S.reviewed.length >= STEPS.length) {
+      hideErr();
+      showWarn('🎉 ¡Recorriste todo el proyecto! Ahora generá la app con el botón 📦 Generar la app.');
+    }
+  }
+}
+
+// Entra al modo "proyecto": arma el recorrido y va al primer paso pendiente.
+function enterProject(){
+  if (!Array.isArray(S.reviewed)) S.reviewed = [];
+  let i = STEPS.findIndex(s => !S.reviewed.includes(s.key));
+  if (i < 0) i = 0;
+  renderWalk();
+  showStep(i);
+  showView('project');
+}
+
+// ======================= PROYECTO.md (resumen descargable) =======================
+function buildProjectMd(z){
+  z = z || {};
+  const L = [], P = projectName();
+  L.push(`# Proyecto: ${P}`, '', '> Resumen generado por LegacyMigrator.', '');
+  L.push(`- Archivos en el ZIP: ${fmt(z.total_files)} (${z.size_mb||0} MB)`);
+  if (z.project) L.push(`- Programa principal: ${z.project.principal || '(no declarado)'}`);
+  L.push('', '## Áreas del sistema', '');
+
+  const ts = (z.tables||[]).slice().sort((a,b)=>(b.records||0)-(a.records||0));
+  const tot = ts.reduce((a,t)=>a+(t.records||0),0);
+  L.push('### Tablas y datos', `Tablas: ${ts.length} · Registros: ${fmt(tot)}`, '');
+  ts.forEach(t => L.push(`- ${t.name}: ${fmt(t.records)} registros, ${(t.fields||[]).length} campos`));
+  L.push('');
+
+  const dbs = z.databases||[];
+  L.push('### Bases de datos', `Bases: ${dbs.length}`, '');
+  dbs.forEach(d => L.push(`- ${d.name}: ${(d.vistas||[]).length} vistas, ${(d.relaciones||[]).length} relaciones`));
+  L.push('');
+
+  const ms = z.menus||[];
+  L.push('### Menús', '');
+  ms.forEach(m => L.push(`- ${m.titulo||'Menú'}: ${(m.items||[]).map(it=>it.texto).join(', ')}`));
+  L.push('');
+
+  L.push('### Otras áreas', '');
+  L.push(`- Imágenes: ${imageCount(z)}`);
+  L.push(`- Pantallas (.scx): ${extCount(z,'.scx')}`);
+  L.push(`- Reportes (.frx): ${extCount(z,'.frx')}`);
+  L.push(`- Clases (.vcx): ${extCount(z,'.vcx')} · Programas (.prg): ${extCount(z,'.prg')}`);
+  L.push('', '---', '_Para crear el sistema nuevo, usá el botón 📦 Generar la app._');
+  return L.join('\n');
+}
+function downloadProjectMd(){
+  if (!S.zipInfo) { showErr('Primero subí un sistema.'); return; }
+  const blob = new Blob([buildProjectMd(S.zipInfo)], { type:'text/markdown' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob); a.download = 'PROYECTO.md';
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(()=>URL.revokeObjectURL(a.href), 1500);
+}
+
+// ======================= PERSISTENCIA (localStorage) =======================
+// Guardamos el inventario del ZIP y el avance del recorrido (no la API key ni el File).
+const LS_KEY = 'lm_proyecto';
+function liteZip(z){ if(!z) return null; const { samples, ...rest } = z; return rest; }
+function saveState(){
   const base = {
-    sourceLang:S.sourceLang, targetLang:S.targetLang, engine:S.engine, ollamaModel:S.ollamaModel,
-    fileName:(S.file ? S.file.name : (S.savedFileName||''))
+    engine:S.engine, ollamaModel:S.ollamaModel,
+    fileName:(S.file ? S.file.name : (S.savedFileName||'')),
+    reviewed:S.reviewed
   };
   const tries = [
     () => JSON.stringify({ ...base, zipInfo:S.zipInfo }),
@@ -263,29 +466,29 @@ function saveState() {
     () => JSON.stringify(base),
   ];
   for (const make of tries) {
-    try { localStorage.setItem(LS_KEY, make()); return; } catch (e) { /* cuota: probamos más liviano */ }
+    try { localStorage.setItem(LS_KEY, make()); return; } catch(e) { /* cuota: probamos más liviano */ }
   }
 }
-function loadState() {
+function loadState(){
   try {
     const d = JSON.parse(localStorage.getItem(LS_KEY) || 'null');
-    // Reanudamos si hay un inventario del ZIP guardado.
     if (!d || !d.zipInfo) return false;
-    const engine = (d.engine === 'free') ? 'free' : 'claude';   // 'demo' (obsoleto) -> claude
-    Object.assign(S, { sourceLang:d.sourceLang||S.sourceLang, targetLang:d.targetLang||S.targetLang,
+    const engine = (d.engine === 'free') ? 'free' : 'claude';
+    Object.assign(S, {
       engine, ollamaModel:d.ollamaModel||'', savedFileName:d.fileName||'',
-      zipInfo:d.zipInfo||null });
+      zipInfo:d.zipInfo||null, reviewed:Array.isArray(d.reviewed)?d.reviewed:[]
+    });
     return true;
   } catch(e) { return false; }
 }
-function clearState() {
-  if (!confirm('¿Empezar un proyecto nuevo? Se borra el sistema guardado.')) return;
+function clearState(){
+  if (!confirm('¿Empezar un proyecto nuevo? Se borra el sistema guardado y el avance.')) return;
   try { localStorage.removeItem(LS_KEY); } catch(e) {}
   location.reload();
 }
 
-// Selección de motor de IA: Claude (API key) o Gratis (Ollama local).
-function setEngine(btn, eng) {
+// ======================= MOTOR DE IA (opcional, para ✨) =======================
+function setEngine(btn, eng){
   document.querySelectorAll('#enginerow .lb').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   S.engine = eng;
@@ -294,9 +497,7 @@ function setEngine(btn, eng) {
   if (eng === 'free') loadOllamaModels();
   checkReady(); saveState();
 }
-
-// Consulta los modelos locales instalados en Ollama y llena el desplegable.
-async function loadOllamaModels() {
+async function loadOllamaModels(){
   const sel = document.getElementById('ollamaModel');
   const msg = document.getElementById('ollamamsg');
   msg.className = 'amsg'; msg.textContent = 'Buscando modelos locales...';
@@ -309,98 +510,72 @@ async function loadOllamaModels() {
     if (!ollamaAvailable) {
       sel.innerHTML = `<option value="${esc(def)}">${esc(def)} (recomendado)</option>`;
       msg.className = 'amsg err';
-      msg.innerHTML = `Ollama no está corriendo. Instalalo en <a href="https://ollama.com" target="_blank" style="color:var(--purple)">ollama.com</a>, abrilo y ejecutá <code>ollama pull ${esc(def)}</code>`;
+      msg.innerHTML = `Ollama no está corriendo. Instalalo en <a href="https://ollama.com" target="_blank" style="color:var(--purple)">ollama.com</a> y ejecutá <code>ollama pull ${esc(def)}</code>`;
     } else if (!models.length) {
       sel.innerHTML = `<option value="${esc(def)}">${esc(def)} (recomendado)</option>`;
       msg.className = 'amsg err';
-      msg.innerHTML = `No hay modelos instalados. Ejecutá <code>ollama pull ${esc(def)}</code> (ideal para generar código).`;
+      msg.innerHTML = `No hay modelos instalados. Ejecutá <code>ollama pull ${esc(def)}</code>.`;
     } else {
       sel.innerHTML = models.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
-      // Preferimos un modelo orientado a código si hay uno instalado.
       const pref = models.find(m => /coder|code|deepseek|qwen/i.test(m)) || models[0];
       S.ollamaModel = (S.ollamaModel && models.includes(S.ollamaModel)) ? S.ollamaModel : pref;
       sel.value = S.ollamaModel;
       msg.className = 'amsg ok';
       msg.textContent = `✓ ${models.length} modelo(s) local(es) disponible(s)`;
     }
-  } catch (e) {
+  } catch(e) {
     ollamaAvailable = false;
     msg.className = 'amsg err';
-    msg.textContent = 'No se pudo consultar Ollama (¿el servidor local está corriendo?)';
+    msg.textContent = 'No se pudo consultar Ollama.';
   }
   checkReady();
 }
 
-function checkReady() {
-  const hf = !!S.file;
-  const haveZip = hf || !!S.zipInfo;
+// Habilita/inhabilita los botones de generar según haya ZIP (y, para ✨, IA lista).
+function checkReady(){
+  const haveZip = !!(S.file || S.zipInfo);
+  let ok = (S.engine === 'free') ? (ollamaAvailable && !!S.ollamaModel) : S.apiKey.startsWith('sk-');
+  const bapp = document.getElementById('bapp');
+  if (bapp) bapp.disabled = !haveZip;             // 📦 no necesita IA
+  const bappai = document.getElementById('bappai');
+  if (bappai) bappai.disabled = !(haveZip && ok); // ✨ requiere motor de IA listo
   const h = document.getElementById('hint');
-
-  // Verificar si el motor de IA está listo (independiente de si hay archivo).
-  let ok = false;
-  if (S.engine === 'free') {
-    ok = ollamaAvailable && !!S.ollamaModel;
-  } else {
-    ok = S.apiKey.startsWith('sk-');
-  }
-
-  let msg = '';
-  if (!haveZip) {
-    msg = 'Subí el archivo ZIP del sistema';
-  } else if (haveZip && !hf) {
-    // Inventario restaurado de sesión anterior.
-    msg = ok
-      ? '↩ Sistema restaurado: podés generar la app (📦 o ✨).'
-      : '↩ Sistema restaurado: podés usar 📦 (sin key). Para ✨ ingresá la API key.';
-  } else {
-    msg = '✅ Listo: generá la app con 📦 (sin IA) o ✨ (con IA).';
-  }
-
-  const ba = document.getElementById('bapp');
-  if (ba) ba.disabled = !haveZip;            // 📦 no necesita IA
-  const bai = document.getElementById('bappai');
-  if (bai) bai.disabled = !(haveZip && ok);  // ✨ requiere motor de IA listo
-  h.textContent = msg;
+  if (h) h.textContent = haveZip ? 'Cuando quieras, generá la app ↑' : '';
 }
 
-// COBERTURA TOTAL: genera una app moderna con TODAS las utilidades del ZIP
-// (un ABM por tabla, los menús como navegación y un reporte por cada .frx).
-// Es determinística: no usa el modelo, así que no depende de Claude ni Ollama.
-async function generateFullApp() {
-  if (!S.file && !S.zipInfo) { showErr('Subí un ZIP primero.'); return; }
-  hideErr(); hideWarn(); showView('l');
-  setLoad('Generando la app completa...', 'Armando ABM, menús y reportes (cobertura total, sin IA)');
-  document.getElementById('ttl').textContent = 'App completa (cobertura total)';
+// ======================= GENERAR LA APP =======================
+// 📦 COBERTURA TOTAL (determinística, sin IA): un ABM por tabla, menús, reportes y datos reales.
+async function generateFullApp(){
+  if (!S.file && !S.zipInfo) { showErr('Subí un sistema primero.'); return; }
+  hideErr(); hideWarn(); showView('loading');
+  setLoad('Generando la app completa…', 'Armando ABM, menús, reportes y datos reales (sin IA)');
   try {
     if (!S.zipInfo) { S.zipInfo = await readZip(); saveState(); }
-    const title = (S.systemInfo && S.systemInfo.nombre) || ((S.file ? S.file.name : (S.savedFileName||'app')).replace(/\.zip$/i, '')) || 'App migrada';
-    const payload = { inventory: Object.assign({ nombre: title }, S.zipInfo), title, filename: 'app-migrada.zip', zip_token: (S.zipInfo && S.zipInfo.zip_token) || '' };
-    const r = await fetch('/api/scaffold', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
-    if (!r.ok) { const e = await r.json().catch(() => ({})); throw new Error(e.error?.message || ('HTTP ' + r.status)); }
+    const title = ((S.file ? S.file.name : (S.savedFileName||'app')).replace(/\.zip$/i,'')) || 'App migrada';
+    const payload = { inventory: Object.assign({ nombre:title }, S.zipInfo), title, filename:'app-migrada.zip', zip_token:(S.zipInfo && S.zipInfo.zip_token) || '' };
+    const r = await fetch('/api/scaffold', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.error?.message || ('HTTP '+r.status)); }
     const imported = parseInt(r.headers.get('X-Rows-Imported') || '0', 10);
     const imgs = parseInt(r.headers.get('X-Images-Imported') || '0', 10);
     const blob = await r.blob();
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob); a.download = 'app-migrada.zip';
     document.body.appendChild(a); a.click(); a.remove();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1500);
-    showView('w');
+    setTimeout(()=>URL.revokeObjectURL(a.href), 1500);
+    showView('project');
     const z = S.zipInfo;
-    const imgMsg = imgs ? ` Incluye ${imgs} imágenes del sistema.` : '';
-    const dataMsg = (imported ? ` Se importaron ${imported} registros reales de los .dbf.` : ' (Datos no importados: volvé a subir el ZIP/carpeta en esta sesión para incluirlos.)') + imgMsg;
-    showWarn(`✅ App completa descargada (app-migrada.zip). Incluye ABM para ${(z.tables||[]).length} tablas, ${(z.menus||[]).length} menús y ${(z.reports||[]).length} reportes.${dataMsg} Adentro: COBERTURA.md y cómo correrla (FastAPI).`);
-  } catch (e) {
-    showView('w');
-    showErr('No se pudo generar la app completa: ' + e.message);
+    const imgMsg = imgs ? ` Incluye ${imgs} imágenes.` : '';
+    const dataMsg = (imported ? ` Se importaron ${fmt(imported)} registros reales.` : '') + imgMsg;
+    showWarn(`✅ ¡Listo! Se descargó app-migrada.zip con ABM para ${(z.tables||[]).length} tablas, ${(z.menus||[]).length} menús y ${(z.reports||[]).length} reportes.${dataMsg} Adentro está COBERTURA.md y cómo correrla.`);
+  } catch(e) {
+    showView('project');
+    showErr('No se pudo generar la app: ' + e.message);
   }
 }
 
-// 2ª ETAPA: enriquece cada pantalla con IA (etiquetas, obligatorios, ayuda y
-// reglas de negocio del .prg) y la hornea en el scaffold. Llamadas por tabla,
-// chicas y acotadas; si una falla, esa pantalla queda con el scaffold base.
+// ✨ ENRIQUECIMIENTO con IA (opcional): etiquetas, obligatorios y reglas por pantalla.
 function _norm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
 function _slugKey(s){ return String(s||'').replace(/[^a-zA-Z0-9_]/g,'_').replace(/_+/g,'_').replace(/^_|_$/g,'').toLowerCase() || 'tabla'; }
-
 function controlsForTable(name){
   const fd=(S.zipInfo&&S.zipInfo.forms_detail)||[]; const n=_norm(name);
   const f=fd.find(x=>{const xn=_norm(x.name);return xn&&(xn.includes(n)||n.includes(xn));});
@@ -426,29 +601,25 @@ Reglas para "validaciones" (reglas EJECUTABLES, derivadas de la lógica del .prg
 - op "regex": "valor" es un patrón (ej. email, código).
 Usá EXACTAMENTE los nombres de campo reales en "name"/"campo". Si no hay reglas claras devolvé "reglas":[] y "validaciones":[].`;
 }
-
 async function generateEnrichedApp(){
-  if(!S.file && !S.zipInfo){ showErr('Subí un ZIP primero.'); return; }
-  hideErr(); hideWarn(); showView('l');
-  document.getElementById('ttl').textContent='App completa + IA';
+  if(!S.file && !S.zipInfo){ showErr('Subí un sistema primero.'); return; }
+  hideErr(); hideWarn(); showView('loading');
   try{
-    if(!S.zipInfo){ setLoad('Leyendo el ZIP...',''); S.zipInfo=await readZip(); saveState(); }
+    if(!S.zipInfo){ setLoad('Leyendo el sistema…',''); S.zipInfo=await readZip(); saveState(); }
     const all=(S.zipInfo.tables||[]);
-    // Prioridad: primero las tablas con SEÑAL real (formulario o código .prg),
-    // que son las que el modelo puede enriquecer mejor; después el resto.
     const sig=t=>!!(controlsForTable(t.name)||codeForTable(t.name));
     const list=all.filter(sig).concat(all.filter(t=>!sig(t))).slice(0,200);
     const enrich={}; let okc=0;
     for(let i=0;i<list.length;i++){
       const t=list[i];
-      setLoad(`Enriqueciendo con IA (${i+1}/${list.length})...`, `Pantalla: ${t.name} — en CPU puede tardar`);
+      setLoad(`Mejorando con IA (${i+1}/${list.length})…`, `Pantalla: ${t.name} — en CPU puede tardar`);
       try{
         const spec=await callModel(buildEnrichPrompt(t), 1200);
         if(spec && (Array.isArray(spec.campos)||Array.isArray(spec.validaciones))){ enrich[_slugKey(t.name)]=spec; okc++; }
       }catch(_){ /* esa tabla queda con el scaffold base */ }
     }
-    setLoad('Armando la app...', 'Integrando el enriquecimiento en el scaffold');
-    const title=(S.systemInfo&&S.systemInfo.nombre)||(S.file?S.file.name:(S.savedFileName||'app')).replace(/\.zip$/i,'')||'App migrada';
+    setLoad('Armando la app…', 'Integrando las mejoras de la IA');
+    const title=((S.file?S.file.name:(S.savedFileName||'app')).replace(/\.zip$/i,''))||'App migrada';
     const payload={ inventory:Object.assign({nombre:title},S.zipInfo), enrich, title, filename:'app-migrada.zip', zip_token:(S.zipInfo&&S.zipInfo.zip_token)||'' };
     const r=await fetch('/api/scaffold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error?.message||('HTTP '+r.status)); }
@@ -456,16 +627,16 @@ async function generateEnrichedApp(){
     const blob=await r.blob();
     const a=document.createElement('a'); a.href=URL.createObjectURL(blob); a.download='app-migrada.zip';
     document.body.appendChild(a); a.click(); a.remove(); setTimeout(()=>URL.revokeObjectURL(a.href),1500);
-    showView('w');
-    const dataMsg=imported?` Se importaron ${imported} registros reales de los .dbf.`:'';
-    showWarn(`✅ App descargada: ${okc} de ${all.length} pantallas enriquecidas por IA (etiquetas, obligatorios y reglas de negocio ejecutables) sobre cobertura total.${dataMsg} El resto usa el scaffold + validaciones de esquema. Mirá COBERTURA.md.`);
+    showView('project');
+    const dataMsg=imported?` Se importaron ${fmt(imported)} registros reales.`:'';
+    showWarn(`✅ ¡Listo! App descargada: ${okc} de ${all.length} pantallas mejoradas por IA, sobre la cobertura total.${dataMsg} El resto usa el scaffold base. Mirá COBERTURA.md.`);
   }catch(e){
-    showView('w');
+    showView('project');
     showErr('No se pudo generar la app con IA: '+e.message);
   }
 }
 
-async function saveKey() {
+async function saveKey(){
   const k = document.getElementById('akey').value.trim();
   if (!k.startsWith('sk-')) { amsg('Debe empezar con sk-ant-...', false); return; }
   try {
@@ -475,52 +646,44 @@ async function saveKey() {
     else amsg('Clave rechazada por el servidor', false);
   } catch(e) { amsg('Error: ¿el servidor local está corriendo?', false); }
 }
-
-function amsg(m, ok) {
+function amsg(m, ok){
   const el = document.getElementById('amsg');
-  el.textContent = m;
-  el.className = 'amsg ' + (ok ? 'ok' : 'err');
+  el.textContent = m; el.className = 'amsg ' + (ok ? 'ok' : 'err');
 }
 
-// FILE UPLOAD
+// ======================= SUBIR EL SISTEMA (ZIP o carpeta) =======================
 const drop = document.getElementById('drop');
 const fi = document.getElementById('fi');
 drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('drag'); });
 drop.addEventListener('dragleave', () => drop.classList.remove('drag'));
-drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('drag'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]); });
-fi.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]); });
+drop.addEventListener('drop', e => { e.preventDefault(); drop.classList.remove('drag'); if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]).catch(()=>{}); });
+fi.addEventListener('change', e => { if (e.target.files[0]) handleFile(e.target.files[0]).catch(()=>{}); });
 
-// Selección de CARPETA: tomamos los archivos relevantes (datos + imágenes),
-// armamos un ZIP en el navegador (sin librerías) y lo metemos en el mismo flujo.
 const fdir = document.getElementById('fdir');
 fdir.addEventListener('change', e => { if (e.target.files.length) handleFolder(e.target.files); });
 
-// Extensiones que importan para la migración (datos, formularios, código, imágenes).
-const FOLDER_EXTS = new Set(['.dbf','.fpt','.cdx','.idx','.dbc','.dct','.scx','.sct','.frx','.frt','.mpr','.mnx','.vcx','.vct','.prg','.cbl','.cob','.cpy','.png','.jpg','.jpeg','.gif','.bmp','.ico','.webp','.tif','.tiff']);
+const FOLDER_EXTS = new Set(['.dbf','.fpt','.cdx','.idx','.dbc','.dct','.scx','.sct','.frx','.frt','.mpr','.mnx','.vcx','.vct','.prg','.cbl','.cob','.cpy','.png','.jpg','.jpeg','.gif','.bmp','.ico','.webp','.tif','.tiff','.pjx','.pjt','.h','.mnt','.mpx','.fxp','.dcx']);
 
-async function handleFolder(fileList) {
+async function handleFolder(fileList){
   const files = Array.from(fileList).filter(f => {
     const dot = f.name.lastIndexOf('.');
     return dot >= 0 && FOLDER_EXTS.has(f.name.slice(dot).toLowerCase());
   });
   if (!files.length) { showErr('La carpeta no tiene archivos .dbf, código ni imágenes reconocibles.'); return; }
-  showView('l'); setLoad('Empaquetando la carpeta...', `${files.length} archivos (datos + imágenes)`);
+  showView('loading'); setLoad('Empaquetando la carpeta…', `${files.length} archivos`);
   try {
     const entries = [];
     for (const f of files) {
       const buf = new Uint8Array(await f.arrayBuffer());
-      entries.push({ name: (f.webkitRelativePath || f.name).replace(/\\/g,'/'), data: buf });
+      entries.push({ name:(f.webkitRelativePath || f.name).replace(/\\/g,'/'), data:buf });
     }
     const zipBlob = buildZip(entries);
     const folderName = (files[0].webkitRelativePath || 'sistema').split('/')[0] || 'sistema';
-    const zipFile = new File([zipBlob], folderName + '.zip', { type: 'application/zip' });
-    setLoad('Leyendo el sistema en el servidor...', `${files.length} archivos · ${(zipBlob.size/1024/1024).toFixed(1)} MB`);
-    await handleFile(zipFile);   // espera la lectura del ZIP antes de salir del loading
-    showView('w');
-    const z = S.zipInfo || {};
-    showWarn(`✅ Carpeta cargada: ${(z.tables||[]).length} tablas detectadas. Ya podés generar la app (📦 / ✨).`);
-  } catch (err) {
-    showView('w');
+    const zipFile = new File([zipBlob], folderName + '.zip', { type:'application/zip' });
+    setLoad('Leyendo el sistema…', `${files.length} archivos · ${(zipBlob.size/1024/1024).toFixed(1)} MB`);
+    await handleFile(zipFile);   // handleFile entra al recorrido al terminar
+  } catch(err) {
+    showView('welcome');
     showErr('No se pudo procesar la carpeta: ' + (err.message || err));
   }
 }
@@ -531,12 +694,12 @@ const CRC_TABLE = (() => {
   for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = (c & 1) ? (0xEDB88320 ^ (c >>> 1)) : (c >>> 1); t[n] = c >>> 0; }
   return t;
 })();
-function crc32(buf) {
+function crc32(buf){
   let c = 0xFFFFFFFF;
   for (let i = 0; i < buf.length; i++) c = CRC_TABLE[(c ^ buf[i]) & 0xFF] ^ (c >>> 8);
   return (c ^ 0xFFFFFFFF) >>> 0;
 }
-function buildZip(entries) {
+function buildZip(entries){
   const enc = new TextEncoder();
   const locals = [], central = []; let offset = 0;
   const u16 = v => [v & 0xFF, (v >>> 8) & 0xFF];
@@ -555,176 +718,126 @@ function buildZip(entries) {
   const centralSize = central.reduce((a, b) => a + b.length, 0);
   const eocd = new Uint8Array([].concat(u32(0x06054b50), u16(0), u16(0),
     u16(entries.length), u16(entries.length), u32(centralSize), u32(offset), u16(0)));
-  return new Blob([...locals, ...central, eocd], { type: 'application/zip' });
+  return new Blob([...locals, ...central, eocd], { type:'application/zip' });
 }
 
-function handleFile(f) {
-  if (!f.name.toLowerCase().endsWith('.zip')) { showErr('Subí un archivo ZIP'); return; }
-  S.file = f;
-  S.zipInfo = null;
-  S.savedFileName = f.name;
+function handleFile(f){
+  if (!f.name.toLowerCase().endsWith('.zip')) { showErr('Subí un archivo ZIP'); return Promise.reject(new Error('no es zip')); }
+  S.file = f; S.zipInfo = null; S.savedFileName = f.name; S.reviewed = []; S.step = 0;
   document.getElementById('fname').textContent = f.name;
   document.getElementById('fmeta').textContent = (f.size/1024/1024).toFixed(1) + ' MB · Leyendo…';
   document.getElementById('fok').classList.add('show');
-  checkReady();
-  // Leer el ZIP inmediatamente en background para persistir el inventario.
-  // Si el usuario cierra la app antes de generar, puede continuar al reabrir.
+  hideErr(); hideWarn(); showView('loading');
+  setLoad('Leyendo el sistema…', 'Extrayendo tablas, datos, menús e imágenes');
   return readZip().then(info => {
-    S.zipInfo = info;
-    const z = info;
-    document.getElementById('fmeta').textContent =
-      `${(f.size/1024/1024).toFixed(1)} MB · ${(z.tables||[]).length} tablas · ${(z.reports||[]).length} reportes`;
-    saveState();
-    checkReady();
+    S.zipInfo = info; saveState(); checkReady();
+    enterProject();
     return info;
-  }).catch((e) => {
-    document.getElementById('fmeta').textContent = (f.size/1024/1024).toFixed(1) + ' MB · Listo para analizar';
+  }).catch(e => {
+    showView('welcome');
+    showErr('No se pudo leer el ZIP: ' + (e.message || e));
     throw e;
   });
 }
 
-function setLang(btn, lang) {
-  document.querySelectorAll('#langrow .lb').forEach(b => b.classList.remove('active'));
-  btn.classList.add('active');
-  S.sourceLang = lang;
-}
-
 // LEER EL ZIP REAL EN EL SERVIDOR
-async function readZip() {
+async function readZip(){
   const r = await fetch('/api/zipinfo', { method:'POST', headers:{'Content-Type':'application/octet-stream'}, body:S.file });
-  if (!r.ok) {
-    const e = await r.json().catch(()=>({}));
-    throw new Error(e.error?.message || `No se pudo leer el ZIP (HTTP ${r.status})`);
-  }
+  if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.error?.message || `No se pudo leer el ZIP (HTTP ${r.status})`); }
   return r.json();
 }
 
-function showView(n) {
+// ======================= VISTAS Y AVISOS =======================
+function showView(mode){
+  const sb = document.getElementById('sidebar');
   document.getElementById('vw').style.display = 'none';
+  document.getElementById('vp').style.display = 'none';
   document.getElementById('vl').classList.remove('show');
-  if (n==='w') document.getElementById('vw').style.display = 'block';
-  else if (n==='l') document.getElementById('vl').classList.add('show');
-  // El botón "Nuevo proyecto" aparece cuando ya hay un sistema cargado.
-  document.getElementById('bnew').style.display = (S.zipInfo || S.file) ? 'flex' : 'none';
+  if (mode === 'welcome') {
+    sb.style.display = 'none';
+    document.getElementById('vw').style.display = 'block';
+  } else if (mode === 'loading') {
+    document.getElementById('vl').classList.add('show');
+  } else if (mode === 'project') {
+    sb.style.display = 'flex';
+    document.getElementById('vp').style.display = 'block';
+  }
+  const have = !!(S.zipInfo || S.file);
+  document.getElementById('bnew').style.display = have ? 'inline-flex' : 'none';
+  document.getElementById('hpname').style.display = (have && mode === 'project') ? 'inline-block' : 'none';
 }
-function setLoad(m,s){document.getElementById('lmsg').textContent=m;document.getElementById('lsub').textContent=s;}
-function showErr(m){const b=document.getElementById('ebox');b.textContent='⚠️ '+m;b.classList.add('show');}
-function hideErr(){document.getElementById('ebox').classList.remove('show');}
-function showWarn(m){const b=document.getElementById('wbox');b.textContent='ℹ️ '+m;b.classList.add('show');}
-function hideWarn(){document.getElementById('wbox').classList.remove('show');}
-function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function setLoad(m,s){ document.getElementById('lmsg').textContent=m; document.getElementById('lsub').textContent=s; }
+function showErr(m){ const b=document.getElementById('ebox'); b.textContent='⚠️ '+m; b.classList.add('show'); }
+function hideErr(){ document.getElementById('ebox').classList.remove('show'); }
+function showWarn(m){ const b=document.getElementById('wbox'); b.textContent=m; b.classList.add('show'); }
+function hideWarn(){ document.getElementById('wbox').classList.remove('show'); }
+function esc(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
 
-// Enruta la generación según el motor elegido: Claude (API) u Ollama (gratis/local).
-async function callModel(prompt, maxTokens) {
+// ======================= LLAMADAS A LA IA (para ✨) =======================
+async function callModel(prompt, maxTokens){
   return S.engine === 'free' ? callOllama(prompt, maxTokens) : callClaude(prompt, maxTokens);
 }
-
-// Convierte el texto del modelo en JSON, tolerando backticks, prefijos y truncado.
-function parseModelJson(text, truncated) {
-  const clean=String(text||'').replace(/```json|```/g,'').trim();
-  // 1) intento directo
-  try{ return JSON.parse(clean); }catch(_){}
-  // 2) primer bloque {...} completo (greedy: desde primer { hasta último })
-  const m=clean.match(/\{[\s\S]*\}/);
-  if(m){ try{ return JSON.parse(m[0]); }catch(_){} }
-  // 3) si se cortó por longitud, intento reparar el JSON truncado
-  if(truncated){
-    try{
-      const obj=JSON.parse(repairTruncatedJson(m?m[0]:clean));
-      showWarn('La respuesta se cortó por longitud: la fase puede estar incompleta. Volvé a generarla para obtenerla completa.');
-      return obj;
-    }catch(_){}
-    throw new Error('La respuesta se cortó por longitud y no se pudo recuperar. Volvé a intentar.');
+function parseModelJson(text, truncated){
+  const clean = String(text||'').replace(/```json|```/g,'').trim();
+  try { return JSON.parse(clean); } catch(_){}
+  const m = clean.match(/\{[\s\S]*\}/);
+  if (m) { try { return JSON.parse(m[0]); } catch(_){} }
+  if (truncated) {
+    try { const obj = JSON.parse(repairTruncatedJson(m?m[0]:clean)); return obj; } catch(_){}
+    throw new Error('La respuesta se cortó por longitud. Volvé a intentar.');
   }
-  // Mostramos los primeros 200 chars para ayudar a diagnosticar
   const preview = clean.slice(0, 200).replace(/</g,'&lt;');
   throw new Error('El modelo no devolvió JSON válido. Primeros caracteres: "' + preview + '"');
 }
-
-async function callClaude(prompt, maxTokens) {
-  const r = await fetch('/api/claude', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:maxTokens||4000,messages:[{role:'user',content:prompt}]})
-  });
-  if (!r.ok) {
-    const e=await r.json().catch(()=>({}));
-    if(r.status===401) throw new Error('API key inválida');
-    throw new Error(e.error?.message||`Error HTTP ${r.status}`);
-  }
-  const data=await r.json();
-  const text=(data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
+async function callClaude(prompt, maxTokens){
+  const r = await fetch('/api/claude', { method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:'claude-sonnet-4-6',max_tokens:maxTokens||4000,messages:[{role:'user',content:prompt}]}) });
+  if (!r.ok) { const e=await r.json().catch(()=>({})); if(r.status===401) throw new Error('API key inválida'); throw new Error(e.error?.message||`Error HTTP ${r.status}`); }
+  const data = await r.json();
+  const text = (data.content||[]).filter(b=>b.type==='text').map(b=>b.text).join('');
   return parseModelJson(text, data.stop_reason==='max_tokens');
 }
-
-// Modo gratuito: genera con un modelo local vía Ollama (sin API key ni tokens).
-async function callOllama(prompt, maxTokens) {
-  const r = await fetch('/api/ollama', {
-    method:'POST', headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({model:S.ollamaModel||'qwen2.5-coder:1.5b', prompt, num_predict:maxTokens||4000})
-  });
-  if (!r.ok) {
-    const e=await r.json().catch(()=>({}));
-    throw new Error(e.error?.message||`Error HTTP ${r.status}`);
-  }
-  const data=await r.json();
+async function callOllama(prompt, maxTokens){
+  const r = await fetch('/api/ollama', { method:'POST', headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({model:S.ollamaModel||'qwen2.5-coder:1.5b', prompt, num_predict:maxTokens||4000}) });
+  if (!r.ok) { const e=await r.json().catch(()=>({})); throw new Error(e.error?.message||`Error HTTP ${r.status}`); }
+  const data = await r.json();
   return parseModelJson(data.response||'', data.done_reason==='length');
 }
-
-// Intenta cerrar un JSON truncado (string/llaves/corchetes abiertos) para
-// recuperar la mayor parte posible de la respuesta.
 function repairTruncatedJson(s){
   let inStr=false, esc=false; const stack=[];
-  for(let i=0;i<s.length;i++){
+  for (let i=0;i<s.length;i++){
     const c=s[i];
-    if(inStr){
-      if(esc) esc=false;
-      else if(c==='\\') esc=true;
-      else if(c==='"') inStr=false;
-    } else {
-      if(c==='"') inStr=true;
-      else if(c==='{'||c==='[') stack.push(c);
-      else if(c==='}'||c===']') stack.pop();
-    }
+    if(inStr){ if(esc) esc=false; else if(c==='\\') esc=true; else if(c==='"') inStr=false; }
+    else { if(c==='"') inStr=true; else if(c==='{'||c==='[') stack.push(c); else if(c==='}'||c===']') stack.pop(); }
   }
   let out=s;
   if(inStr){ if(esc) out=out.slice(0,-1); out+='"'; }
   out=out.replace(/\s+$/,'');
-  while(/[,:]$/.test(out)){            // limpia coma/dos-puntos colgantes
-    if(out.endsWith(':')){ out+='null'; break; }
-    out=out.slice(0,-1).replace(/\s+$/,'');
-  }
+  while(/[,:]$/.test(out)){ if(out.endsWith(':')){ out+='null'; break; } out=out.slice(0,-1).replace(/\s+$/,''); }
   for(let i=stack.length-1;i>=0;i--) out += (stack[i]==='{' ? '}' : ']');
   return out;
 }
 
-// Al cargar la página, restaura el proyecto guardado (si existe).
-(function restoreProject(){
-  if (!loadState()) return;
-  // reflejar la config guardada en los controles
-  const btns = document.querySelectorAll('#enginerow .lb');
-  const idx = { claude:0, free:1 }[S.engine] ?? 0;
-  btns.forEach(b => b.classList.remove('active'));
-  if (btns[idx]) btns[idx].classList.add('active');
-  document.getElementById('keyblk').style.display = (S.engine === 'claude') ? 'block' : 'none';
-  document.getElementById('freebox').style.display = (S.engine === 'free') ? 'block' : 'none';
+// ======================= ARRANQUE: restaurar proyecto guardado =======================
+(function restore(){
+  if (!loadState()) { showView('welcome'); return; }
+  // Reflejar el motor de IA guardado en los controles.
+  document.querySelectorAll('#enginerow .lb').forEach((b,i) => b.classList.toggle('active', (S.engine==='free'?1:0)===i));
+  document.getElementById('keyblk').style.display = (S.engine==='claude') ? 'block' : 'none';
+  document.getElementById('freebox').style.display = (S.engine==='free') ? 'block' : 'none';
   if (S.engine === 'free') loadOllamaModels();
-  const techSel = document.querySelector('.sblk select'); if (techSel) techSel.value = S.targetLang;
-  const map = {'Visual FoxPro':'VFP','FoxPro':'Fox','COBOL':'COBOL'};
-  document.querySelectorAll('#langrow .lb').forEach(b => b.classList.toggle('active', b.textContent === map[S.sourceLang]));
 
-  // Mostrar el sistema restaurado en el cuadro de archivo (aunque no haya File).
-  if (S.savedFileName || S.zipInfo) {
+  if (S.zipInfo) {
     document.getElementById('fname').textContent = S.savedFileName || 'Sistema restaurado';
-    const z = S.zipInfo;
-    document.getElementById('fmeta').textContent = z
-      ? `${(z.tables||[]).length} tablas · ${(z.menus||[]).length} menús · ${(z.reports||[]).length} reportes (restaurado)`
-      : 'Proyecto restaurado';
-    document.getElementById('fok').classList.add('show');
+    enterProject();
+    const pend = STEPS.length - S.reviewed.length;
+    showWarn(pend > 0
+      ? `↩ Proyecto restaurado. Te quedan ${pend} de ${STEPS.length} áreas por revisar. Seguí donde dejaste o generá la app.`
+      : `↩ Proyecto restaurado. Ya revisaste todo: podés generar la app con 📦. Para empezar otro: "Nuevo proyecto".`);
+  } else {
+    showView('welcome');
   }
-
-  showView('w');
-  showWarn('Sistema anterior restaurado: ya podés generar la app (📦 / ✨) sin volver a subir el ZIP. Para empezar de cero: "Nuevo proyecto".');
-  document.getElementById('bnew').style.display = 'flex';
   checkReady();
 })();
 </script>
