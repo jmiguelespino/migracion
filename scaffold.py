@@ -277,15 +277,18 @@ def _infer_relaciones(tablas, tables_sql):
             if o and o["table"] != t["key"] and o["table"] in tables_sql:
                 c["fk"] = {"table": o["table"], "field": o["field"], "display": o["display"]}
 
-    # Asegurar que TODA FK (también las del .dbc) tenga campo "display" para la grilla.
+    # Asegurar que TODA FK tenga "display" útil: si falta o es la propia clave de
+    # join (muestra el código, no un nombre), usar el campo descriptivo del padre.
     tdict = {t["key"]: t for t in tablas}
     for t in tablas:
         for c in t["campos"]:
             fk = c.get("fk")
-            if fk and not fk.get("display"):
+            if not fk:
+                continue
+            if not fk.get("display") or fk["display"] == fk.get("field"):
                 pt = tdict.get(fk["table"])
                 if pt:
-                    fk["display"] = _disp_field(pt)
+                    fk["display"] = _disp_field(pt) or fk.get("display")
 
 
 def build_meta(inventory, title, enrich=None):
@@ -315,7 +318,10 @@ def build_meta(inventory, title, enrich=None):
         pt = rel.get("parent_table")
         pf = rel.get("parent_field")
         if ct and cf and pt:
-            fk_map.setdefault(ct, {})[cf] = {"table": pt, "field": pf or "id"}
+            fk = {"table": pt, "field": pf or "id"}
+            if rel.get("display"):
+                fk["display"] = rel["display"]
+            fk_map.setdefault(ct, {})[cf] = fk
 
     tablas, tables_sql, seen = [], {}, set()
     for t in inventory.get("tables", []):

@@ -150,6 +150,15 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       COCINA está vacío y ningún campo referencia archivos); las 143 imágenes del
       ZIP son chrome de UI (íconos/logos). La detección de campos-imagen sigue
       activa para sistemas que sí las usen.
+- [x] **Relaciones desde las VISTAS del `.dbc`** (`_parse_view_relations` en
+      `servidor.py`): las consultas del sistema guardan los JOIN exactos en el
+      memo `.dct`. Se parsean (solo joins de una clave, para no multiplicar filas)
+      y se usan como relaciones autoritativas, cubriendo las que la convención
+      `COD_/DES_` no detecta (claves de texto). En Recetas suma
+      `usrengrp.usuario→usuarios (nombre)` y `grpmenup.menu→menues (menu)` →
+      5 relaciones. El display nunca usa la clave de join: cae al descriptivo.
+- [x] **Buscador de dos paneles + ficha maestro-detalle + imprimir (PDF) +
+      export CSV filtrado** por registro maestro (commits de UI).
 - [x] **Wireo robusto de ítems de menú → utilidad real** (`_menu_to_tabla` /
       `_menu_to_reporte` en `scaffold.py`): resuelve `DO FORM xxx` a su ABM
       tolerando prefijo numérico de orden (`0300_servic` → `servicios`), prefijos

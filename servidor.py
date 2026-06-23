@@ -484,6 +484,65 @@ def _dbc_get_prop(text, key):
     return m.group(1).strip().strip('"') if m else ""
 
 
+def _parse_view_relations(dct_text):
+    """Extrae relaciones reales de los JOIN de las vistas (consultas) guardadas
+    en el memo del .dbc. Cada vista es un SELECT de FoxPro; sus INNER JOIN
+    definen las uniones del sistema (incluidas las que la convención de nombres
+    no detecta: claves de texto, etc.).
+
+    Devuelve [{child_table, child_field, parent_table, parent_field, display}].
+    Solo toma joins de UNA clave (sin AND) para no multiplicar filas en el LEFT
+    JOIN del backend; las descripciones (Parent.col [AS alias]) sirven de display.
+    """
+    rels, seen = [], set()
+    # Cada SELECT ... FROM db!child INNER JOIN db!parent ON child.cf = parent.pf
+    pat = re.compile(
+        r"SELECT\s+(?P<cols>.+?)\s+FROM\s+\w+!(?P<child>\w+)\s+INNER\s+JOIN\s+\w+!(?P<parent>\w+)"
+        r"\s+ON\s+(?P<cond>.+?)(?:\s+WHERE|\s+ORDER|\s+GROUP|\s*$)",
+        re.I | re.S)
+    eq = re.compile(r"(\w+)\.(\w+)\s*=\s*(\w+)\.(\w+)")
+    # Cada vista vive en un fragmento del memo separado por NUL; procesar por
+    # fragmento evita que el regex cruce de una consulta a otra.
+    for frag in dct_text.split("\x00"):
+        if " join " not in frag.lower():
+            continue
+        m = pat.search(frag)
+        if not m:
+            continue
+        cond = m.group("cond")
+        if re.search(r"\bAND\b", cond, re.I):
+            continue  # clave compuesta: la salteamos (evita filas duplicadas)
+        e = eq.search(cond)
+        if not e:
+            continue
+        child = m.group("child").lower()
+        parent = m.group("parent").lower()
+        ta, fa, tb, fb = (x.lower() for x in e.groups())
+        # Ordenar el igualdad a child.field = parent.field.
+        if ta == child and tb == parent:
+            cf, pf = fa, fb
+        elif ta == parent and tb == child:
+            cf, pf = fb, fa
+        else:
+            continue
+        # Display: primera columna del padre citada en el SELECT (Parent.col).
+        disp = None
+        for dm in re.finditer(parent + r"\.(\w+)", m.group("cols"), re.I):
+            col = dm.group(1).lower()
+            if col not in ("*", pf.lower()):   # ignorar '*' y la propia clave de join
+                disp = col
+                break
+        ct, pt = scaffold._slug(child), scaffold._slug(parent)
+        cf, pf = scaffold._slug(cf), scaffold._slug(pf)
+        sig = (ct, cf, pt, pf)
+        if ct and cf and pt and pf and ct != pt and sig not in seen:
+            seen.add(sig)
+            rels.append({"child_table": ct, "child_field": cf,
+                         "parent_table": pt, "parent_field": pf,
+                         "display": scaffold._slug(disp) if disp else None})
+    return rels
+
+
 def parse_dbc(dbc_bytes, dct_bytes):
     """Lee el Database Container de VFP (.dbc + memo .dct).
 
@@ -566,6 +625,16 @@ def parse_dbc(dbc_bytes, dct_bytes):
         elif otype in ("view", "localview", "remoteview"):
             if oname:
                 vistas.append(oname)
+
+    # Relaciones inferidas de los JOIN de las vistas (consultas del sistema).
+    try:
+        for rel in _parse_view_relations(dct_bytes.decode("latin-1", "replace")):
+            sig = (rel["parent_table"], rel["parent_field"], rel["child_table"], rel["child_field"])
+            if sig not in seen_rels:
+                seen_rels.add(sig)
+                relaciones.append(rel)
+    except Exception:
+        pass
 
     return {
         "relaciones": relaciones,
