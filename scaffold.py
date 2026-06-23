@@ -1154,6 +1154,15 @@ form.abm .err{color:var(--danger);font-size:11px;font-weight:600;min-height:0}
 form.abm .full{grid-column:1 / -1}
 .modal-foot{grid-column:1 / -1;display:flex;gap:10px;justify-content:flex-end;margin-top:6px;padding-top:16px;border-top:1px solid var(--border)}
 
+/* selector FK con autocompletado (para tablas padre grandes) */
+.fkpick{position:relative}
+.fkmenu{position:absolute;left:0;right:0;top:100%;z-index:5;background:var(--panel);border:1px solid var(--border2);border-radius:var(--radius-sm);box-shadow:var(--shadow);max-height:230px;overflow:auto;display:none;margin-top:3px}
+.fkmenu.show{display:block}
+.fkopt{padding:8px 11px;cursor:pointer;font-size:13px;border-bottom:1px solid var(--border)}
+.fkopt:last-child{border-bottom:none}
+.fkopt:hover{background:var(--brand-bg);color:var(--brand-d)}
+.fkopt .c{color:var(--muted);font-size:11px}
+
 @media(max-width:860px){
   #burger{display:inline-flex}
   main{padding:20px 16px}
@@ -1237,6 +1246,7 @@ function byName(txt) {
 }
 function norm(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,'');}
 function esc(s){return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}
+function escA(s){return esc(s).replace(/"/g,'&quot;').replace(/'/g,'&#39;');}
 function assetSrc(val){ const s=String(val||'').trim().replace(/\\/g,'/'); return 'assets/' + encodeURIComponent(s.split('/').pop()); }
 function cellHtml(f, val, row){
   if (f.es_imagen && val) return `<img class="thumb" src="${assetSrc(val)}" alt="${esc(val)}" title="${esc(val)}" onerror="this.replaceWith(document.createTextNode('${esc(val)}'))">`;
@@ -1372,18 +1382,16 @@ function formHtml(t, key) {
     const onv = ` oninput="liveVal('${key}','${f.name}')"`;
     let ctl;
     if (f.fk) {
-      // Campo FK: dropdown con opciones de la tabla padre.
-      const opts = FK_CACHE[f.fk.table] || [];
+      // Selector con autocompletado (la tabla padre puede tener miles de filas).
       const pt = tableByKey(f.fk.table);
-      // Descripción del padre como etiqueta visible (fk.display si vino inferida).
-      const dispF = pt ? (pt.campos.find(c => c.type==='C' && c.name!==f.fk.field) || pt.campos[0]) : null;
-      const dKey = f.fk.display || (dispF ? dispF.name : f.fk.field);
-      const selOpts = opts.map(r => {
-        const v = r[f.fk.field] != null ? String(r[f.fk.field]) : '';
-        const d = r[dKey] != null ? String(r[dKey]) : v;
-        return `<option value="${esc(v)}">${esc(d || v)} (#${esc(v)})</option>`;
-      }).join('');
-      ctl = `<select id="f_${f.name}" ${req} ${tip} onchange="liveVal('${key}','${f.name}')"><option value="">— Seleccionar —</option>${selOpts}</select>`;
+      ctl = `<div class="fkpick">
+          <input type="hidden" id="f_${f.name}">
+          <input type="text" id="fkq_${f.name}" class="fkinput" autocomplete="off" ${req} ${tip}
+            placeholder="Buscar ${esc(pt ? pt.name : '')}…"
+            oninput="fkSearch('${key}','${f.name}')" onfocus="fkSearch('${key}','${f.name}')"
+            onblur="setTimeout(()=>fkClose('${f.name}'),200)">
+          <div class="fkmenu" id="fkm_${f.name}"></div>
+        </div>`;
     } else if (f.input === 'textarea') {
       ctl = `<textarea id="f_${f.name}" ${req} ${tip}${onv}></textarea>`;
     } else if (f.es_imagen) {
@@ -1403,16 +1411,25 @@ function formHtml(t, key) {
 async function openForm(key, row) {
   const t = tableByKey(key);
   if (!t) return;
-  // Pre-cargar opciones FK antes de pintar el formulario.
-  const fkTables = [...new Set((t.campos||[]).filter(f=>f.fk).map(f=>f.fk.table))];
-  if (fkTables.length) await Promise.all(fkTables.map(loadFkOptions));
   const title = (row ? 'Editar ' : 'Nuevo ') + (t.titulo || t.name);
   $('#modalRoot').innerHTML = `<div class="modal-backdrop" id="mb" onclick="if(event.target===this)closeModal()">
     <div class="modal" role="dialog" aria-modal="true">
       <div class="modal-head"><h3>${esc(title)}</h3><button class="icon" title="Cerrar (Esc)" onclick="closeModal()">✕</button></div>
       <div class="modal-body">${formHtml(t, key)}</div>
     </div></div>`;
-  if (row) fillForm(row);
+  if (row) {
+    fillForm(row);
+    // Mostrar la descripción del padre en cada selector FK (no solo el código).
+    (t.campos || []).forEach(f => {
+      if (!f.fk) return;
+      const code = row[f.name];
+      const q = document.getElementById('fkq_' + f.name);
+      if (q && code != null && code !== '') {
+        const d = row[f.name + '__d'];
+        q.value = (d != null ? d : code) + ' (#' + code + ')';
+      }
+    });
+  }
   requestAnimationFrame(() => {
     const mb = $('#mb'); if (mb) mb.classList.add('show');
     const first = document.querySelector('form.abm [id^=f_]:not([type=hidden])');
@@ -1431,6 +1448,38 @@ function fillForm(r) {
   }
   const idf = document.getElementById('f_id'); if (idf) idf.value = r.id;
 }
+
+// ---------- AUTOCOMPLETADO DE CAMPOS FK ----------
+async function fkSearch(key, name) {
+  const t = tableByKey(key); const f = (t.campos || []).find(c => c.name === name);
+  if (!f || !f.fk) return;
+  const inp = document.getElementById('fkq_' + name); const menu = document.getElementById('fkm_' + name);
+  if (!inp || !menu) return;
+  // Si el texto es la selección actual ("Algo (#123)"), no busca.
+  let q = inp.value.trim();
+  const mm = q.match(/^(.*)\s+\(#.*\)$/); if (mm) q = '';
+  const disp = f.fk.display || f.fk.field;
+  clearTimeout(inp._t);
+  inp._t = setTimeout(async () => {
+    let rows = [];
+    try {
+      const res = await (await fetch(`/api/t/${f.fk.table}?q=${encodeURIComponent(q)}&sort=${disp}&size=20`)).json();
+      rows = res.rows || [];
+    } catch (_) {}
+    menu.innerHTML = rows.length ? rows.map(r => {
+      const code = r[f.fk.field]; const label = r[disp] != null ? r[disp] : code;
+      return `<div class="fkopt" data-code="${escA(code)}" data-label="${escA(label)}" onmousedown="fkPickEl(this,'${name}')">${esc(label)} <span class="c">#${esc(code)}</span></div>`;
+    }).join('') : '<div class="fkopt c">Sin resultados</div>';
+    menu.classList.add('show');
+  }, 200);
+}
+function fkPickEl(el, name) {
+  const code = el.dataset.code, label = el.dataset.label;
+  const h = document.getElementById('f_' + name); if (h) h.value = code;
+  const q = document.getElementById('fkq_' + name); if (q) q.value = label + ' (#' + code + ')';
+  fkClose(name);
+}
+function fkClose(name) { const m = document.getElementById('fkm_' + name); if (m) m.classList.remove('show'); }
 
 // Validación en vivo en el cliente (espejo de la del backend: requerido/numérico/maxlen).
 function liveVal(key, name) {
