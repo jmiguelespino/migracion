@@ -376,6 +376,9 @@ def build_meta(inventory, title, enrich=None):
     ayudas y mostrar las reglas de negocio del sistema original.
     """
     enrich = enrich or {}
+    # Lista blanca opcional de tablas (slugs) a incluir; si está, se ignora el resto.
+    include = inventory.get("solo_tablas")
+    include = {_slug(x) for x in include} if include else None
     forms_index = _forms_index(inventory)
 
     # Datos del .dbc: relaciones entre tablas y propiedades persistentes de campos.
@@ -404,6 +407,8 @@ def build_meta(inventory, title, enrich=None):
     for t in inventory.get("tables", []):
         key = _slug(t.get("name"))
         if not key or key in seen:
+            continue
+        if include and key not in include:
             continue
         seen.add(key)
         campos, cols = [], []
@@ -509,8 +514,13 @@ def build_meta(inventory, title, enrich=None):
                 continue
             tabla = _menu_to_tabla(it.get("texto", ""), accion,
                                    table_index, forms_by_name)
+            # Con lista blanca activa, descartar ítems que no llevan a ninguna
+            # tabla/reporte incluido (evita opciones muertas).
+            if include and not tabla:
+                continue
             items.append({**it, "tabla": tabla})
-        menus.append({**grp, "items": items})
+        if items or not include:
+            menus.append({**grp, "items": items})
 
     proyecto = inventory.get("project") or None
 
@@ -1861,6 +1871,9 @@ def build_app_scaffold(payload, assets=None):
     assets = assets or {}
     title = (payload.get("title") or inventory.get("nombre") or "App migrada").strip()
     enrich = payload.get("enrich") or {}
+    # Lista blanca de tablas (opcional): solo se generan esas.
+    if payload.get("solo_tablas"):
+        inventory = dict(inventory, solo_tablas=payload["solo_tablas"])
 
     meta, tables_sql = build_meta(inventory, title, enrich)
 
