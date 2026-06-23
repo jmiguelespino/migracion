@@ -291,6 +291,73 @@ def _infer_relaciones(tablas, tables_sql):
                     fk["display"] = _disp_field(pt) or fk.get("display")
 
 
+def _resolve_report(rdef, tablas, tables_sql):
+    """Convierte la definición FRX de un reporte en una 'receta de consulta' que
+    el backend puede ejecutar: tabla de detalle, agrupación, encabezado de grupo
+    y columnas (cada una con su JOIN al padre si el campo vive en otra tabla).
+    Devuelve None si no se puede resolver (el reporte cae al modo tabla simple)."""
+    if not rdef or not rdef.get("group"):
+        return None
+    group = _slug(rdef["group"])
+    cols = {t["key"]: {c["name"] for c in t["campos"]} for t in tablas}
+    fkof = {t["key"]: [(c["name"], c["fk"]["table"], c["fk"].get("field"), c["fk"].get("display"))
+                       for c in t["campos"] if c.get("fk")] for t in tablas}
+    # Tabla de detalle = la que tiene `group` como FK (es el hijo del grupo).
+    detail = master = mpf = None
+    for t in tablas:
+        for (cf, pt, pf, disp) in fkof[t["key"]]:
+            if cf == group and pt in tables_sql:
+                detail, master, mpf = t["key"], pt, pf
+                break
+        if detail:
+            break
+    if not detail:
+        return None
+    dcols, dfks = cols[detail], fkof[detail]
+
+    def resolve(field):
+        field = _slug(field)
+        if field in dcols:
+            return {"col": field, "join": None}
+        for (cf, pt, pf, disp) in dfks:
+            if pt in cols and field in cols[pt]:
+                return {"col": field, "join": {"parent": pt, "pf": pf, "cf": cf}}
+        return None
+
+    labels = rdef.get("labels") or []
+
+    def label_for(h):
+        best = None
+        for lb in labels:
+            d = abs((lb.get("h") or 0) - (h or 0))
+            if best is None or d < best[0]:
+                best = (d, lb["text"])
+        return best[1] if best and best[0] < 4000 else None
+
+    header, columns, seen = [], [], set()
+    for f in rdef.get("fields", []):
+        fld = _slug(f.get("field"))
+        if not fld or fld in seen:
+            continue
+        r = resolve(fld)
+        if not r:
+            continue
+        seen.add(fld)
+        entry = {"label": label_for(f.get("h")), "field": fld, "col": r["col"],
+                 "join": r["join"], "h": f.get("h") or 0}
+        is_header = (fld == group) or (r["join"] and r["join"]["parent"] == master)
+        (header if is_header else columns).append(entry)
+    if not columns:
+        return None
+    # Ordenar por posición horizontal para respetar el layout del reporte original.
+    header.sort(key=lambda e: e["h"])
+    columns.sort(key=lambda e: e["h"])
+    for e in header + columns:
+        e.pop("h", None)
+    return {"title": rdef.get("title"), "group": group, "detail": detail,
+            "master": master, "header": header, "columns": columns}
+
+
 def build_meta(inventory, title, enrich=None):
     """Arma la metadata para el backend y la SPA a partir del inventario.
 
@@ -385,8 +452,9 @@ def build_meta(inventory, title, enrich=None):
     # referencian (FK). Así recedet.cod_ingr → ingredie (muestra des_ingr).
     _infer_relaciones(tablas, tables_sql)
 
-    # Reportes -> intentamos asociarlos a una tabla por nombre.
+    # Reportes -> asociarlos a una tabla por nombre + resolver su definición FRX.
     table_index = {_norm(x["name"]): x["key"] for x in tablas}
+    rdefs = {_norm(d.get("name")): d for d in (inventory.get("reports_detail") or [])}
     reportes = []
     for r in inventory.get("reports", []):
         stem = re.sub(r"\.\w+$", "", str(r))
@@ -396,7 +464,11 @@ def build_meta(inventory, title, enrich=None):
             if tn and (tn in n or n in tn):
                 match = tk
                 break
-        reportes.append({"name": stem, "tabla": match})
+        rep = {"name": stem, "tabla": match}
+        spec = _resolve_report(rdefs.get(n), tablas, tables_sql)
+        if spec:
+            rep.update(spec)
+        reportes.append(rep)
 
     formularios = [re.sub(r"\.\w+$", "", str(f)) for f in inventory.get("forms", [])]
 
@@ -699,6 +771,43 @@ def _fks(table):
             if fk and fk.get("table") in TABLES and fk.get("display"):
                 out.append((c["name"], fk["table"], fk.get("field") or c["name"], fk["display"]))
     return out
+
+
+@app.get("/api/_report/{i}")
+def report_data(i: int):
+    """Ejecuta un reporte resuelto (agrupado, con JOINs) tal como lo definía el
+    .frx del sistema original. Si el reporte no se pudo resolver, devuelve
+    resolved=False y la SPA cae al listado simple de la tabla asociada."""
+    reps = META.get("reportes", [])
+    if i < 0 or i >= len(reps):
+        raise HTTPException(404)
+    spec = reps[i]
+    detail = spec.get("detail")
+    if not detail or detail not in TABLES:
+        return {"resolved": False}
+    entries = (spec.get("header") or []) + (spec.get("columns") or [])
+    sel = ['m."%s" AS "__grp"' % spec["group"]]
+    joins, seen_alias = "", {}
+    for e in entries:
+        j = e.get("join")
+        if j:
+            key = (j["parent"], j["cf"])
+            if key not in seen_alias:
+                a = "j%d" % len(seen_alias)
+                seen_alias[key] = a
+                joins += ' LEFT JOIN "%s" %s ON %s."%s" = m."%s"' % (j["parent"], a, a, j["pf"], j["cf"])
+            sel.append('%s."%s" AS "%s"' % (seen_alias[key], e["col"], e["field"]))
+        else:
+            sel.append('m."%s" AS "%s"' % (e["col"], e["field"]))
+    sql = 'SELECT %s FROM "%s" m%s ORDER BY m."%s"' % (", ".join(sel), detail, joins, spec["group"])
+    c = conn()
+    try:
+        rows = [dict(r) for r in c.execute(sql)]
+    except sqlite3.Error:
+        rows = []
+    c.close()
+    return {"resolved": True, "rows": rows,
+            "title": spec.get("title"), "header": spec.get("header"), "columns": spec.get("columns")}
 
 
 @app.get("/api/t/{table}")
@@ -1478,6 +1587,12 @@ async function selectBrowse(key, id) {
 async function viewReport(i) {
   const r = META.reportes[i];
   if (!r) { $('#main').innerHTML = '<p>Reporte no encontrado.</p>'; return; }
+  // Reporte resuelto del .frx (agrupado): lo pedimos al backend.
+  if (r.detail) {
+    const data = await (await fetch('/api/_report/' + i)).json();
+    if (data.resolved) return renderGroupedReport(r, data);
+  }
+  // Fallback: listado simple de la tabla asociada.
   if (!r.tabla) {
     $('#main').innerHTML = `<div class="page-head"><div class="ttl"><div class="eyebrow">📊 Reporte</div><h2>${esc(r.name)}</h2></div></div>
       <div class="empty"><div class="ei">📊</div><p>Reporte sin tabla de datos asociada.</p></div>`;
@@ -1491,9 +1606,39 @@ async function viewReport(i) {
   $('#main').innerHTML = `<div class="page-head">
       <div class="ttl"><div class="eyebrow">📊 Reporte</div><h2>${esc(r.name)}</h2>
       <p class="sub">Sobre <b>${esc(t.name)}</b> · ${nf(res.total||rows.length)} filas</p></div>
-      <button class="sec" onclick="window.open('/api/t/${r.tabla}/export.csv')">⬇ Exportar CSV</button>
+      <button class="sec no-print" onclick="window.open('/api/t/${r.tabla}/export.csv')">⬇ Exportar CSV</button>
     </div>
     <div class="tablewrap"><table><thead>${head}</thead><tbody>${body || '<tr><td class="muted" style="padding:16px">Sin datos.</td></tr>'}</tbody></table></div>`;
+}
+
+// Render del reporte agrupado (como lo imprimía el .frx): título, y por cada
+// grupo un encabezado (cabecera) seguido de la tabla de columnas de detalle.
+function renderGroupedReport(r, data) {
+  const rows = data.rows || [], header = data.header || [], columns = data.columns || [];
+  const colHead = '<tr>' + columns.map(c => `<th>${esc(c.label || c.field)}</th>`).join('') + '</tr>';
+  let out = '', cur = null, open = false, groups = 0;
+  const closeTbl = () => { if (open) { out += '</tbody></table></div></div>'; open = false; } };
+  rows.forEach(row => {
+    if (row.__grp !== cur) {
+      closeTbl();
+      cur = row.__grp; groups++;
+      const htxt = header.map(h => `${h.label ? esc(h.label) + ': ' : ''}<b>${esc(row[h.field] == null ? '' : row[h.field])}</b>`).join(' &nbsp;·&nbsp; ');
+      out += `<div class="detail-sec"><h3 style="font-weight:600">${htxt || ('Grupo ' + esc(row.__grp))}</h3>
+              <div class="tablewrap"><table><thead>${colHead}</thead><tbody>`;
+      open = true;
+    }
+    out += '<tr>' + columns.map(c => {
+      const v = row[c.field];
+      return `<td>${v == null ? '' : esc(v)}</td>`;
+    }).join('') + '</tr>';
+  });
+  closeTbl();
+  $('#main').innerHTML = `<div class="page-head">
+      <div class="ttl"><div class="eyebrow">📊 Reporte</div><h2>${esc(data.title || r.name)}</h2>
+      <p class="sub">${groups} ${groups===1?'grupo':'grupos'} · ${nf(rows.length)} líneas · reproducido del reporte original (${esc(r.name)})</p></div>
+      <button class="sec no-print" onclick="window.print()">🖨 Imprimir</button>
+    </div>
+    ${out || '<div class="empty"><div class="ei">📊</div><p>Sin datos.</p></div>'}`;
 }
 
 function viewInfo(mi, ii) {

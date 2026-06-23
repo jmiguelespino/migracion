@@ -755,6 +755,40 @@ def parse_scx_controls(scx, sct):
             "campos": campos, "tabla": tabla}
 
 
+def parse_frx(frx_bytes, frt_bytes):
+    """Lee un reporte VFP .frx (tabla DBF + memo .frt). Cada registro es un
+    elemento del reporte. Extrae lo necesario para reproducir el reporte:
+    título, campo de agrupación, campos (con su posición horizontal) y etiquetas
+    de columna (con su posición). Devuelve None si no parece un FRX válido."""
+    try:
+        recs = read_dbf_records(frx_bytes, frt_bytes, max_records=500)
+    except Exception:
+        return None
+    if not recs:
+        return None
+    texts, fields, group = [], [], None
+    for r in recs:
+        ot = r.get("objtype")
+        expr = (r.get("expr") or "").strip()
+        hp = r.get("hpos") or 0
+        if ot == 9 and r.get("objcode") in (2, 3) and re.fullmatch(r"\w+", expr or ""):
+            group = expr.lower()                       # banda de agrupación de datos
+        elif ot == 5:                                  # etiqueta de texto
+            t = expr.strip().strip('"').strip()
+            if t:
+                texts.append({"text": t, "h": hp, "size": r.get("fontsize") or 0})
+        elif ot == 8 and re.fullmatch(r"[A-Za-z]\w*", expr or "") and not expr.startswith("_"):
+            fields.append({"field": expr.lower(), "h": hp})   # campo simple (no función)
+    if not fields and not texts:
+        return None
+    title = max(texts, key=lambda x: x["size"])["text"] if texts else None
+    labels = [{"text": t["text"], "h": t["h"]} for t in texts if t["text"] != title]
+    # Normalizar espacios dobles del título ("LISTADO  DE  RECETAS").
+    if title:
+        title = re.sub(r"\s+", " ", title).strip()
+    return {"title": title, "group": group, "fields": fields, "labels": labels}
+
+
 def _clean_prompt(s):
     """Limpia un PROMPT de menú VFP: saca el marcador de atajo \\< y espacios."""
     return s.replace("\\<", "").replace("\\", "").strip()
@@ -959,6 +993,7 @@ def analyze_zip(raw_bytes):
     by_ext = {}
     counts = {}
     forms, reports, programs = [], [], []
+    reports_detail = []  # definición de cada reporte .frx (título, agrupación, columnas)
     tables = []
     seen_tables = set()  # evita tablas .dbf duplicadas (mismo nombre en varias carpetas)
     forms_detail = []    # controles reales de los formularios .scx
@@ -981,6 +1016,21 @@ def analyze_zip(raw_bytes):
             forms.append(base)
         elif cat == "reports" and ext == ".frx" and len(reports) < MAX_NAME_LIST:
             reports.append(base)
+            # Definición real del reporte (título, agrupación, columnas) del .frx+.frt.
+            try:
+                frt_real = lower_map.get(os.path.splitext(name)[0].lower() + ".frt")
+                with zf.open(name) as fp:
+                    frx_bytes = fp.read()
+                frt_bytes = b""
+                if frt_real:
+                    with zf.open(frt_real) as fp2:
+                        frt_bytes = fp2.read()
+                rdef = parse_frx(frx_bytes, frt_bytes)
+                if rdef:
+                    rdef["name"] = os.path.splitext(base)[0]
+                    reports_detail.append(rdef)
+            except Exception:
+                pass
         elif cat == "programs":
             programs.append(base)
 
@@ -1116,6 +1166,7 @@ def analyze_zip(raw_bytes):
         "forms": forms,
         "forms_detail": forms_detail,
         "reports": reports,
+        "reports_detail": reports_detail,
         "programs": sorted(set(programs))[:MAX_NAME_LIST],
         "samples": samples,
         "menus": menus,

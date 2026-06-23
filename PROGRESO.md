@@ -159,6 +159,14 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       5 relaciones. El display nunca usa la clave de join: cae al descriptivo.
 - [x] **Buscador de dos paneles + ficha maestro-detalle + imprimir (PDF) +
       export CSV filtrado** por registro maestro (commits de UI).
+- [x] **Reporte exacto desde el `.frx`** (`parse_frx` en servidor + `_resolve_report`
+      en scaffold + endpoint `/api/_report/{i}` + render agrupado imprimible):
+      lee el FRX (título, banda de agrupación, campos y etiquetas con su posición),
+      lo resuelve a una consulta agrupada (tabla detalle + JOINs a los padres) y la
+      ejecuta. Verificado con el real: "LISTADO DE RECETAS" agrupado por receta,
+      columnas Ingrediente/Gramaje/Unidad (en el orden horizontal original), 5464
+      líneas. Columnas y título salen del propio .frx; no es pixel-perfect (a
+      propósito) sino fiel en contenido/estructura, e imprimible a PDF.
 - [x] **Wireo robusto de ítems de menú → utilidad real** (`_menu_to_tabla` /
       `_menu_to_reporte` en `scaffold.py`): resuelve `DO FORM xxx` a su ABM
       tolerando prefijo numérico de orden (`0300_servic` → `servicios`), prefijos
