@@ -1031,11 +1031,12 @@ header b{font-size:15px;font-weight:700;letter-spacing:-.01em}
 header #stats{flex:1;font-size:12.5px;color:var(--muted)}
 .icon{background:transparent;border:1px solid transparent;color:var(--muted);font-size:17px;cursor:pointer;border-radius:9px;width:34px;height:34px;display:inline-flex;align-items:center;justify-content:center;transition:.15s}
 .icon:hover{background:var(--panel2);color:var(--text)}
-#burger{display:none}
+#burger{display:inline-flex}
 
-/* layout */
+/* layout — navegación oculta (off-canvas); se abre con ☰. Contenido a todo el ancho. */
 .layout{display:flex;min-height:calc(100vh - 56px)}
-nav{width:248px;background:var(--panel);border-right:1px solid var(--border);overflow:auto;padding:12px 10px;flex-shrink:0;position:sticky;top:56px;height:calc(100vh - 56px)}
+nav{width:264px;background:var(--panel);border-right:1px solid var(--border);overflow:auto;padding:12px 10px;flex-shrink:0;position:fixed;left:-300px;top:56px;height:calc(100vh - 56px);z-index:50;transition:left .2s;box-shadow:var(--shadow-lg)}
+nav.open{left:0}
 nav .grp{font-size:10.5px;text-transform:uppercase;letter-spacing:.07em;color:var(--muted);font-weight:700;margin:16px 10px 6px}
 nav a{display:flex;align-items:center;gap:9px;padding:8px 11px;border-radius:9px;cursor:pointer;font-size:13.5px;color:var(--text);text-decoration:none;font-weight:500;transition:.12s;position:relative}
 nav a:hover{background:var(--panel2)}
@@ -1044,6 +1045,7 @@ nav a.active::before{content:"";position:absolute;left:0;top:18%;bottom:18%;widt
 nav a .cnt{margin-left:auto;font-size:11px;color:var(--muted);background:var(--panel2);border:1px solid var(--border);border-radius:20px;padding:1px 8px;font-weight:600}
 nav a.active .cnt{background:var(--panel);color:var(--brand-d)}
 #backdrop{display:none}
+#backdrop.show{display:block;position:fixed;inset:56px 0 0 0;background:rgba(0,0,0,.4);z-index:45}
 main{flex:1;overflow:auto;padding:28px 32px;max-width:1280px;width:100%;margin:0 auto}
 
 /* typography */
