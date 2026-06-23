@@ -285,10 +285,20 @@ def _infer_relaciones(tablas, tables_sql):
             fk = c.get("fk")
             if not fk:
                 continue
+            pt = tdict.get(fk["table"])
             if not fk.get("display") or fk["display"] == fk.get("field"):
-                pt = tdict.get(fk["table"])
                 if pt:
                     fk["display"] = _disp_field(pt) or fk.get("display")
+            # Columnas "unidad/medida" del padre, para mostrarlas junto al nombre
+            # (ej. recedet → ingredie: mostrar la UNIDAD del ingrediente).
+            if pt:
+                extra = [pc["name"] for pc in pt["campos"]
+                         if _UNIT_RE.search(pc["name"]) and pc["name"] not in (fk.get("field"), fk.get("display"))]
+                if extra:
+                    fk["extra"] = extra[:2]
+
+
+_UNIT_RE = re.compile(r"(unidad|unid|medida|^um$|unit|u_med)", re.I)
 
 
 def _resolve_report(rdef, tablas, tables_sql):
@@ -761,15 +771,17 @@ def counts():
 
 
 def _fks(table):
-    """FK de una tabla, según META: [(col, tabla_padre, campo_join, campo_desc)].
-    Permite resolver el código a la descripción del padre (LEFT JOIN)."""
+    """FK de una tabla: [(col, tabla_padre, campo_join, campo_desc, [extra])].
+    'extra' = columnas adicionales del padre a traer (ej. la unidad)."""
     t = next((x for x in META.get("tablas", []) if x.get("key") == table), None)
     out = []
     if t:
         for c in t.get("campos", []):
             fk = c.get("fk")
             if fk and fk.get("table") in TABLES and fk.get("display"):
-                out.append((c["name"], fk["table"], fk.get("field") or c["name"], fk["display"]))
+                pcols = {cc[0] for cc in TABLES[fk["table"]]}
+                extra = [e for e in (fk.get("extra") or []) if e in pcols]
+                out.append((c["name"], fk["table"], fk.get("field") or c["name"], fk["display"], extra))
     return out
 
 
@@ -825,10 +837,12 @@ def list_rows(table: str, q: str = "", sort: str = "", dir: str = "asc",
     # SELECT con las descripciones de los padres + JOINs.
     sel = ['m.*']
     joins = ''
-    for i, (col, pt, pf, pd) in enumerate(fks):
+    for i, (col, pt, pf, pd, extra) in enumerate(fks):
         a = 'j%d' % i
         joins += ' LEFT JOIN "%s" %s ON %s."%s" = m."%s"' % (pt, a, a, pf, col)
         sel.append('%s."%s" AS "%s__d"' % (a, pd, col))
+        for ex in extra:
+            sel.append('%s."%s" AS "%s__x__%s"' % (a, ex, col, ex))
     base = 'FROM "%s" m%s' % (table, joins)
     clauses, params = [], []
     if (field in cols or field == "id") and value != "":
@@ -869,7 +883,7 @@ def export_csv(table: str, field: str = "", value: str = ""):
     sel = ['m.id AS id'] + ['m."%s" AS "%s"' % (c, c) for c in cols]
     joins = ''
     out_fields = [("id", "id")] + [(c, c) for c in cols]
-    for i, (col, pt, pf, pd) in enumerate(fks):
+    for i, (col, pt, pf, pd, extra) in enumerate(fks):
         a = 'j%d' % i
         joins += ' LEFT JOIN "%s" %s ON %s."%s" = m."%s"' % (pt, a, a, pf, col)
         sel.append('%s."%s" AS "%s__d"' % (a, pd, col))
@@ -1283,6 +1297,23 @@ function dispFieldOf(t){
   return (t.campos||[]).find(c=>/^(des|desc|nombre|nom)/.test(c.name) && (c.type==='C'||c.type==='M'))
       || (t.campos||[]).find(c=>c.type==='C') || null;
 }
+function colLabel(tableKey, col){
+  const t=tableByKey(tableKey); const c=t && (t.campos||[]).find(x=>x.name===col);
+  return c ? (c.label||c.name) : col;
+}
+// Columnas a mostrar en una tabla de detalle: sin la FK al maestro, sin columnas
+// vacías; tras cada FK se agregan sus columnas "extra" (ej. la unidad).
+function detailCols(ct, skipField){
+  const out=[];
+  (ct.campos||[]).forEach(c=>{
+    if(c.name===skipField || c.vacio) return;
+    out.push({label:c.label||c.name, get:cr=>cellHtml(c, cr[c.name], cr)});
+    if(c.fk && c.fk.extra) c.fk.extra.forEach(ex=>{
+      out.push({label:colLabel(c.fk.table, ex), get:cr=>{ const v=cr[c.name+'__x__'+ex]; return v==null?'':esc(v); }});
+    });
+  });
+  return out;
+}
 
 // ---------- DASHBOARD ----------
 function nf(n){ return (Number(n)||0).toLocaleString('es'); }
@@ -1331,7 +1362,7 @@ async function viewAbm(key) {
   const res = await (await fetch(`/api/t/${key}?${qs}`)).json();
   const rows = res.rows || [], total = res.total || 0;
   const pages = Math.max(1, Math.ceil(total / st.size));
-  const fields = t.campos;
+  const fields = t.campos.filter(f => !f.vacio);  // ocultar columnas siempre vacías
 
   const isMaster = childrenOf(key).length > 0;  // ¿tiene tablas hijas? → fila abre ficha
   const head = '<tr>' + fields.map(f => {
@@ -1558,9 +1589,9 @@ async function buildRecord(key, id) {
     const val = row[ch.parentField];
     const cres = await (await fetch(`/api/t/${ch.table}?field=${ch.field}&value=${encodeURIComponent(val)}&size=500`)).json();
     const crows = cres.rows || [];
-    const ccols = ct.campos.filter(c => c.name !== ch.field);
-    const chead = '<tr>' + ccols.map(c => `<th>${esc(c.label || c.name)}</th>`).join('') + '</tr>';
-    const cbody = crows.map(cr => '<tr>' + ccols.map(c => `<td>${cellHtml(c, cr[c.name], cr)}</td>`).join('') + '</tr>').join('');
+    const dcols = detailCols(ct, ch.field);
+    const chead = '<tr>' + dcols.map(d => `<th>${esc(d.label)}</th>`).join('') + '</tr>';
+    const cbody = crows.map(cr => '<tr>' + dcols.map(d => `<td>${d.get(cr)}</td>`).join('') + '</tr>').join('');
     const csvUrl = `/api/t/${ch.table}/export.csv?field=${encodeURIComponent(ch.field)}&value=${encodeURIComponent(val)}`;
     detailHtml += `<div class="detail-sec">
       <h3>${esc(ct.titulo || ct.name)} <span class="cnt">${nf(cres.total || crows.length)}</span>
@@ -1750,11 +1781,12 @@ STATIC_SHIM = r'''
   function colsOf(t){ return (TABLES[t]||[]).map(c=>c[0]); }
   function fksOf(t){ const tb=(META.tablas||[]).find(x=>x.key===t); const out=[];
     if(tb)(tb.campos||[]).forEach(c=>{ if(c.fk && DATA[c.fk.table]!==undefined && c.fk.display)
-      out.push({col:c.name, pt:c.fk.table, pf:c.fk.field||c.name, pd:c.fk.display}); }); return out; }
+      out.push({col:c.name, pt:c.fk.table, pf:c.fk.field||c.name, pd:c.fk.display, extra:c.fk.extra||[]}); }); return out; }
   function pmap(pt,pf){ const key=pt+'|'+pf; if(PMAP[key])return PMAP[key]; const m={};
     (DATA[pt]||[]).forEach(r=>{ m[String(r[pf])]=r; }); PMAP[key]=m; return m; }
   function withDesc(t, rows){ const fks=fksOf(t); return rows.map(r=>{ const o=Object.assign({},r);
-    fks.forEach(fk=>{ const p=pmap(fk.pt,fk.pf)[String(r[fk.col])]; o[fk.col+'__d']= p?p[fk.pd]:null; }); return o; }); }
+    fks.forEach(fk=>{ const p=pmap(fk.pt,fk.pf)[String(r[fk.col])]; o[fk.col+'__d']= p?p[fk.pd]:null;
+      (fk.extra||[]).forEach(ex=>{ o[fk.col+'__x__'+ex]= p?p[ex]:null; }); }); return o; }); }
   function listRows(t, p){
     let rows=(DATA[t]||[]).slice();
     if((colsOf(t).includes(p.field)||p.field==='id') && p.value!==undefined && p.value!==''){
@@ -1867,6 +1899,15 @@ def build_app_scaffold(payload, assets=None):
     meta["stats"]["registros_importados"] = total_rows
     meta["stats"]["tablas_con_datos"] = len(seed)
     meta["stats"]["indices"] = sum(len(v) for v in indexes.values())
+
+    # Marcar columnas vacías (sin ningún valor en los datos) para ocultarlas en
+    # listados y consultas (ej. cantidad2 en recedet, siempre vacía).
+    for t in meta["tablas"]:
+        rows = seed.get(t["key"]) or []
+        for campo in t["campos"]:
+            n = campo["name"]
+            campo["vacio"] = bool(rows) and all(
+                (r.get(n) in (None, "", 0, 0.0)) for r in rows)
 
     # Imágenes: detectar qué campos son imágenes (para mostrarlas en la SPA).
     asset_names = {k.lower() for k in assets}
