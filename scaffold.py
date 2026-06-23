@@ -1739,6 +1739,89 @@ def _detect_image_fields(meta, seed, asset_names):
     return marked
 
 
+STATIC_SHIM = r'''
+(function(){
+  const D = window.__APP__;
+  const META = D.meta, TABLES = D.tables;
+  const DATA = {};
+  for (const k in TABLES) DATA[k] = [];
+  for (const k in (D.seed||{})) DATA[k] = (D.seed[k]||[]).map((r,i)=>Object.assign({id:i+1}, r));
+  let PMAP = {};
+  function colsOf(t){ return (TABLES[t]||[]).map(c=>c[0]); }
+  function fksOf(t){ const tb=(META.tablas||[]).find(x=>x.key===t); const out=[];
+    if(tb)(tb.campos||[]).forEach(c=>{ if(c.fk && DATA[c.fk.table]!==undefined && c.fk.display)
+      out.push({col:c.name, pt:c.fk.table, pf:c.fk.field||c.name, pd:c.fk.display}); }); return out; }
+  function pmap(pt,pf){ const key=pt+'|'+pf; if(PMAP[key])return PMAP[key]; const m={};
+    (DATA[pt]||[]).forEach(r=>{ m[String(r[pf])]=r; }); PMAP[key]=m; return m; }
+  function withDesc(t, rows){ const fks=fksOf(t); return rows.map(r=>{ const o=Object.assign({},r);
+    fks.forEach(fk=>{ const p=pmap(fk.pt,fk.pf)[String(r[fk.col])]; o[fk.col+'__d']= p?p[fk.pd]:null; }); return o; }); }
+  function listRows(t, p){
+    let rows=(DATA[t]||[]).slice();
+    if((colsOf(t).includes(p.field)||p.field==='id') && p.value!==undefined && p.value!==''){
+      rows=rows.filter(r=> String(r[p.field])===String(p.value) || Number(r[p.field])===Number(p.value)); }
+    rows=withDesc(t, rows);
+    if(p.q){ const q=String(p.q).toLowerCase(); const cs=colsOf(t); const ds=fksOf(t).map(f=>f.col+'__d');
+      rows=rows.filter(r=> cs.some(c=>String(r[c]==null?'':r[c]).toLowerCase().includes(q)) || ds.some(c=>String(r[c]==null?'':r[c]).toLowerCase().includes(q))); }
+    const total=rows.length; const sort=p.sort, dir=String(p.dir||'asc').toLowerCase();
+    if(sort && (colsOf(t).includes(sort)||sort==='id')){ rows.sort((a,b)=>{ let x=a[sort],y=b[sort];
+      if(x==null)x=''; if(y==null)y=''; if(typeof x==='number'&&typeof y==='number')return x-y;
+      return String(x).localeCompare(String(y)); }); if(dir==='desc')rows.reverse(); }
+    else rows.sort((a,b)=>(b.id||0)-(a.id||0));
+    let size=Math.max(1,Math.min(+p.size||50,1000)), page=Math.max(1,+p.page||1), start=(page-1)*size;
+    return {rows:rows.slice(start,start+size), total, page, size};
+  }
+  function reportData(i){ const spec=(META.reportes||[])[i]; if(!spec||!spec.detail) return {resolved:false};
+    const entries=(spec.header||[]).concat(spec.columns||[]);
+    const out=(DATA[spec.detail]||[]).map(r=>{ const o={__grp:r[spec.group]};
+      entries.forEach(e=>{ if(e.join){ const p=pmap(e.join.parent,e.join.pf)[String(r[e.join.cf])]; o[e.field]=p?p[e.col]:null; }
+        else o[e.field]=r[e.col]; }); return o; });
+    out.sort((a,b)=>{ let x=a.__grp,y=b.__grp; if(typeof x==='number'&&typeof y==='number')return x-y; return String(x).localeCompare(String(y)); });
+    return {resolved:true, rows:out, title:spec.title, header:spec.header, columns:spec.columns}; }
+  function jr(o,s){ return new Response(JSON.stringify(o), {status:s||200, headers:{'Content-Type':'application/json'}}); }
+  const _f = window.fetch;
+  window.fetch = async function(url, opts){
+    try{
+      const u=new URL(url,'http://x'), path=u.pathname, qp=Object.fromEntries(u.searchParams);
+      const method=((opts&&opts.method)||'GET').toUpperCase(); let m;
+      if(path==='/api/_meta') return jr(META);
+      if(path==='/api/_counts'){ const o={}; for(const k in TABLES)o[k]=(DATA[k]||[]).length; return jr(o); }
+      if(m=path.match(/^\/api\/_report\/(\d+)$/)) return jr(reportData(+m[1]));
+      if(path.match(/\/export\.csv$/)) return jr({}, 200);
+      if(method==='POST' && (m=path.match(/^\/api\/t\/([^\/]+)$/))){ const t=decodeURIComponent(m[1]);
+        const data=JSON.parse((opts&&opts.body)||'{}'); const id=((DATA[t]||[]).reduce((a,r)=>Math.max(a,r.id||0),0))+1;
+        (DATA[t]=DATA[t]||[]).push(Object.assign({id},data)); PMAP={}; return jr({id}); }
+      if(method==='PUT' && (m=path.match(/^\/api\/t\/([^\/]+)\/(\d+)$/))){ const t=decodeURIComponent(m[1]), id=+m[2];
+        const data=JSON.parse((opts&&opts.body)||'{}'); const row=(DATA[t]||[]).find(r=>r.id===id);
+        if(row)Object.assign(row,data); PMAP={}; return jr({ok:true}); }
+      if(method==='DELETE' && (m=path.match(/^\/api\/t\/([^\/]+)\/(\d+)$/))){ const t=decodeURIComponent(m[1]), id=+m[2];
+        DATA[t]=(DATA[t]||[]).filter(r=>r.id!==id); PMAP={}; return jr({ok:true}); }
+      if(m=path.match(/^\/api\/t\/([^\/]+)$/)) return jr(listRows(decodeURIComponent(m[1]), qp));
+      return jr({ok:false, detail:'no soportado offline'}, 200);
+    }catch(e){ return jr({error:String(e)}, 500); }
+  };
+})();
+'''
+
+
+def build_static_html(meta, tables_sql, seed, title):
+    """App en UN solo archivo HTML (sin servidor): doble clic y se ve. Embebe los
+    datos y simula los endpoints (/api/...) en el navegador. Pensado para que el
+    usuario VEA la app sin instalar Python ni levantar nada. Es de solo lectura
+    persistente (los cambios se pierden al recargar)."""
+    def emb(obj):
+        return json.dumps(obj, ensure_ascii=False).replace("</", "<\\/")
+    body = INDEX_HTML.split("<body>", 1)[1].split("</body>", 1)[0]
+    body = body.replace('<script src="app.js"></script>', "")
+    data = "window.__APP__=%s;" % emb({"meta": meta, "tables": tables_sql, "seed": seed or {}})
+    return (
+        "<!DOCTYPE html>\n<html lang=\"es\" data-theme=\"light\"><head><meta charset=\"UTF-8\">"
+        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
+        "<title>%s</title><style>\n%s\n</style></head>\n<body>\n%s\n"
+        "<script>%s</script>\n<script>%s</script>\n<script>\n%s\n</script>\n</body></html>"
+        % (title, STYLE_CSS, body, data, STATIC_SHIM, APP_JS)
+    )
+
+
 def build_app_scaffold(payload, assets=None):
     """payload = {inventory, title, seed, indexes}. `assets` = {nombre: bytes}
     con las imágenes a incluir. Devuelve (bytes_zip, meta)."""
@@ -1886,6 +1969,8 @@ def build_app_scaffold(payload, assets=None):
     }
     if seed_json:
         files["backend/seed.json"] = seed_json
+    # Versión de UN archivo, sin servidor: doble clic para ver la app.
+    files["abrir-sin-servidor.html"] = build_static_html(meta, tables_sql, seed, title)
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
