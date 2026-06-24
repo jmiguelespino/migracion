@@ -1613,7 +1613,7 @@ async function buildRecord(key, id) {
       <div class="tablewrap"><table><thead>${chead}</thead><tbody>${cbody || `<tr><td class="muted" style="padding:16px">Sin registros relacionados.</td></tr>`}</tbody></table></div>
     </div>`;
   }
-  const html = `<div class="card"><div class="rec-fields">${fieldsHtml}</div></div>${detailHtml}`;
+  const html = `${detailHtml}`;
   const actions = `<button class="sec no-print" onclick="window.print()">🖨 Imprimir</button>
     <button class="sec no-print" onclick='openForm("${key}", ${j})'>✎ Editar</button>`;
   return { title, html, actions };
