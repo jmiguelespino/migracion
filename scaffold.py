@@ -1293,7 +1293,9 @@ function route() {
   if (p[1] === 'rec') return viewRecord(p[2], +p[3]);
   if (p[1] === 'rep') return viewReport(+p[2]);
   if (p[1] === 'info') return viewInfo(+p[2], +p[3]);
-  return viewHome();
+  // Al abrir, mostrar directamente el buscador de la tabla maestra (esa pantalla).
+  const master = (META.tablas || []).find(t => childrenOf(t.key).length > 0);
+  return master ? viewBrowse(master.key) : viewHome();
 }
 function tableByKey(k){return (META.tablas||[]).find(t=>t.key===k);}
 // Tablas hijas de `key`: las que tienen una FK apuntando a esta tabla.
