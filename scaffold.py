@@ -1249,7 +1249,7 @@ function buildNav() {
     });
   });
   // Buscador de dos paneles para cada tabla maestra (que tiene tablas hijas).
-  const masters = (META.tablas || []).filter(t => childrenOf(t.key).length > 0);
+  const masters = mainMasters();
   if (masters.length) {
     h += `<div class="grp">Buscar</div>`;
     masters.forEach(t => { h += `<a href="#/browse/${t.key}">🔍 Buscar ${esc(t.name)}</a>`; });
@@ -1294,7 +1294,7 @@ function route() {
   if (p[1] === 'rep') return viewReport(+p[2]);
   if (p[1] === 'info') return viewInfo(+p[2], +p[3]);
   // Al abrir, mostrar directamente el buscador de la tabla maestra (esa pantalla).
-  const master = (META.tablas || []).find(t => childrenOf(t.key).length > 0);
+  const master = mainMasters()[0];
   return master ? viewBrowse(master.key) : viewHome();
 }
 function tableByKey(k){return (META.tablas||[]).find(t=>t.key===k);}
@@ -1305,6 +1305,14 @@ function childrenOf(key){
     (t.campos||[]).forEach(c=>{ if(c.fk && c.fk.table===key) out.push({table:t.key, field:c.name, parentField:c.fk.field}); });
   });
   return out;
+}
+// Tablas maestras "principales" para el buscador: si hay reportes, las que el
+// reporte agrupa (ej. recetas); si no, todas las maestras. Excluye catálogos.
+function mainMasters(){
+  const rep = new Set((META.reportes||[]).map(r=>r.master).filter(Boolean));
+  const ms = (META.tablas||[]).filter(t=>childrenOf(t.key).length>0);
+  if (rep.size){ const f = ms.filter(t=>rep.has(t.key)); if (f.length) return f; }
+  return ms;
 }
 // Campo descriptivo de un registro (para el título de la ficha).
 function dispFieldOf(t){
