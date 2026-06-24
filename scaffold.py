@@ -1614,9 +1614,19 @@ async function buildRecord(key, id) {
     </div>`;
   }
   const html = `${detailHtml}`;
-  const actions = `<button class="sec no-print" onclick="window.print()">🖨 Imprimir</button>
+  const actions = `<button class="sec no-print" data-rece="${escA(title)}" onclick="buscarReceta(this,'guia')">🍳 Guía para cocinar</button>
+    <button class="sec no-print" data-rece="${escA(title)}" onclick="buscarReceta(this,'video')">▶ Videos</button>
+    <button class="sec no-print" onclick="window.print()">🖨 Imprimir</button>
     <button class="sec no-print" onclick='openForm("${key}", ${j})'>✎ Editar</button>`;
   return { title, html, actions };
+}
+// Busca en internet cómo cocinar / videos de la receta (abre en otra pestaña).
+function buscarReceta(el, tipo){
+  const d = String((el && el.dataset.rece) || '').trim();
+  const url = tipo === 'video'
+    ? 'https://www.youtube.com/results?search_query=' + encodeURIComponent(d + ' receta cómo se hace')
+    : 'https://www.google.com/search?q=' + encodeURIComponent('cómo hacer ' + d + ' paso a paso receta');
+  window.open(url, '_blank');
 }
 
 async function viewRecord(key, id) {
