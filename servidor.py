@@ -77,6 +77,33 @@ def _get_zip_path(token):
     return None
 
 
+def _prune_uploads(keep=ZIP_CACHE_MAX, keep_token=None):
+    """Limpia ZIPs viejos de _uploads/ para no acumular disco entre reinicios.
+
+    Conserva los `keep` más recientes (por fecha de modificación) y SIEMPRE el
+    `keep_token` (el ZIP del proyecto activo según migrador_estado.json). La
+    rotación en memoria (`_cache_zip`) no alcanza tras un reinicio porque el
+    orden se pierde; esta limpieza al arrancar cierra esa fuga.
+    """
+    try:
+        if not os.path.isdir(UPLOAD_DIR):
+            return
+        zips = [os.path.join(UPLOAD_DIR, n)
+                for n in os.listdir(UPLOAD_DIR) if n.lower().endswith(".zip")]
+        zips.sort(key=lambda p: os.path.getmtime(p), reverse=True)
+        keep_path = (os.path.join(UPLOAD_DIR, f"{keep_token}.zip")
+                     if keep_token else None)
+        for i, p in enumerate(zips):
+            if i < keep or p == keep_path:
+                continue
+            try:
+                os.remove(p)
+            except Exception:
+                pass
+    except Exception:
+        pass
+
+
 # ── Estado persistente del proyecto ──────────────────────────────────────────
 # Se guarda en migrador_estado.json junto al servidor. Sobrevive reinicios.
 # Estructura: {"proyecto", "zip_token", "cargado", "unidades":{}, "datos":{}}
@@ -160,17 +187,14 @@ def _procesar_unidad(nombre, zip_path, est, body):
     if nombre == "bases":
         # La unidad más pesada: DBF + CDX + DBC con soporte de paginación.
         # body puede traer {"limite": N} para controlar cuántas tablas por pasada.
+        #
+        # IMPORTANTE: enumeramos TODAS las tablas .dbf del ZIP (no el inventario,
+        # que está acotado por MAX_TABLES). Así un sistema grande con cientos de
+        # tablas obtiene cobertura COMPLETA al procesar la unidad por etapas.
+        # Además del dato y los índices, parseamos la ESTRUCTURA de cada tabla
+        # para que la app generada exponga un ABM por cada una (no solo las del
+        # preview inicial). El resultado se inyecta en /api/scaffold.
         limite = max(1, min(200, int(body.get("limite") or 20)))
-        tablas_all = inv.get("tables") or []
-        n_total = len(tablas_all)
-
-        # Acumular sobre lo ya procesado en pasadas anteriores
-        datos_bases = est.get("datos", {}).get("bases") or {
-            "seed": {}, "indexes": {}, "tablas_ok": 0, "tablas_total": n_total,
-        }
-        n_ok   = datos_bases.get("tablas_ok", 0)
-        seed   = datos_bases.get("seed", {})
-        indexes = datos_bases.get("indexes", {})
 
         # by_stem: base sin extensión (lower) -> {ext: ruta}; prioridad al más grande
         by_stem = {}
@@ -183,17 +207,48 @@ def _procesar_unidad(nombre, zip_path, est, body):
             if prev is None or file_sizes.get(n, 0) > file_sizes.get(prev, 0):
                 by_stem.setdefault(sk, {})[ek] = n
 
-        pendientes = tablas_all[n_ok: n_ok + limite]
-        for t in pendientes:
-            name_t = t.get("name") or ""
-            key    = scaffold._slug(name_t)
-            entry  = by_stem.get(name_t.lower())
-            if not entry or ".dbf" not in entry:
+        # Lista determinística de tablas de negocio (excluye las de sistema VFP).
+        stems_tabla = sorted(
+            sk for sk, exts in by_stem.items()
+            if ".dbf" in exts and sk not in VFP_SYSTEM_TABLES
+        )
+        n_total = len(stems_tabla)
+
+        # Acumular sobre lo ya procesado en pasadas anteriores
+        datos_bases = est.get("datos", {}).get("bases") or {
+            "seed": {}, "indexes": {}, "tablas": [],
+            "tablas_ok": 0, "tablas_total": n_total,
+        }
+        n_ok    = datos_bases.get("tablas_ok", 0)
+        seed    = datos_bases.get("seed", {})
+        indexes = datos_bases.get("indexes", {})
+        tablas  = datos_bases.get("tablas", [])  # estructuras: name, records, fields
+
+        for sk in stems_tabla[n_ok: n_ok + limite]:
+            entry    = by_stem.get(sk) or {}
+            dbf_path = entry.get(".dbf")
+            if not dbf_path:
                 n_ok += 1
                 continue
-            # Datos reales
+            # Estructura real (header) — define los campos del ABM generado.
             try:
-                dbf_b = zf.read(entry[".dbf"])
+                with zf.open(dbf_path) as fp:
+                    head = fp.read(32 + 32 * 256)
+                struct = parse_dbf_structure(head)
+            except Exception:
+                struct = None
+            if not struct:
+                n_ok += 1
+                continue
+            name_t = os.path.splitext(os.path.basename(dbf_path))[0]
+            key    = scaffold._slug(name_t)
+            fields = struct["fields"]
+            tablas.append({
+                "name": name_t, "records": struct["records"], "fields": fields,
+            })
+            # Datos reales (con su memo .fpt si existe)
+            try:
+                dbf_b = zf.read(dbf_path)
                 fpt_b = zf.read(entry[".fpt"]) if ".fpt" in entry else b""
                 rows  = read_dbf_records(dbf_b, fpt_b)
             except Exception:
@@ -201,7 +256,7 @@ def _procesar_unidad(nombre, zip_path, est, body):
             if rows:
                 seed[key] = rows
             # Índices CDX/IDX — respetar expresiones originales
-            field_slugs = [scaffold._slug(f.get("name")) for f in (t.get("fields") or [])]
+            field_slugs = [scaffold._slug(f.get("name")) for f in fields]
             for ext_i in (".cdx", ".idx"):
                 if ext_i not in entry:
                     continue
@@ -228,7 +283,7 @@ def _procesar_unidad(nombre, zip_path, est, body):
             "total_rows": total_rows, "total_idx": total_idx,
         }
         est["datos"]["bases"] = {
-            "seed": seed, "indexes": indexes, **resultado,
+            "seed": seed, "indexes": indexes, "tablas": tablas, **resultado,
         }
         est["unidades"]["bases"] = {
             "estado": "completo" if completado else "parcial",
@@ -1969,16 +2024,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         print(f"  ✓ Imágenes a incluir: {len(assets)}")
                 except Exception as e:
                     print(f"  ! No se pudieron extraer las imágenes: {e}")
-            # Enriquecer el inventario con pantallas y reportes procesados por las unidades
-            # (que pueden tener cobertura total, superando los caps del analyze_zip inicial).
+            # Enriquecer el inventario con lo procesado por las unidades, que tienen
+            # cobertura TOTAL (superan los caps del analyze_zip inicial). Esto es lo
+            # que garantiza paridad funcional en sistemas grandes procesados por etapas.
             inv = payload.get("inventory") or {}
+            # Tablas: estructuras completas de la unidad 'bases' → un ABM por tabla.
+            if datos_bases.get("tablas"):
+                inv["tables"] = datos_bases["tablas"]
+                print(f"  ✓ Tablas del estado: {len(datos_bases['tablas'])} (cobertura total)")
             datos_pant = datos_est.get("pantallas") or {}
             if datos_pant.get("forms_detail"):
                 inv["forms_detail"] = datos_pant["forms_detail"]
+                # Reflejar el conteo real de formularios (el preview se acota a 80).
+                inv["forms"] = [f.get("name") for f in datos_pant["forms_detail"] if f.get("name")]
                 print(f"  ✓ Pantallas del estado: {len(datos_pant['forms_detail'])} formularios")
             datos_rep = datos_est.get("reportes") or {}
             if datos_rep.get("reports_detail"):
                 inv["reports_detail"] = datos_rep["reports_detail"]
+                # Reflejar el conteo real de reportes a partir del detalle parseado.
+                inv["reports"] = [r.get("name") for r in datos_rep["reports_detail"] if r.get("name")]
                 print(f"  ✓ Reportes del estado: {len(datos_rep['reports_detail'])} reportes")
             if inv:
                 payload["inventory"] = inv
@@ -2161,6 +2225,10 @@ if __name__ == "__main__":
     print(f"\n  ► Abrí tu navegador en:  http://localhost:{PORT}")
     print(f"  ► Para cerrar presioná:  Ctrl+C\n")
     print("=" * 50 + "\n")
+
+    # Limpieza de ZIPs viejos en disco (preservando el del proyecto activo).
+    _est_inicial = _cargar_estado()
+    _prune_uploads(keep_token=(_est_inicial or {}).get("zip_token"))
 
     # Multihilo: una llamada larga al modelo no bloquea otras peticiones del
     # navegador (favicon, recargas, etc.), así la UI sigue respondiendo.
