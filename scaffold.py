@@ -1033,6 +1033,338 @@ def _detect_image_fields(meta, seed, asset_names):
     return marked
 
 
+# ── Tipo SQL de cada tipo DBF (para el script de importación) ──────────────────
+_DBF_SQL_TYPE = {
+    "C": "TEXT", "M": "TEXT", "G": "TEXT", "P": "TEXT",
+    "N": "REAL", "F": "REAL",  "B": "REAL", "Y": "REAL", "I": "INTEGER",
+    "L": "INTEGER", "D": "TEXT", "T": "TEXT",
+}
+
+
+def genera_proyecto_md(inventory, title="Sistema"):
+    """Genera PROYECTO.md estructurado para ser leído por el agente como contexto.
+
+    Formato conciso pero completo: tablas, campos, relaciones FK, menús, vistas,
+    fragmentos de código y notas para el agente de migración.
+    """
+    import datetime
+    today = datetime.date.today().isoformat()
+
+    tables   = inventory.get("tables")       or []
+    dbs      = inventory.get("databases")    or []
+    menus    = inventory.get("menus")        or []
+    forms    = inventory.get("forms_detail") or []
+    samples  = inventory.get("samples")      or []
+    by_ext   = inventory.get("by_ext")       or {}
+    project  = inventory.get("project")      or {}
+
+    relations, vistas = [], []
+    for db in dbs:
+        relations.extend(db.get("relaciones") or [])
+        vistas.extend(db.get("vistas") or [])
+
+    total_rec = sum(t.get("records", 0) for t in tables)
+    IMG_EXTS  = (".jpg", ".jpeg", ".png", ".gif", ".bmp", ".ico", ".webp")
+    total_img = sum(by_ext.get(e, 0) for e in IMG_EXTS)
+
+    form_for_table = {}
+    for f in forms:
+        k = _slug(f.get("tabla", ""))
+        if k:
+            form_for_table[k] = f.get("name", "")
+
+    L = [
+        f"# Sistema: {title}",
+        f"> Generado por LegacyMigrator el {today}. "
+        "Este archivo es el contexto para el agente de migración.",
+        "",
+        "## Resumen",
+        "",
+        f"| | |",
+        f"|---|---|",
+        f"| Tablas (.dbf) | {len(tables)} |",
+        f"| Registros totales | {total_rec:,} |",
+        f"| Bases de datos (.dbc) | {len(dbs)} |",
+        f"| Relaciones FK | {len(relations)} |",
+        f"| Vistas (.dbc) | {len(vistas)} |",
+        f"| Formularios (.scx) | {by_ext.get('.scx', 0)} |",
+        f"| Reportes (.frx) | {by_ext.get('.frx', 0)} |",
+        f"| Clases (.vcx) | {by_ext.get('.vcx', 0)} |",
+        f"| Programas (.prg) | {by_ext.get('.prg', 0)} |",
+        f"| Imágenes | {total_img} |",
+        "",
+    ]
+
+    if project:
+        L += [
+            "## Proyecto (.pjx)",
+            "",
+            f"- Programa principal: `{project.get('principal', '(no declarado)')}`",
+            f"- Archivos declarados: {len(project.get('archivos', []))}",
+            "",
+        ]
+
+    # Tablas ordenadas por cantidad de registros
+    sorted_tables = sorted(tables, key=lambda t: t.get("records", 0), reverse=True)
+    L += [
+        "## Tablas",
+        "",
+        "| Tabla | Registros | Campos | Formulario |",
+        "|-------|-----------|--------|------------|",
+    ]
+    for t in sorted_tables:
+        key  = _slug(t.get("name", ""))
+        form = form_for_table.get(key, "—")
+        L.append(
+            f"| `{t.get('name')}` | {t.get('records', 0):,} "
+            f"| {len(t.get('fields') or [])} | {form} |"
+        )
+    L.append("")
+
+    # Detalle de campos
+    L += ["## Campos por tabla", ""]
+    for t in sorted_tables:
+        fields = t.get("fields") or []
+        if not fields:
+            continue
+        L.append(f"### `{t.get('name')}`")
+        for f in fields:
+            L.append(f"- `{f.get('name')}` {f.get('type','C')}({f.get('len',0)})")
+        L.append("")
+
+    # Relaciones FK del .dbc
+    if relations:
+        L += [
+            "## Relaciones FK (.dbc)",
+            "",
+            "| Tabla hija | Campo FK | Tabla padre | Campo padre |",
+            "|-----------|----------|-------------|-------------|",
+        ]
+        for rel in relations:
+            L.append(
+                f"| `{rel.get('child_table')}` | `{rel.get('child_field')}` "
+                f"| `{rel.get('parent_table')}` | `{rel.get('parent_field')}` |"
+            )
+        L.append("")
+
+    if vistas:
+        L += [f"## Vistas (.dbc)", f"", f"{len(vistas)} vistas definidas:"]
+        for v in vistas[:30]:
+            L.append(f"- `{v}`")
+        if len(vistas) > 30:
+            L.append(f"- _(y {len(vistas)-30} más)_")
+        L.append("")
+
+    if menus:
+        L += ["## Menús", ""]
+        for m in menus:
+            items = m.get("items") or []
+            L.append(f"### {m.get('titulo', 'Menú')}")
+            for it in items:
+                L.append(f"- **{it.get('texto', '')}** → `{it.get('accion', '')}`")
+        L.append("")
+
+    if samples:
+        L += ["## Fragmentos de código (.prg / .vcx)", ""]
+        for s in samples[:6]:
+            content = str(s.get("content", ""))[:900]
+            L += [
+                f"### `{s.get('name', '')}`",
+                "```foxpro",
+                content,
+                "```",
+                "",
+            ]
+
+    # Tablas sin formulario (útil para el agente)
+    sin_form = [
+        f"`{t.get('name')}`"
+        for t in sorted_tables
+        if _slug(t.get("name", "")) not in form_for_table
+    ]
+    L += [
+        "## Notas para el agente",
+        "",
+        f"- Tecnología origen: Visual FoxPro",
+        f"- Tecnología destino: Python + FastAPI + SQLite + SPA vanilla",
+        f"- Cobertura: 1 ABM por tabla × {len(tables)} tablas",
+        f"- Datos disponibles: {total_rec:,} registros",
+    ]
+    if relations:
+        L.append(f"- FK a respetar: {len(relations)} relaciones del .dbc")
+    if vistas:
+        L.append(f"- Formularios apuntan a vistas, no a tablas directas: revisar ControlSource en los .scx")
+    if sin_form:
+        L.append(f"- Tablas sin formulario SCX: {', '.join(sin_form[:20])}")
+    L.append("")
+
+    return "\n".join(L)
+
+
+def genera_import_sql(inventory, seed, indexes, title="Sistema"):
+    """Genera importar_datos.sql: script SQL idempotente para importar todos los
+    datos del sistema legacy a SQLite.
+
+    Incluye en orden:
+    1. CREATE TABLE IF NOT EXISTS (esquema derivado del .dbf)
+    2. CREATE INDEX de las expresiones .cdx/.idx originales
+    3. CREATE INDEX para los campos FK del .dbc (hijo y padre)
+    4. INSERT OR IGNORE con todos los registros del sistema viejo
+
+    El script es seguro de re-ejecutar: OR IGNORE y IF NOT EXISTS.
+    Revisarlo antes de correr, especialmente los INSERT.
+    """
+    import datetime
+    today = datetime.date.today().isoformat()
+
+    tables   = inventory.get("tables")    or []
+    dbs      = inventory.get("databases") or []
+
+    # Relaciones FK del .dbc → índices adicionales
+    relations = []
+    for db in dbs:
+        relations.extend(db.get("relaciones") or [])
+
+    # Construir esquema por tabla
+    tables_sql   = {}   # key -> [(col, sql_type)]
+    table_names  = {}   # key -> nombre original
+    for t in tables:
+        key = _slug(t.get("name", ""))
+        if not key or key in tables_sql:
+            continue
+        cols = []
+        for f in (t.get("fields") or []):
+            cn = _slug(f.get("name", ""))
+            if not cn or cn == "id" or cn in [c[0] for c in cols]:
+                continue
+            cols.append((cn, _DBF_SQL_TYPE.get(f.get("type", "C"), "TEXT")))
+        if cols:
+            tables_sql[key]  = cols
+            table_names[key] = t.get("name", key)
+
+    if not tables_sql:
+        return f"-- Sin tablas para importar ({title})\n"
+
+    total_rows = sum(len(v) for v in seed.values())
+    total_idx  = sum(len(v) for v in indexes.values())
+
+    L = [
+        "-- importar_datos.sql",
+        f"-- Sistema : {title}",
+        f"-- Generado: {today}",
+        f"-- Tablas  : {len(tables_sql)}  |  "
+        f"Registros: {total_rows:,}  |  Índices CDX: {total_idx}",
+        "--",
+        "-- ANTES DE EJECUTAR:",
+        "--   1. Revisar que los datos sean correctos.",
+        "--   2. El script es idempotente (IF NOT EXISTS / OR IGNORE).",
+        "--   3. Ejecutar sobre la base SQLite destino de la app generada.",
+        "",
+        "PRAGMA foreign_keys = OFF;",
+        "BEGIN TRANSACTION;",
+        "",
+    ]
+
+    fk_idx_added = set()   # evitar CREATE INDEX duplicados
+
+    for key, cols in tables_sql.items():
+        name    = table_names.get(key, key)
+        rows    = seed.get(key) or []
+        valid_c = {cn for cn, _ in cols}
+
+        L.append(f"-- ── {name}  ({len(rows):,} registros) ──────────────────")
+
+        # CREATE TABLE
+        col_defs = ",\n    ".join(f'"{cn}" {ct}' for cn, ct in cols)
+        L += [
+            f'CREATE TABLE IF NOT EXISTS "{key}" (',
+            f'    "id" INTEGER PRIMARY KEY AUTOINCREMENT,',
+            f'    {col_defs}',
+            f');',
+        ]
+
+        # CREATE INDEX de expresiones .cdx/.idx (índices originales del sistema)
+        for i, idx_cols in enumerate(indexes.get(key) or []):
+            idx_cols = [
+                c for c in (idx_cols if isinstance(idx_cols, list) else [idx_cols])
+                if c in valid_c
+            ]
+            if not idx_cols:
+                continue
+            col_list = ", ".join(f'"{c}"' for c in idx_cols)
+            L.append(
+                f'CREATE INDEX IF NOT EXISTS "ix_{key}_{i}" ON "{key}" ({col_list});'
+            )
+
+        # CREATE INDEX para campos FK del .dbc:
+        # — campo hijo (child_field) para joins rápidos
+        # — campo padre (parent_field) si no está ya indexado
+        for rel in relations:
+            ct = _slug(rel.get("child_table",  ""))
+            cf = _slug(rel.get("child_field",  ""))
+            pt = _slug(rel.get("parent_table", ""))
+            pf = _slug(rel.get("parent_field", ""))
+            if ct == key and cf and cf in valid_c:
+                sig = (ct, "fk", cf)
+                if sig not in fk_idx_added:
+                    fk_idx_added.add(sig)
+                    L.append(
+                        f'CREATE INDEX IF NOT EXISTS "ix_{ct}_fk_{cf}" '
+                        f'ON "{ct}" ("{cf}");'
+                    )
+            if pt == key and pf and pf in valid_c:
+                sig = (pt, "pk", pf)
+                if sig not in fk_idx_added:
+                    fk_idx_added.add(sig)
+                    L.append(
+                        f'CREATE INDEX IF NOT EXISTS "ix_{pt}_pk_{pf}" '
+                        f'ON "{pt}" ("{pf}");'
+                    )
+
+        L.append("")
+
+        # INSERT OR IGNORE (bloques de 100 para no generar SQL kilométrico)
+        if rows:
+            BATCH = 100
+            valid_list = [cn for cn, _ in cols]
+            for b_start in range(0, len(rows), BATCH):
+                batch = rows[b_start:b_start + BATCH]
+                # Detectar qué columnas tienen datos en este bloque
+                use_cols = []
+                for r in batch:
+                    for k in r:
+                        if k in valid_c and k not in use_cols:
+                            use_cols.append(k)
+                if not use_cols:
+                    continue
+                col_part = ", ".join(f'"{c}"' for c in use_cols)
+                val_rows = []
+                for r in batch:
+                    vals = []
+                    for c in use_cols:
+                        v = r.get(c)
+                        if v is None:
+                            vals.append("NULL")
+                        elif isinstance(v, bool):
+                            vals.append("1" if v else "0")
+                        elif isinstance(v, (int, float)):
+                            vals.append(str(v))
+                        else:
+                            vals.append("'" + str(v).replace("'", "''") + "'")
+                    val_rows.append("(" + ", ".join(vals) + ")")
+                L.append(f'INSERT OR IGNORE INTO "{key}" ({col_part}) VALUES')
+                L.append("    " + ",\n    ".join(val_rows) + ";")
+            L.append("")
+
+    L += [
+        "COMMIT;",
+        "PRAGMA foreign_keys = ON;",
+        "",
+        f"-- Fin de importar_datos.sql  ({len(tables_sql)} tablas)",
+    ]
+    return "\n".join(L)
+
+
 def build_app_scaffold(payload, assets=None):
     """payload = {inventory, title, seed, indexes}. `assets` = {nombre: bytes}
     con las imágenes a incluir. Devuelve (bytes_zip, meta)."""
@@ -1165,6 +1497,10 @@ def build_app_scaffold(payload, assets=None):
         "pause\r\n"
     )
 
+    # Generar PROYECTO.md (contexto estructurado para el agente) e importar_datos.sql
+    proyecto_md = genera_proyecto_md(inventory, title)
+    import_sql  = genera_import_sql(inventory, seed, indexes, title)
+
     files = {
         "backend/app.py": app_py,
         "backend/meta.json": meta_json,
@@ -1174,6 +1510,8 @@ def build_app_scaffold(payload, assets=None):
         "web/style.css": STYLE_CSS,
         "web/app.js": APP_JS,
         "COBERTURA.md": _coverage_md(meta),
+        "PROYECTO.md": proyecto_md,
+        "importar_datos.sql": import_sql,
         "README.md": readme,
         "iniciar.sh": run_sh,
         "iniciar.bat": run_bat,

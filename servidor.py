@@ -46,6 +46,213 @@ def _cache_zip(raw):
             _ZIP_CACHE.pop(_ZIP_CACHE_ORDER.pop(0), None)
     return token
 
+
+# ── Estado persistente del proyecto ──────────────────────────────────────────
+# Se guarda en migrador_estado.json junto al servidor. Sobrevive reinicios.
+# Estructura: {"proyecto", "zip_token", "cargado", "unidades":{}, "datos":{}}
+ESTADO_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                           "migrador_estado.json")
+UNIDADES_ORDEN = [
+    "proyecto", "bases", "imagenes", "clases",
+    "menus", "codigo", "reportes", "pantallas",
+]
+
+
+def _cargar_estado():
+    try:
+        if os.path.exists(ESTADO_FILE):
+            with open(ESTADO_FILE, encoding="utf-8") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return None
+
+
+def _guardar_estado(est):
+    try:
+        with open(ESTADO_FILE, "w", encoding="utf-8") as f:
+            json.dump(est, f, ensure_ascii=False, indent=2)
+    except Exception as e:
+        print(f"  ! No se pudo guardar el estado: {e}")
+
+
+def _estado_nuevo(nombre_zip, zip_token):
+    import datetime
+    return {
+        "proyecto": nombre_zip,
+        "zip_token": zip_token,
+        "cargado": datetime.datetime.now().isoformat(timespec="seconds"),
+        "unidades": {
+            u: {"estado": "pendiente"} for u in UNIDADES_ORDEN
+        },
+        "datos": {},   # resultados acumulados por unidad
+    }
+
+
+def _todas_completas(est):
+    """True si todas las unidades de trabajo están en estado 'completo'."""
+    return all(
+        est.get("unidades", {}).get(u, {}).get("estado") == "completo"
+        for u in UNIDADES_ORDEN
+    )
+
+
+def _procesar_unidad(nombre, raw_zip, est, body):
+    """Procesa la unidad `nombre` del proyecto.
+
+    Actualiza est["unidades"][nombre] y est["datos"][nombre] en el lugar.
+    Devuelve un dict con el resultado (se enviará como JSON al navegador).
+    """
+    import datetime
+
+    def _ts():
+        return datetime.datetime.now().isoformat(timespec="seconds")
+
+    inv = est.get("datos", {}).get("zipinfo", {})
+    zf  = zipfile.ZipFile(io.BytesIO(raw_zip))
+    names = [n for n in zf.namelist() if not n.endswith("/")]
+
+    if nombre == "proyecto":
+        # Extraer info del .pjx (ya está en el inventario)
+        prj = inv.get("project") or {}
+        resultado = {
+            "principal": prj.get("principal", "(no declarado)"),
+            "n_archivos": len(prj.get("archivos", [])),
+        }
+        est["unidades"]["proyecto"] = {
+            "estado": "completo", "cuando": _ts(), **resultado
+        }
+        est["datos"]["proyecto"] = resultado
+        return {"ok": True, **resultado}
+
+    if nombre == "bases":
+        # La unidad más pesada: DBF + CDX + DBC con soporte de paginación.
+        # body puede traer {"limite": N} para controlar cuántas tablas por pasada.
+        limite = max(1, min(200, int(body.get("limite") or 20)))
+        tablas_all = inv.get("tables") or []
+        n_total = len(tablas_all)
+
+        # Acumular sobre lo ya procesado en pasadas anteriores
+        datos_bases = est.get("datos", {}).get("bases") or {
+            "seed": {}, "indexes": {}, "tablas_ok": 0, "tablas_total": n_total,
+        }
+        n_ok   = datos_bases.get("tablas_ok", 0)
+        seed   = datos_bases.get("seed", {})
+        indexes = datos_bases.get("indexes", {})
+
+        # by_stem: base sin extensión (lower) -> {ext: ruta}; prioridad al más grande
+        by_stem = {}
+        file_sizes = {n: zf.getinfo(n).file_size for n in names}
+        for n in names:
+            base = os.path.basename(n)
+            stem, ext = os.path.splitext(base)
+            sk, ek = stem.lower(), ext.lower()
+            prev = by_stem.get(sk, {}).get(ek)
+            if prev is None or file_sizes.get(n, 0) > file_sizes.get(prev, 0):
+                by_stem.setdefault(sk, {})[ek] = n
+
+        pendientes = tablas_all[n_ok: n_ok + limite]
+        for t in pendientes:
+            name_t = t.get("name") or ""
+            key    = scaffold._slug(name_t)
+            entry  = by_stem.get(name_t.lower())
+            if not entry or ".dbf" not in entry:
+                n_ok += 1
+                continue
+            # Datos reales
+            try:
+                dbf_b = zf.read(entry[".dbf"])
+                fpt_b = zf.read(entry[".fpt"]) if ".fpt" in entry else b""
+                rows  = read_dbf_records(dbf_b, fpt_b)
+            except Exception:
+                rows = []
+            if rows:
+                seed[key] = rows
+            # Índices CDX/IDX — respetar expresiones originales
+            field_slugs = [scaffold._slug(f.get("name")) for f in (t.get("fields") or [])]
+            for ext_i in (".cdx", ".idx"):
+                if ext_i not in entry:
+                    continue
+                try:
+                    new_defs = parse_cdx_expressions(zf.read(entry[ext_i]), field_slugs)
+                    existing = indexes.get(key, [])
+                    seen_sigs = {tuple(d) for d in existing}
+                    for d in new_defs:
+                        sig = tuple(d)
+                        if sig not in seen_sigs:
+                            existing.append(d)
+                            seen_sigs.add(sig)
+                    if existing:
+                        indexes[key] = existing[:16]
+                except Exception:
+                    pass
+            n_ok += 1
+
+        total_rows  = sum(len(v) for v in seed.values())
+        total_idx   = sum(len(v) for v in indexes.values())
+        completado  = n_ok >= n_total
+        resultado = {
+            "tablas_ok": n_ok, "tablas_total": n_total,
+            "total_rows": total_rows, "total_idx": total_idx,
+        }
+        est["datos"]["bases"] = {
+            "seed": seed, "indexes": indexes, **resultado,
+        }
+        est["unidades"]["bases"] = {
+            "estado": "completo" if completado else "parcial",
+            "cuando": _ts(), **resultado,
+        }
+        return {"ok": True, "completado": completado, **resultado}
+
+    if nombre == "imagenes":
+        imgs = extract_assets_from_zip(raw_zip)
+        resultado = {"count": len(imgs)}
+        # Guardamos solo los nombres (los bytes son pesados)
+        est["datos"]["imagenes"] = {"nombres": list(imgs.keys())}
+        est["unidades"]["imagenes"] = {"estado": "completo", "cuando": _ts(), **resultado}
+        return {"ok": True, **resultado}
+
+    if nombre == "clases":
+        vcx_count = sum(1 for n in names if n.lower().endswith(".vcx"))
+        prg_count = sum(1 for n in names if n.lower().endswith(".prg"))
+        resultado = {"vcx": vcx_count, "prg": prg_count}
+        est["datos"]["clases"] = resultado
+        est["unidades"]["clases"] = {"estado": "completo", "cuando": _ts(), **resultado}
+        return {"ok": True, **resultado}
+
+    if nombre == "menus":
+        menus = inv.get("menus") or []
+        n_items = sum(len(m.get("items") or []) for m in menus)
+        resultado = {"menus": len(menus), "items": n_items}
+        est["datos"]["menus"] = resultado
+        est["unidades"]["menus"] = {"estado": "completo", "cuando": _ts(), **resultado}
+        return {"ok": True, **resultado}
+
+    if nombre == "codigo":
+        prg_count = (inv.get("by_ext") or {}).get(".prg", 0)
+        h_count   = (inv.get("by_ext") or {}).get(".h", 0)
+        resultado = {"prg": prg_count, "h": h_count}
+        est["datos"]["codigo"] = resultado
+        est["unidades"]["codigo"] = {"estado": "completo", "cuando": _ts(), **resultado}
+        return {"ok": True, **resultado}
+
+    if nombre == "reportes":
+        frx_count = (inv.get("by_ext") or {}).get(".frx", 0)
+        resultado = {"frx": frx_count}
+        est["datos"]["reportes"] = resultado
+        est["unidades"]["reportes"] = {"estado": "completo", "cuando": _ts(), **resultado}
+        return {"ok": True, **resultado}
+
+    if nombre == "pantallas":
+        scx_count = (inv.get("by_ext") or {}).get(".scx", 0)
+        forms     = inv.get("forms_detail") or []
+        resultado = {"scx": scx_count, "forms_detail": len(forms)}
+        est["datos"]["pantallas"] = resultado
+        est["unidades"]["pantallas"] = {"estado": "completo", "cuando": _ts(), **resultado}
+        return {"ok": True, **resultado}
+
+    return {"error": f"Unidad desconocida: {nombre}"}
+
 # Modo gratuito (sin API key): usa un modelo local vía Ollama (https://ollama.com).
 # No requiere clave ni gasta tokens; corre 100% en la máquina del usuario.
 OLLAMA_URL = os.environ.get("OLLAMA_URL", "http://localhost:11434")
@@ -1107,6 +1314,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path in ("/", "/index.html"):
             self.serve_file("index.html", "text/html; charset=utf-8")
+        elif self.path == "/api/estado":
+            est = _cargar_estado()
+            # Informar si el ZIP sigue en caché (si no está, hay que re-subir)
+            if est:
+                est["zip_en_cache"] = est.get("zip_token") in _ZIP_CACHE
+            self.send_json(200, est or {})
+
         elif self.path == "/api/ollama/models":
             # Lista los modelos locales instalados en Ollama (para el modo gratuito).
             # Si Ollama no está corriendo, devuelve available=False sin romper la UI.
@@ -1126,6 +1340,50 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
     def do_POST(self):
         global API_KEY
+
+        if self.path == "/api/estado/reset":
+            try:
+                if os.path.exists(ESTADO_FILE):
+                    os.remove(ESTADO_FILE)
+                self.send_json(200, {"ok": True})
+            except Exception as e:
+                self.send_json(500, {"ok": False, "error": str(e)})
+            return
+
+        if self.path.startswith("/api/unidad/"):
+            nombre = self.path[len("/api/unidad/"):]
+            if nombre not in UNIDADES_ORDEN:
+                self.send_json(400, {"error": f"Unidad desconocida: {nombre}"})
+                return
+            est = _cargar_estado()
+            if not est:
+                self.send_json(400, {"error": "No hay proyecto activo. Subí un ZIP primero."})
+                return
+            zip_token = est.get("zip_token")
+            raw_zip = _ZIP_CACHE.get(zip_token)
+            if not raw_zip:
+                self.send_json(400, {
+                    "error": "El ZIP ya no está en caché. Volvé a subir el archivo ZIP.",
+                    "zip_en_cache": False,
+                })
+                return
+            try:
+                body = json.loads(self.read_body() or b"{}") if int(
+                    self.headers.get("Content-Length", 0)) else {}
+            except Exception:
+                body = {}
+            est["unidades"][nombre]["estado"] = "corriendo"
+            _guardar_estado(est)
+            try:
+                resultado = _procesar_unidad(nombre, raw_zip, est, body)
+                _guardar_estado(est)
+                self.send_json(200, resultado)
+            except Exception as e:
+                est["unidades"][nombre]["estado"] = "error"
+                est["unidades"][nombre]["error"] = str(e)
+                _guardar_estado(est)
+                self.send_json(500, {"error": str(e)})
+            return
 
         if self.path == "/api/key":
             try:
@@ -1147,9 +1405,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             try:
                 info = analyze_zip(raw)
-                info["zip_token"] = _cache_zip(raw)  # para importar datos al generar
+                token = _cache_zip(raw)
+                info["zip_token"] = token
                 print(f"  ✓ ZIP leído: {info['total_files']} archivos, "
                       f"{len(info['tables'])} tablas analizadas")
+                # Inicializar (o reiniciar) el estado persistente del proyecto.
+                nombre_zip = info.get("nombre") or info.get("name") or "sistema.zip"
+                est = _estado_nuevo(nombre_zip, token)
+                est["datos"]["zipinfo"] = info   # inventario completo disponible para unidades
+                _guardar_estado(est)
                 self.send_json(200, info)
             except zipfile.BadZipFile:
                 self.send_json(400, {"error": {"message": "El archivo no es un ZIP válido"}})
@@ -1168,7 +1432,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             # Si tenemos el ZIP en caché, importamos los datos, índices e imágenes.
             raw = _ZIP_CACHE.get(payload.get("zip_token"))
             assets = {}
-            if raw:
+            # Intentar usar datos ya procesados por la unidad "bases" del estado
+            est_actual = _cargar_estado()
+            datos_bases = (est_actual or {}).get("datos", {}).get("bases") or {}
+            if datos_bases.get("seed") and datos_bases.get("tablas_ok"):
+                payload.setdefault("seed",    datos_bases["seed"])
+                payload.setdefault("indexes", datos_bases.get("indexes", {}))
+                print(f"  ✓ Datos del estado: {datos_bases.get('total_rows',0)} registros, "
+                      f"{datos_bases.get('total_idx',0)} índices (unidad 'bases')")
+            elif raw:
                 try:
                     seed, indexes, total = build_seed_from_zip(raw, payload.get("inventory") or {})
                     payload["seed"] = seed
@@ -1177,6 +1449,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                           f"{sum(len(v) for v in indexes.values())} índices")
                 except Exception as e:
                     print(f"  ! No se pudieron importar los datos: {e}")
+            if raw:
                 try:
                     assets = extract_assets_from_zip(raw)
                     if assets:

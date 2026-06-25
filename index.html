@@ -129,6 +129,93 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 .ebox.show { display:block; }
 .wbox { background:var(--abg); border:1px solid #E0B872; border-radius:var(--r); padding:11px 15px; margin-bottom:14px; font-size:13px; color:var(--amber); display:none; }
 .wbox.show { display:block; }
+
+/* ── DASHBOARD DE UNIDADES ─────────────────────────────────────────── */
+#vd { flex:1; overflow-y:auto; padding:22px 20px 40px; }
+.dash { max-width:980px; margin:0 auto; }
+
+/* Resumen del proyecto */
+.proj-ov { background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:15px 20px; margin-bottom:18px; display:flex; align-items:center; gap:14px; }
+.proj-icon { font-size:28px; flex-shrink:0; }
+.proj-info { flex:1; min-width:0; }
+.proj-name { font-size:16px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.proj-meta { font-size:12px; color:var(--text3); margin-top:2px; }
+.proj-right { flex-shrink:0; min-width:200px; text-align:right; }
+.proj-pbar { height:7px; background:var(--bg3); border-radius:4px; overflow:hidden; margin:4px 0; }
+.proj-pfill { height:100%; border-radius:4px; background:linear-gradient(90deg,var(--purple),var(--teal)); transition:width .4s; }
+.proj-plbl { font-size:12px; color:var(--text2); }
+
+/* Grid 4 columnas */
+.units-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:9px; margin-bottom:9px; }
+@media(max-width:800px){ .units-grid{ grid-template-columns:repeat(2,1fr); } }
+@media(max-width:500px){ .units-grid{ grid-template-columns:1fr; } }
+
+/* Tarjeta de unidad */
+.ucard { background:var(--bg2); border:1.5px solid var(--border); border-radius:var(--r); padding:13px 12px 11px; display:flex; flex-direction:column; gap:8px; transition:border-color .15s; }
+.ucard:hover { border-color:var(--border2); }
+.ucard.st-done    { border-color:#9FE1CB; }
+.ucard.st-running,.ucard.st-partial { border-color:#E0B872; }
+.ucard.st-error   { border-color:#F09595; }
+
+.uc-head { display:flex; align-items:flex-start; gap:7px; }
+.uc-num { width:21px; height:21px; border-radius:50%; background:var(--bg3); color:var(--text2); font-weight:800; display:flex; align-items:center; justify-content:center; font-size:10px; flex-shrink:0; margin-top:2px; }
+.st-done  .uc-num { background:var(--teal); color:#fff; }
+.st-running .uc-num,.st-partial .uc-num { background:var(--amber); color:#fff; }
+.st-error .uc-num { background:var(--red); color:#fff; }
+.uc-icon { font-size:18px; line-height:1.2; flex-shrink:0; }
+.uc-titles { flex:1; min-width:0; }
+.uc-title { font-size:13px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.uc-exts  { font-size:10px; color:var(--text3); font-family:monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+.uc-div { height:1px; background:var(--border); }
+
+.uc-status { display:flex; align-items:center; gap:6px; }
+.uc-dot { width:7px; height:7px; border-radius:50%; background:var(--border2); flex-shrink:0; }
+.st-done  .uc-dot { background:var(--teal); }
+.st-running .uc-dot,.st-partial .uc-dot { background:var(--amber); animation:ucblink 1s ease-in-out infinite; }
+.st-error .uc-dot { background:var(--red); }
+@keyframes ucblink{0%,100%{opacity:1}50%{opacity:.25}}
+.uc-st-txt { font-size:12px; font-weight:700; color:var(--text2); }
+.uc-result { font-size:11px; color:var(--text3); line-height:1.4; }
+.uc-result.ok  { color:var(--ttxt); }
+.uc-result.err { color:var(--red); }
+
+/* Progreso parcial (unidad "bases") */
+.uc-pbar  { height:5px; background:var(--bg3); border-radius:3px; overflow:hidden; margin:3px 0; }
+.uc-pfill { height:100%; border-radius:3px; background:linear-gradient(90deg,var(--amber),var(--teal)); }
+.uc-plbl  { font-size:10px; color:var(--text3); }
+.uc-limit { display:flex; align-items:center; gap:5px; margin-top:3px; }
+.uc-limit label { font-size:10px; color:var(--text3); white-space:nowrap; }
+.uc-limit input { width:48px; padding:2px 5px; font-size:11px; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg); color:var(--text); text-align:center; }
+
+/* Botones de unidad */
+.uc-btn { width:100%; padding:8px 4px; border:none; border-radius:var(--rs); font-size:12px; font-weight:700; cursor:pointer; margin-top:auto; }
+.uc-btn.pri  { background:var(--teal); color:#fff; }
+.uc-btn.pri:hover { opacity:.9; }
+.uc-btn.sec  { background:var(--bg3); color:var(--text2); border:1px solid var(--border); }
+.uc-btn.sec:hover { background:var(--border); }
+.uc-btn.warn { background:var(--amber); color:#fff; }
+.uc-btn.warn:hover { opacity:.9; }
+.uc-btn.errb { background:var(--coral); color:#fff; }
+.uc-btn.errb:hover { opacity:.9; }
+.uc-btn:disabled { opacity:.38; cursor:not-allowed; }
+.spin-sm { display:inline-block; width:10px; height:10px; border:2px solid rgba(255,255,255,.3); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; margin-right:4px; }
+
+/* Ensamble final */
+.final-card { background:var(--bg2); border:1.5px solid var(--border); border-radius:var(--r); padding:15px 18px; display:flex; align-items:center; gap:14px; }
+.final-card.f-ready { border-color:var(--purple); background:var(--pbg); }
+.fc-icon { font-size:24px; flex-shrink:0; }
+.fc-info { flex:1; min-width:0; }
+.fc-title { font-size:14px; font-weight:800; }
+.fc-sub   { font-size:12px; color:var(--text2); margin-top:2px; }
+.fc-btn   { padding:11px 20px; border:none; border-radius:var(--r); font-size:13px; font-weight:800; cursor:pointer; color:#fff; background:var(--purple); white-space:nowrap; flex-shrink:0; }
+.fc-btn:disabled { opacity:.35; cursor:not-allowed; background:var(--border2); color:var(--text3); }
+.fc-btn.pulse { animation:fcpulse 1.6s ease-in-out infinite; }
+@keyframes fcpulse{0%,100%{box-shadow:0 0 0 0 rgba(83,74,183,.4)}50%{box-shadow:0 0 0 10px rgba(83,74,183,0)}}
+
+/* Aviso de ZIP sin caché */
+.nocache-warn { background:var(--abg); border:1px solid #E0B872; border-radius:var(--rs); padding:10px 14px; font-size:12px; color:var(--amber); margin-bottom:14px; display:none; }
+.nocache-warn.show { display:block; }
 </style>
 </head>
 <body>
@@ -222,6 +309,47 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 
     </div>
   </main>
+</div>
+
+<!-- ═══════════════════════════════════════════════════════════
+     DASHBOARD DE UNIDADES (reemplaza sidebar+main cuando hay estado)
+     ═══════════════════════════════════════════════════════════ -->
+<div id="vd" style="display:none">
+  <div class="dash">
+
+    <div class="nocache-warn" id="nocacheWarn">
+      ⚠️ <b>El ZIP ya no está en memoria</b> (el servidor fue reiniciado).
+      Para continuar, volvé a subir el mismo archivo ZIP — el progreso guardado se conserva.
+      <button class="bsm" style="margin-left:10px" onclick="showView('welcome')">Subir ZIP</button>
+    </div>
+
+    <!-- Resumen del proyecto -->
+    <div class="proj-ov">
+      <div class="proj-icon">📦</div>
+      <div class="proj-info">
+        <div class="proj-name" id="dProjName">—</div>
+        <div class="proj-meta" id="dProjMeta">—</div>
+      </div>
+      <div class="proj-right">
+        <div class="proj-pbar"><div class="proj-pfill" id="dMainBar" style="width:0%"></div></div>
+        <div class="proj-plbl" id="dMainLbl">—</div>
+      </div>
+    </div>
+
+    <!-- Grid 4×2 de unidades -->
+    <div class="units-grid" id="dUnitsGrid"></div>
+
+    <!-- Ensamble final -->
+    <div class="final-card" id="dFinalCard">
+      <div class="fc-icon">🚀</div>
+      <div class="fc-info">
+        <div class="fc-title">9. Ensamble final</div>
+        <div class="fc-sub" id="dFinalSub">Completá las unidades anteriores.</div>
+      </div>
+      <button class="fc-btn" id="dFinalBtn" disabled onclick="doEnsamble()">🔒 Bloqueado</button>
+    </div>
+
+  </div>
 </div>
 
 <script>
@@ -484,7 +612,8 @@ function loadState(){
 function clearState(){
   if (!confirm('¿Empezar un proyecto nuevo? Se borra el sistema guardado y el avance.')) return;
   try { localStorage.removeItem(LS_KEY); } catch(e) {}
-  location.reload();
+  // También borrar el estado del servidor
+  fetch('/api/estado/reset', { method:'POST' }).finally(() => location.reload());
 }
 
 // ======================= MOTOR DE IA (opcional, para ✨) =======================
@@ -729,9 +858,12 @@ function handleFile(f){
   document.getElementById('fok').classList.add('show');
   hideErr(); hideWarn(); showView('loading');
   setLoad('Leyendo el sistema…', 'Extrayendo tablas, datos, menús e imágenes');
-  return readZip().then(info => {
+  return readZip().then(async info => {
     S.zipInfo = info; saveState(); checkReady();
-    enterProject();
+    // Intentar mostrar el dashboard nuevo si el servidor devuelve estado
+    const estadoSrv = await cargarEstadoServidor();
+    if(estadoSrv){ await mostrarDashboard(estadoSrv); }
+    else { enterProject(); }
     return info;
   }).catch(e => {
     showView('welcome');
@@ -753,6 +885,9 @@ function showView(mode){
   document.getElementById('vw').style.display = 'none';
   document.getElementById('vp').style.display = 'none';
   document.getElementById('vl').classList.remove('show');
+  document.getElementById('vd').style.display = 'none';
+  const app = document.querySelector('.app');
+  if (app) app.style.display = 'flex';
   if (mode === 'welcome') {
     sb.style.display = 'none';
     document.getElementById('vw').style.display = 'block';
@@ -761,6 +896,9 @@ function showView(mode){
   } else if (mode === 'project') {
     sb.style.display = 'flex';
     document.getElementById('vp').style.display = 'block';
+  } else if (mode === 'dashboard') {
+    if (app) app.style.display = 'none';
+    document.getElementById('vd').style.display = 'block';
   }
   const have = !!(S.zipInfo || S.file);
   document.getElementById('bnew').style.display = have ? 'inline-flex' : 'none';
@@ -819,22 +957,257 @@ function repairTruncatedJson(s){
   return out;
 }
 
+// ======================= DASHBOARD DE UNIDADES =======================
+const DASH_UNITS = [
+  { id:'proyecto',  n:1, icon:'📦', title:'Proyecto',        exts:'.pjx · .pjt',
+    detect: z => z.project ? `1 archivo .pjx · ${(z.project.archivos||[]).length} declarados` : 'Sin .pjx (continuás igual)' },
+  { id:'bases',     n:2, icon:'🗄️', title:'Bases de datos',  exts:'.dbc · .dbf · .cdx · .fpt',
+    detect: z => `${(z.databases||[]).length} bases · ${(z.tables||[]).length} tablas · ${fmt((z.tables||[]).reduce((a,t)=>a+(t.records||0),0))} registros`,
+    hasLimit:true },
+  { id:'imagenes',  n:3, icon:'🖼️', title:'Imágenes',        exts:'.jpg · .bmp · .gif · .png',
+    detect: z => `${fmt(imageCount(z))} imágenes detectadas` },
+  { id:'clases',    n:4, icon:'⚙️', title:'Clases / lógica', exts:'.vcx · .vct · .prg · .h',
+    detect: z => `${extCount(z,'.vcx')} clases · ${extCount(z,'.prg')} programas` },
+  { id:'menus',     n:5, icon:'🧭', title:'Menús',           exts:'.mnx · .mnt · .mpr',
+    detect: z => { const ms=z.menus||[]; return `${ms.length} menús · ${ms.reduce((a,m)=>a+(m.items||[]).length,0)} ítems`; } },
+  { id:'codigo',    n:6, icon:'📝', title:'Código fuente',   exts:'.prg · .h',
+    detect: z => `${extCount(z,'.prg')} programas · ${extCount(z,'.h')} includes` },
+  { id:'reportes',  n:7, icon:'📄', title:'Reportes',        exts:'.frx · .frt',
+    detect: z => `${extCount(z,'.frx')} reportes detectados` },
+  { id:'pantallas', n:8, icon:'🖥️', title:'Pantallas',       exts:'.scx · .sct',
+    detect: z => `${extCount(z,'.scx')} pantallas detectadas` },
+];
+
+// Estado del dashboard: {unidades:{}, datos:{}, proyecto, zip_en_cache}
+let DEST = {};
+// Límites configurables por unidad (se guardan mientras está abierta la app)
+const LIMITES = { bases: 20 };
+
+async function cargarEstadoServidor(){
+  try {
+    const r = await fetch('/api/estado');
+    if (!r.ok) return null;
+    const d = await r.json();
+    return d && d.proyecto ? d : null;
+  } catch(e) { return null; }
+}
+
+async function mostrarDashboard(estado){
+  DEST = estado;
+  const inv  = (estado.datos || {}).zipinfo || S.zipInfo || {};
+  const nombre = estado.proyecto || projectName();
+
+  document.getElementById('dProjName').textContent = '📦 ' + nombre;
+  document.getElementById('hpname').textContent = '📋 ' + nombre;
+  document.getElementById('bnew').style.display = 'inline-flex';
+  document.getElementById('hBadge') && (document.getElementById('hBadge').style.display = '');
+
+  // Sincronizar S para el resto de la app
+  if (inv && inv.tables) S.zipInfo = inv;
+
+  renderDashboard();
+  showView('dashboard');
+}
+
+function renderDashboard(){
+  const inv  = (DEST.datos || {}).zipinfo || S.zipInfo || {};
+  const unds = (DEST.unidades || {});
+  const done = DASH_UNITS.filter(u => (unds[u.id]||{}).estado === 'completo').length;
+  const total = 9;
+  document.getElementById('dMainBar').style.width = Math.round(done/total*100) + '%';
+  document.getElementById('dMainLbl').textContent = `${done} de ${total} unidades completas`;
+  document.getElementById('dProjMeta').textContent =
+    `${fmt((inv.tables||[]).length)} tablas · ${fmt((inv.total_files||0))} archivos · ${inv.size_mb||0} MB`;
+
+  document.getElementById('nocacheWarn').classList.toggle('show', !DEST.zip_en_cache);
+
+  document.getElementById('dUnitsGrid').innerHTML =
+    DASH_UNITS.map(u => renderUcard(u, unds[u.id]||{}, inv)).join('');
+
+  const allDone = DASH_UNITS.every(u => (unds[u.id]||{}).estado === 'completo');
+  const fc = document.getElementById('dFinalCard');
+  const fb = document.getElementById('dFinalBtn');
+  const fs = document.getElementById('dFinalSub');
+  if(allDone){
+    fc.className = 'final-card f-ready';
+    fb.disabled = false; fb.className = 'fc-btn pulse';
+    fb.textContent = '🚀 Generar app completa';
+    fs.textContent = 'Todas las unidades completas. Generá el ZIP con FastAPI + SPA + importar_datos.sql.';
+  } else {
+    fc.className = 'final-card';
+    fb.disabled = true; fb.className = 'fc-btn';
+    fb.textContent = '🔒 Bloqueado';
+    const pend = DASH_UNITS.filter(u => (unds[u.id]||{}).estado !== 'completo').length;
+    fs.textContent = `Completá ${pend} unidad${pend===1?'':'es'} más para habilitar el ensamble.`;
+  }
+}
+
+function renderUcard(u, ust, inv){
+  const st = ust.estado || 'pendiente';
+  const cls = {done:'st-done',running:'st-running',partial:'st-partial',error:'st-error'}[st]||'';
+  const numTxt = st==='done' ? '✓' : u.n;
+  const stTxt = {pending:'Pendiente',running:'En proceso…',partial:'Parcial',done:'Completo',error:'Error'}[st]||'Pendiente';
+
+  let resultHtml='', progHtml='', btnHtml='';
+
+  if(st==='done'){
+    const r = ust;
+    let txt = '';
+    if(u.id==='proyecto') txt = `✓ ${r.n_archivos||0} archivos declarados`;
+    else if(u.id==='bases') txt = `✓ ${fmt(r.total_rows||0)} registros · ${r.total_idx||0} índices`;
+    else if(u.id==='imagenes') txt = `✓ ${fmt(r.count||0)} imágenes copiadas`;
+    else if(u.id==='clases') txt = `✓ ${r.vcx||0} clases · ${r.prg||0} programas`;
+    else if(u.id==='menus') txt = `✓ ${r.menus||0} menús · ${r.items||0} ítems`;
+    else if(u.id==='codigo') txt = `✓ ${r.prg||0} programas · ${r.h||0} includes`;
+    else if(u.id==='reportes') txt = `✓ ${r.frx||0} reportes`;
+    else if(u.id==='pantallas') txt = `✓ ${r.scx||0} pantallas`;
+    else txt = '✓ Completo';
+    resultHtml = `<div class="uc-result ok">${txt}</div>`;
+    btnHtml = `<button class="uc-btn sec" onclick="reejecutar('${u.id}')">↺ Repetir</button>`;
+  } else if(st==='running'){
+    resultHtml = `<div class="uc-result">Procesando…</div>`;
+    btnHtml = `<button class="uc-btn warn" disabled><span class="spin-sm"></span>En proceso…</button>`;
+  } else if(st==='partial'){
+    const ok = ust.tablas_ok||0, tot = ust.tablas_total||1;
+    const pct = Math.round(ok/tot*100);
+    const lim = LIMITES.bases || 20;
+    progHtml = `
+      <div>
+        <div class="uc-pbar"><div class="uc-pfill" style="width:${pct}%"></div></div>
+        <div class="uc-plbl">${ok} de ${tot} tablas · ${fmt(ust.total_rows||0)} registros</div>
+      </div>
+      <div class="uc-limit">
+        <label>Tablas por pasada:</label>
+        <input type="number" id="limBases" value="${lim}" min="1" max="200"
+               onchange="LIMITES.bases=Math.max(1,Math.min(200,+this.value||20))">
+      </div>`;
+    resultHtml = `<div class="uc-result">${fmt(ust.total_rows||0)} registros · ${ust.total_idx||0} índices hasta ahora</div>`;
+    btnHtml = `<button class="uc-btn warn" onclick="ejecutarUnidad('bases')">▶ Continuar (${tot-ok} restantes)</button>`;
+  } else if(st==='error'){
+    resultHtml = `<div class="uc-result err">Error: ${esc(ust.error||'desconocido')}</div>`;
+    btnHtml = `<button class="uc-btn errb" onclick="ejecutarUnidad('${u.id}')">↺ Reintentar</button>`;
+  } else {
+    resultHtml = `<div class="uc-result">${esc(u.detect(inv))}</div>`;
+    const disabled = !DEST.zip_en_cache ? 'disabled title="Subí el ZIP primero"' : '';
+    btnHtml = `<button class="uc-btn pri" ${disabled} onclick="ejecutarUnidad('${u.id}')">▶ Ejecutar</button>`;
+  }
+
+  return `
+    <div class="ucard ${cls}">
+      <div class="uc-head">
+        <div class="uc-num">${numTxt}</div>
+        <div class="uc-icon">${u.icon}</div>
+        <div class="uc-titles">
+          <div class="uc-title">${u.title}</div>
+          <div class="uc-exts">${u.exts}</div>
+        </div>
+      </div>
+      <div class="uc-div"></div>
+      <div class="uc-status">
+        <div class="uc-dot"></div>
+        <div class="uc-st-txt">${stTxt}</div>
+      </div>
+      ${resultHtml}
+      ${progHtml}
+      ${btnHtml}
+    </div>`;
+}
+
+async function ejecutarUnidad(nombre){
+  if(!DEST.zip_en_cache){ showErr('El ZIP ya no está en caché. Volvé a subirlo.'); return; }
+  const ust = DEST.unidades || {};
+  ust[nombre] = { estado:'running' };
+  renderDashboard();
+
+  const body = nombre==='bases' ? { limite: LIMITES.bases || 20 } : {};
+  try {
+    const r = await fetch('/api/unidad/' + nombre, {
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body: JSON.stringify(body)
+    });
+    const d = await r.json();
+    if(!r.ok) throw new Error(d.error || 'HTTP '+r.status);
+    // Recargar estado desde servidor para tener el estado guardado real
+    const nuevo = await cargarEstadoServidor();
+    if(nuevo){ DEST = nuevo; }
+    renderDashboard();
+  } catch(e) {
+    (DEST.unidades||{})[nombre] = { estado:'error', error:e.message };
+    renderDashboard();
+    showErr('Error en unidad "'+nombre+'": '+e.message);
+  }
+}
+
+async function reejecutar(nombre){
+  (DEST.unidades||{})[nombre] = { estado:'pendiente' };
+  renderDashboard();
+  await ejecutarUnidad(nombre);
+}
+
+async function doEnsamble(){
+  if(!S.zipInfo && !(DEST.datos||{}).zipinfo){
+    showErr('No hay inventario del ZIP disponible.'); return;
+  }
+  hideErr(); hideWarn();
+  showView('loading');
+  setLoad('Ensamblando la app completa…','Armando FastAPI + SPA + importar_datos.sql + PROYECTO.md');
+  try {
+    const inv = (DEST.datos||{}).zipinfo || S.zipInfo || {};
+    const title = (DEST.proyecto || projectName() || 'App migrada').replace(/\.zip$/i,'');
+    const payload = {
+      inventory: Object.assign({ nombre: title }, inv),
+      title,
+      filename: 'app-migrada.zip',
+      zip_token: inv.zip_token || DEST.zip_token || '',
+    };
+    const r = await fetch('/api/scaffold', {
+      method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload)
+    });
+    if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error?.message||'HTTP '+r.status); }
+    const imported = parseInt(r.headers.get('X-Rows-Imported')||'0', 10);
+    const imgs     = parseInt(r.headers.get('X-Images-Imported')||'0', 10);
+    const blob = await r.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = 'app-migrada.zip';
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(()=>URL.revokeObjectURL(a.href), 1500);
+    const nuevo = await cargarEstadoServidor();
+    if(nuevo) DEST = nuevo;
+    renderDashboard();
+    showView('dashboard');
+    showWarn(`✅ ¡Listo! app-migrada.zip descargado · ${fmt(imported)} registros · ${imgs} imágenes · PROYECTO.md + importar_datos.sql incluidos.`);
+  } catch(e) {
+    const nuevo = await cargarEstadoServidor();
+    if(nuevo) DEST = nuevo;
+    renderDashboard();
+    showView('dashboard');
+    showErr('Error en el ensamble: '+e.message);
+  }
+}
+
 // ======================= ARRANQUE: restaurar proyecto guardado =======================
-(function restore(){
+(async function restore(){
+  // Primero intentar recuperar el estado del servidor (persiste entre reinicios del navegador)
+  const estadoServidor = await cargarEstadoServidor();
+  if(estadoServidor){
+    // Modo nuevo: dashboard de unidades
+    await mostrarDashboard(estadoServidor);
+    return;
+  }
+  // Fallback: modo clásico (localStorage)
   if (!loadState()) { showView('welcome'); return; }
-  // Reflejar el motor de IA guardado en los controles.
   document.querySelectorAll('#enginerow .lb').forEach((b,i) => b.classList.toggle('active', (S.engine==='free'?1:0)===i));
   document.getElementById('keyblk').style.display = (S.engine==='claude') ? 'block' : 'none';
   document.getElementById('freebox').style.display = (S.engine==='free') ? 'block' : 'none';
   if (S.engine === 'free') loadOllamaModels();
-
   if (S.zipInfo) {
     document.getElementById('fname').textContent = S.savedFileName || 'Sistema restaurado';
     enterProject();
     const pend = STEPS.length - S.reviewed.length;
     showWarn(pend > 0
-      ? `↩ Proyecto restaurado. Te quedan ${pend} de ${STEPS.length} áreas por revisar. Seguí donde dejaste o generá la app.`
-      : `↩ Proyecto restaurado. Ya revisaste todo: podés generar la app con 📦. Para empezar otro: "Nuevo proyecto".`);
+      ? `↩ Proyecto restaurado. Te quedan ${pend} de ${STEPS.length} áreas por revisar.`
+      : `↩ Proyecto restaurado. Generá la app con 📦.`);
   } else {
     showView('welcome');
   }
