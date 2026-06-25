@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LegacyMigrator — Dashboard (prototipo)</title>
+<style>
+* { box-sizing:border-box; margin:0; padding:0; }
+:root {
+  --bg:#f8f7f4; --bg2:#ffffff; --bg3:#f0ede8;
+  --text:#1a1917; --text2:#6b6963; --text3:#9c9a92;
+  --border:#e2dfd8; --border2:#ccc9c0;
+  --purple:#534AB7; --pbg:#EEEDFE; --ptxt:#3C3489;
+  --teal:#0F6E56; --tbg:#E1F5EE; --ttxt:#085041;
+  --coral:#993C1D; --cbg:#FAECE7;
+  --amber:#854F0B; --abg:#FAEEDA;
+  --red:#A32D2D; --rbg:#FCEBEB;
+  --r:10px; --rs:6px;
+}
+body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; background:var(--bg); color:var(--text); min-height:100vh; display:flex; flex-direction:column; font-size:14px; line-height:1.5; }
+
+/* ── BARRA DE DEMO (solo prototipo) ─────────────────────────────── */
+.demo-bar { background:#1a1917; color:#f0ede8; padding:8px 20px; display:flex; align-items:center; gap:12px; font-size:12px; flex-shrink:0; }
+.demo-bar b { color:#9FE1CB; }
+.demo-btn { padding:4px 13px; border:1px solid #444; border-radius:20px; background:transparent; color:#ccc; cursor:pointer; font-size:12px; transition:.1s; }
+.demo-btn:hover { border-color:#888; color:#fff; }
+.demo-btn.act { background:var(--purple); border-color:var(--purple); color:#fff; font-weight:700; }
+.demo-sep { color:#555; }
+
+/* ── HEADER ─────────────────────────────────────────────────────── */
+.hdr { background:var(--bg2); border-bottom:1px solid var(--border); padding:0 20px; height:54px; display:flex; align-items:center; gap:10px; flex-shrink:0; }
+.logo { width:30px; height:30px; background:var(--purple); border-radius:7px; display:flex; align-items:center; justify-content:center; color:#fff; font-size:13px; font-weight:800; }
+.hdr h1 { font-size:15px; font-weight:700; }
+.hdr-sub { font-size:11px; color:var(--text3); }
+.sp { flex:1; }
+.badge { font-size:12px; padding:4px 12px; border-radius:20px; background:var(--pbg); color:var(--ptxt); font-weight:700; }
+.bsm { padding:7px 13px; font-size:13px; font-weight:600; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg2); color:var(--text2); cursor:pointer; }
+.bsm:hover { border-color:var(--border2); background:var(--bg3); }
+
+/* ── VISTA: subir ZIP (pantalla de inicio si no hay proyecto) ──── */
+#vw { display:flex; flex:1; align-items:center; justify-content:center; }
+.wel { max-width:520px; text-align:center; padding:40px 20px; }
+.wi { width:64px; height:64px; background:var(--pbg); border-radius:16px; display:flex; align-items:center; justify-content:center; font-size:30px; margin:0 auto 18px; }
+.wel h2 { font-size:26px; font-weight:800; margin-bottom:10px; }
+.wel p { font-size:16px; color:var(--text2); margin-bottom:24px; line-height:1.7; }
+.drop { border:2px dashed var(--border2); border-radius:var(--r); padding:30px 18px; text-align:center; cursor:pointer; background:var(--bg2); }
+.drop:hover { border-color:var(--purple); background:var(--pbg); }
+.drop .di { font-size:30px; margin-bottom:8px; }
+.drop p { font-size:16px; font-weight:700; }
+.drop span { font-size:13px; color:var(--text3); }
+.bmd-w { width:100%; max-width:340px; margin:10px auto 0; padding:10px; border:1px solid var(--border); border-radius:var(--r); font-size:13px; font-weight:600; background:var(--bg2); color:var(--text2); cursor:pointer; display:block; }
+.bmd-w:hover { background:var(--bg3); }
+
+/* ── DASHBOARD ───────────────────────────────────────────────────── */
+#vd { flex:1; overflow-y:auto; padding:24px 20px 40px; }
+.dash { max-width:1000px; margin:0 auto; }
+
+/* OVERVIEW DEL PROYECTO */
+.proj-ov { background:var(--bg2); border:1px solid var(--border); border-radius:var(--r); padding:16px 20px; margin-bottom:20px; display:flex; align-items:center; gap:16px; }
+.proj-icon { font-size:30px; flex-shrink:0; }
+.proj-info { flex:1; min-width:0; }
+.proj-name { font-size:17px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.proj-meta { font-size:12px; color:var(--text3); margin-top:2px; }
+.proj-right { flex-shrink:0; text-align:right; min-width:200px; }
+.proj-pbar { height:7px; background:var(--bg3); border-radius:4px; overflow:hidden; margin:4px 0; }
+.proj-pfill { height:100%; border-radius:4px; background:linear-gradient(90deg,var(--purple),var(--teal)); transition:width .4s; }
+.proj-plbl { font-size:12px; color:var(--text2); }
+
+/* GRID DE UNIDADES: 4 columnas */
+.units-grid { display:grid; grid-template-columns:repeat(4,1fr); gap:10px; margin-bottom:10px; }
+@media(max-width:760px){ .units-grid{ grid-template-columns:repeat(2,1fr); } }
+@media(max-width:480px){ .units-grid{ grid-template-columns:1fr; } }
+
+/* TARJETA DE UNIDAD */
+.ucard { background:var(--bg2); border:1.5px solid var(--border); border-radius:var(--r); padding:14px 13px 12px; display:flex; flex-direction:column; gap:8px; min-width:0; transition:border-color .15s, box-shadow .15s; }
+.ucard:hover { border-color:var(--border2); box-shadow:0 2px 8px rgba(0,0,0,.05); }
+.ucard.st-done    { border-color:#9FE1CB; }
+.ucard.st-running { border-color:#E0B872; }
+.ucard.st-partial { border-color:#E0B872; }
+.ucard.st-error   { border-color:#F09595; }
+
+/* Cabecera de tarjeta */
+.uc-head { display:flex; align-items:flex-start; gap:8px; }
+.uc-num { width:22px; height:22px; border-radius:50%; background:var(--bg3); color:var(--text2); font-weight:800; display:flex; align-items:center; justify-content:center; font-size:11px; flex-shrink:0; margin-top:1px; }
+.st-done  .uc-num { background:var(--teal); color:#fff; }
+.st-running .uc-num,.st-partial .uc-num { background:var(--amber); color:#fff; }
+.st-error .uc-num { background:var(--red); color:#fff; }
+.uc-icon { font-size:18px; flex-shrink:0; line-height:1.2; }
+.uc-titles { flex:1; min-width:0; }
+.uc-title { font-size:13px; font-weight:800; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.uc-exts  { font-size:10px; color:var(--text3); font-family:monospace; margin-top:1px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+
+/* Separador */
+.uc-div { height:1px; background:var(--border); }
+
+/* Estado y resultado */
+.uc-status { display:flex; align-items:center; gap:6px; }
+.uc-dot { width:7px; height:7px; border-radius:50%; background:var(--border2); flex-shrink:0; }
+.st-done  .uc-dot { background:var(--teal); }
+.st-running .uc-dot,.st-partial .uc-dot { background:var(--amber); animation:blink 1s ease-in-out infinite; }
+.st-error .uc-dot { background:var(--red); }
+@keyframes blink{0%,100%{opacity:1}50%{opacity:.25}}
+.uc-st-txt { font-size:12px; font-weight:700; color:var(--text2); }
+.uc-result { font-size:11px; color:var(--text3); line-height:1.4; }
+.uc-result.ok { color:var(--ttxt); }
+.uc-result.err { color:var(--red); }
+
+/* Barra de progreso parcial */
+.uc-pbar-wrap { }
+.uc-pbar { height:5px; background:var(--bg3); border-radius:3px; overflow:hidden; margin:3px 0; }
+.uc-pfill { height:100%; border-radius:3px; background:linear-gradient(90deg,var(--amber),var(--teal)); }
+.uc-plbl { font-size:10px; color:var(--text3); }
+.uc-limit { display:flex; align-items:center; gap:5px; margin-top:3px; }
+.uc-limit label { font-size:10px; color:var(--text3); white-space:nowrap; }
+.uc-limit input { width:48px; padding:2px 5px; font-size:11px; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg); color:var(--text); text-align:center; }
+
+/* Botones de unidad */
+.uc-btn { width:100%; padding:8px 6px; border:none; border-radius:var(--rs); font-size:12px; font-weight:700; cursor:pointer; text-align:center; margin-top:auto; }
+.uc-btn.pri  { background:var(--teal); color:#fff; }
+.uc-btn.pri:hover  { opacity:.9; }
+.uc-btn.sec  { background:var(--bg3); color:var(--text2); border:1px solid var(--border); }
+.uc-btn.sec:hover  { background:var(--border); }
+.uc-btn.warn { background:var(--amber); color:#fff; }
+.uc-btn.warn:hover { opacity:.9; }
+.uc-btn.red  { background:var(--coral); color:#fff; }
+.uc-btn.red:hover  { opacity:.9; }
+.uc-btn:disabled { opacity:.4; cursor:not-allowed; }
+
+.spin-sm { display:inline-block; width:10px; height:10px; border:2px solid rgba(255,255,255,.35); border-top-color:#fff; border-radius:50%; animation:spin .7s linear infinite; vertical-align:middle; margin-right:4px; }
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ENSAMBLE FINAL (ancho completo) */
+.final-card { background:var(--bg2); border:1.5px solid var(--border); border-radius:var(--r); padding:16px 20px; display:flex; align-items:center; gap:16px; }
+.final-card.f-ready { border-color:var(--purple); background:var(--pbg); }
+.fc-icon { font-size:26px; flex-shrink:0; }
+.fc-info { flex:1; min-width:0; }
+.fc-title { font-size:15px; font-weight:800; }
+.fc-sub { font-size:12px; color:var(--text2); margin-top:3px; }
+.fc-btn { padding:12px 24px; border:none; border-radius:var(--r); font-size:14px; font-weight:800; cursor:pointer; color:#fff; background:var(--purple); white-space:nowrap; flex-shrink:0; }
+.fc-btn:disabled { opacity:.35; cursor:not-allowed; background:var(--border2); color:var(--text3); }
+.fc-btn.pulse { animation:pulse 1.6s ease-in-out infinite; }
+@keyframes pulse{0%,100%{box-shadow:0 0 0 0 rgba(83,74,183,.4)}50%{box-shadow:0 0 0 10px rgba(83,74,183,0)}}
+
+/* NOTA DE PROTOTIPO */
+.proto-note { background:var(--abg); border:1px solid #E0B872; border-radius:var(--rs); padding:9px 14px; font-size:12px; color:var(--amber); margin-bottom:18px; }
+</style>
+</head>
+<body>
+
+<!-- ╔════════════════════════════════════════╗
+     ║  BARRA DE DEMO (solo en prototipo)    ║
+     ╚════════════════════════════════════════╝ -->
+<div class="demo-bar">
+  🎨 <b>Prototipo</b> — estado simulado:
+  <span class="demo-sep">|</span>
+  <button class="demo-btn act" id="dBtn0" onclick="switchDemo(0)">Sin proyecto</button>
+  <button class="demo-btn"    id="dBtn1" onclick="switchDemo(1)">Arrancando</button>
+  <button class="demo-btn"    id="dBtn2" onclick="switchDemo(2)">En proceso</button>
+  <button class="demo-btn"    id="dBtn3" onclick="switchDemo(3)">A mitad</button>
+  <button class="demo-btn"    id="dBtn4" onclick="switchDemo(4)">Listo ✓</button>
+</div>
+
+<!-- ╔════════════════════════════════════════╗
+     ║  HEADER                               ║
+     ╚════════════════════════════════════════╝ -->
+<header class="hdr">
+  <div class="logo">LM</div>
+  <div>
+    <h1>LegacyMigrator</h1>
+    <div class="hdr-sub">Migrá tu sistema viejo, paso a paso</div>
+  </div>
+  <div class="sp"></div>
+  <span class="badge" id="hBadge" style="display:none">📋 RECETAS.zip</span>
+  <button class="bsm" id="hNew" style="display:none;margin-left:8px" onclick="switchDemo(0)">🗑 Nuevo proyecto</button>
+</header>
+
+<!-- ╔════════════════════════════════════════╗
+     ║  VISTA: SUBIR ZIP (sin proyecto)      ║
+     ╚════════════════════════════════════════╝ -->
+<div id="vw">
+  <div class="wel">
+    <div class="wi">📁</div>
+    <h2>Subí tu sistema viejo</h2>
+    <p>Elegí el archivo <b>ZIP</b> de tu sistema Visual FoxPro / FoxPro (o la carpeta con los archivos).<br>
+       Yo lo leo y te muestro qué hay adentro.</p>
+    <div class="drop" onclick="switchDemo(1)">
+      <div class="di">⬆️</div>
+      <p>Hacé clic acá para elegir el ZIP</p>
+      <span>o arrastrá el archivo a esta zona</span>
+    </div>
+    <button class="bmd-w" onclick="switchDemo(1)">📂 …o elegir una carpeta (.dbf + imágenes)</button>
+  </div>
+</div>
+
+<!-- ╔════════════════════════════════════════╗
+     ║  DASHBOARD DE PROYECTO                ║
+     ╚════════════════════════════════════════╝ -->
+<div id="vd" style="display:none">
+  <div class="dash">
+
+    <div class="proto-note">
+      ⚠️ <b>Prototipo visual</b> — datos simulados. Usá los botones de la barra negra superior para ver distintos escenarios.
+    </div>
+
+    <!-- Resumen del proyecto -->
+    <div class="proj-ov">
+      <div class="proj-icon">📦</div>
+      <div class="proj-info">
+        <div class="proj-name">RECETAS.zip</div>
+        <div class="proj-meta">314 archivos · 18,4 MB · Visual FoxPro · Cargado: 2026-06-25 10:30</div>
+      </div>
+      <div class="proj-right">
+        <div class="proj-pbar"><div class="proj-pfill" id="mainBarFill"></div></div>
+        <div class="proj-plbl" id="mainBarLbl"></div>
+      </div>
+    </div>
+
+    <!-- Grid 4×2 de unidades -->
+    <div class="units-grid" id="unitsGrid"></div>
+
+    <!-- Ensamble final (ancho completo) -->
+    <div class="final-card" id="finalCard">
+      <div class="fc-icon">🚀</div>
+      <div class="fc-info">
+        <div class="fc-title">9. Ensamble final</div>
+        <div class="fc-sub" id="finalSub"></div>
+      </div>
+      <button class="fc-btn" id="finalBtn" disabled></button>
+    </div>
+
+  </div>
+</div>
+
+<script>
+// ─── Definición de unidades ───────────────────────────────────────
+const UNITS = [
+  { id:'proyecto',  n:1, icon:'📦', title:'Proyecto',
+    exts:'.pjx · .pjt',
+    detect:'1 archivo .pjx detectado',
+    result:'PROYECTO.md generado (2,4 KB)' },
+  { id:'bases',     n:2, icon:'🗄️', title:'Bases de datos',
+    exts:'.dbc · .dbf · .cdx · .fpt',
+    detect:'3 bases · 30 tablas · 21 244 registros',
+    result:'Esquema SQLite + importar_datos.sql',
+    hasLimit:true },
+  { id:'imagenes',  n:3, icon:'🖼️', title:'Imágenes',
+    exts:'.jpg · .bmp · .gif · .png',
+    detect:'143 imágenes detectadas',
+    result:'143 archivos copiados a assets/' },
+  { id:'clases',    n:4, icon:'⚙️', title:'Clases / lógica',
+    exts:'.vcx · .vct · .prg · .h',
+    detect:'5 clases · 8 programas',
+    result:'Reglas en PROYECTO.md' },
+  { id:'menus',     n:5, icon:'🧭', title:'Menús',
+    exts:'.mnx · .mnt · .mpr',
+    detect:'1 menú · 10 ítems',
+    result:'Árbol de navegación generado' },
+  { id:'codigo',    n:6, icon:'📝', title:'Código fuente',
+    exts:'.prg · .h',
+    detect:'8 programas · 3 includes',
+    result:'Fragmentos en PROYECTO.md' },
+  { id:'reportes',  n:7, icon:'📄', title:'Reportes',
+    exts:'.frx · .frt',
+    detect:'2 reportes',
+    result:'2 vistas de consulta generadas' },
+  { id:'pantallas', n:8, icon:'🖥️', title:'Pantallas',
+    exts:'.scx · .sct',
+    detect:'13 pantallas',
+    result:'13 ABMs con layout real' },
+];
+
+// ─── Escenarios de demo ────────────────────────────────────────────
+// Estado por unidad: 'pending' | 'running' | 'partial' | 'done' | 'error'
+const DEMOS = [
+  // 0: sin proyecto (solo muestra la pantalla de upload)
+  null,
+
+  // 1: arrancando — solo "proyecto" corriendo
+  { proyecto:'running', bases:'pending', imagenes:'pending', clases:'pending',
+    menus:'pending', codigo:'pending', reportes:'pending', pantallas:'pending' },
+
+  // 2: en proceso — proyecto listo, bases parcial, imágenes corriendo
+  { proyecto:'done', bases:'partial', imagenes:'running', clases:'pending',
+    menus:'pending', codigo:'pending', reportes:'pending', pantallas:'pending' },
+
+  // 3: a mitad — 4 completas, resto pendiente
+  { proyecto:'done', bases:'done', imagenes:'done', clases:'done',
+    menus:'pending', codigo:'pending', reportes:'pending', pantallas:'pending' },
+
+  // 4: todas completas — ensamble habilitado
+  { proyecto:'done', bases:'done', imagenes:'done', clases:'done',
+    menus:'done', codigo:'done', reportes:'done', pantallas:'done' },
+];
+
+let curDemo = 0;
+
+function switchDemo(idx){
+  curDemo = idx;
+  // Barra demo
+  for(let i=0;i<5;i++) document.getElementById('dBtn'+i).classList.toggle('act', i===idx);
+  // Header
+  const hasPrj = idx > 0;
+  document.getElementById('hBadge').style.display = hasPrj ? '' : 'none';
+  document.getElementById('hNew').style.display = hasPrj ? '' : 'none';
+  // Vista
+  document.getElementById('vw').style.display = hasPrj ? 'none' : 'flex';
+  document.getElementById('vd').style.display = hasPrj ? 'block' : 'none';
+  if(hasPrj) renderDashboard(DEMOS[idx]);
+}
+
+function renderDashboard(states){
+  const done = Object.values(states).filter(s=>s==='done').length;
+  const total = 9; // 8 unidades + ensamble
+  document.getElementById('mainBarFill').style.width = Math.round(done/total*100)+'%';
+  document.getElementById('mainBarLbl').textContent = `${done} de 9 unidades completas`;
+
+  document.getElementById('unitsGrid').innerHTML = UNITS.map(u => cardHtml(u, states[u.id]||'pending')).join('');
+
+  const allDone = UNITS.every(u => states[u.id]==='done');
+  const fc = document.getElementById('finalCard');
+  const fb = document.getElementById('finalBtn');
+  const fs = document.getElementById('finalSub');
+  if(allDone){
+    fc.className = 'final-card f-ready';
+    fb.disabled = false; fb.className = 'fc-btn pulse';
+    fb.textContent = '🚀 Generar app completa';
+    fs.textContent = 'Todas las unidades completas. Generá el ZIP con FastAPI + SPA + datos importados + script SQL.';
+  } else {
+    fc.className = 'final-card';
+    fb.disabled = true; fb.className = 'fc-btn';
+    fb.textContent = '🔒 Bloqueado';
+    const pend = UNITS.filter(u=>states[u.id]!=='done').length;
+    fs.textContent = `Completá las ${pend} unidad${pend===1?'':'es'} pendiente${pend===1?'':'s'} para habilitar el ensamble.`;
+  }
+}
+
+function cardHtml(u, st){
+  // Clase de estado
+  const cls = {done:'st-done',running:'st-running',partial:'st-partial',error:'st-error'}[st]||'';
+  // Número
+  const numTxt = st==='done' ? '✓' : u.n;
+  // Dot
+  const dotCls = {done:'uc-dot',running:'uc-dot',partial:'uc-dot',error:'uc-dot'}[st]||'uc-dot';
+  // Texto de estado
+  const stTxt = {pending:'Pendiente',running:'En proceso…',partial:'Parcial',done:'Completo',error:'Error'}[st]||'Pendiente';
+  // Resultado / descripción
+  let resultHtml = '';
+  if(st==='done'){
+    resultHtml = `<div class="uc-result ok">✓ ${u.result}</div>`;
+  } else if(st==='running'){
+    resultHtml = `<div class="uc-result">Procesando…</div>`;
+  } else if(st==='error'){
+    resultHtml = `<div class="uc-result err">Error al leer un archivo (ver log)</div>`;
+  } else {
+    resultHtml = `<div class="uc-result">${u.detect}</div>`;
+  }
+  // Progreso parcial (solo unidad "bases" en estado partial)
+  let progHtml = '';
+  if(st==='partial' && u.hasLimit){
+    progHtml = `
+      <div class="uc-pbar-wrap">
+        <div class="uc-pbar"><div class="uc-pfill" style="width:40%"></div></div>
+        <div class="uc-plbl">12 de 30 tablas · 8 497 registros importados</div>
+      </div>
+      <div class="uc-limit">
+        <label>Tablas por pasada:</label>
+        <input type="number" value="20" min="1" max="100">
+      </div>`;
+  }
+  // Botón
+  let btnHtml = '';
+  if(st==='done'){
+    btnHtml = `<button class="uc-btn sec">📁 Ver resultado</button>`;
+  } else if(st==='running'){
+    btnHtml = `<button class="uc-btn warn" disabled><span class="spin-sm"></span>Procesando…</button>`;
+  } else if(st==='partial'){
+    btnHtml = `<button class="uc-btn warn">▶ Continuar (18 restantes)</button>`;
+  } else if(st==='error'){
+    btnHtml = `<button class="uc-btn red">↺ Reintentar</button>`;
+  } else {
+    btnHtml = `<button class="uc-btn pri">▶ Ejecutar</button>`;
+  }
+
+  return `
+    <div class="ucard ${cls}">
+      <div class="uc-head">
+        <div class="uc-num">${numTxt}</div>
+        <div class="uc-icon">${u.icon}</div>
+        <div class="uc-titles">
+          <div class="uc-title">${u.title}</div>
+          <div class="uc-exts">${u.exts}</div>
+        </div>
+      </div>
+      <div class="uc-div"></div>
+      <div class="uc-status">
+        <div class="${dotCls}"></div>
+        <div class="uc-st-txt">${stTxt}</div>
+      </div>
+      ${resultHtml}
+      ${progHtml}
+      ${btnHtml}
+    </div>`;
+}
+
+// Estado inicial
+switchDemo(0);
+</script>
+</body>
+</html>
