@@ -719,6 +719,7 @@ def parse_dbc(dbc_bytes, dct_bytes):
                 pass
 
     relaciones, campos_props, stored_procs, vistas = [], {}, [], []
+    vista_to_tabla = {}
     seen_rels = set()
 
     for r in rows:
@@ -773,12 +774,19 @@ def parse_dbc(dbc_bytes, dct_bytes):
         elif otype in ("view", "localview", "remoteview"):
             if oname:
                 vistas.append(oname)
+                # Extraer tabla base del SQL de la vista para resolver referencias
+                if code:
+                    m = re.search(r'\bFROM\b\s+([A-Za-z_][A-Za-z0-9_]*)', code, re.I)
+                    if m:
+                        base_tabla = scaffold._slug(m.group(1))
+                        vista_to_tabla[scaffold._slug(oname)] = base_tabla
 
     return {
         "relaciones": relaciones,
         "campos": campos_props,
         "stored_procs": stored_procs[:20],
         "vistas": vistas[:50],
+        "vista_to_tabla": vista_to_tabla,
     }
 
 
@@ -837,6 +845,12 @@ def parse_scx_controls(scx, sct):
     has_props = "properties" in fmap
     if has_props:
         po, pl, pt = fmap["properties"]
+    has_methods = "methods" in fmap
+    if has_methods:
+        mo, ml, mt = fmap["methods"]
+    has_parent = "parent" in fmap
+    if has_parent:
+        paro, parl, part = fmap["parent"]
 
     def field_text(rec, off, ln, typ):
         raw = rec[off:off + ln]
@@ -861,6 +875,8 @@ def parse_scx_controls(scx, sct):
     controls = []
     campos = []          # controles atados a campos reales (ControlSource)
     tabla_freq = {}      # frecuencia de tabla referenciada -> para inferir la tabla
+    metodos = []         # eventos con código de negocio
+    grid_names = set()   # nombres de objetos grid (para resolver columnas)
     for r in range(num_records):
         start = header_len + r * rec_len
         rec = scx[start:start + rec_len]
@@ -873,6 +889,16 @@ def parse_scx_controls(scx, sct):
         counts[baseclass] = counts.get(baseclass, 0) + 1
         if len(controls) < 40:
             controls.append({"name": objname, "type": baseclass})
+        # Registrar grids para resolver columnas hijas
+        if baseclass == "grid":
+            grid_names.add(objname.lower())
+        # Extraer parent (para resolver columnas de grids)
+        parent_name = ""
+        if has_parent:
+            try:
+                parent_name = field_text(rec, paro, parl, part).strip()
+            except Exception:
+                parent_name = ""
         # Layout real: ControlSource (atadura a campo) y Caption (etiqueta).
         if has_props:
             try:
@@ -883,14 +909,37 @@ def parse_scx_controls(scx, sct):
                 pref, _, fld = src.partition(".")
                 pref, fld = pref.strip().lower(), fld.strip()
                 if pref and fld and pref not in ("thisform", "this", "_screen"):
-                    tabla_freq[pref] = tabla_freq.get(pref, 0) + 1
-                    if len(campos) < MAX_FIELDS_PER_TABLE:
-                        campos.append({"field": fld, "label": label or fld, "top": top})
+                    # Si el padre es un grid → campo de subgrilla (orden al final)
+                    if has_parent and parent_name.lower() in grid_names:
+                        tabla_freq[pref] = tabla_freq.get(pref, 0) + 1
+                        if len(campos) < MAX_FIELDS_PER_TABLE:
+                            campos.append({"field": fld, "label": label or fld,
+                                           "top": top + 1000, "en_grid": True})
+                    else:
+                        tabla_freq[pref] = tabla_freq.get(pref, 0) + 1
+                        if len(campos) < MAX_FIELDS_PER_TABLE:
+                            campos.append({"field": fld, "label": label or fld, "top": top})
+        # Extraer métodos/eventos con código de negocio
+        if has_methods:
+            try:
+                mcode = field_text(rec, mo, ml, mt).strip()
+            except Exception:
+                mcode = ""
+            if mcode and len(mcode) > 20:
+                non_ascii = sum(1 for c in mcode if ord(c) > 127) / max(len(mcode), 1)
+                if non_ascii < 0.2 and (not mcode or ord(mcode[0]) >= 32):
+                    eventos = re.findall(r'PROCEDURE\s+(\w+)', mcode, re.I)
+                    if eventos and len(metodos) < 20:
+                        metodos.append({
+                            "obj": objname,
+                            "eventos": eventos[:6],
+                            "codigo": mcode[:800],
+                        })
     if not counts:
         return None
     tabla = max(tabla_freq, key=tabla_freq.get) if tabla_freq else ""
     return {"counts": counts, "controls": controls, "total": sum(counts.values()),
-            "campos": campos, "tabla": tabla}
+            "campos": campos, "tabla": tabla, "metodos": metodos}
 
 
 def _clean_prompt(s):
@@ -1159,6 +1208,7 @@ def analyze_zip(raw_bytes):
                         "total": info["total"],
                         "tabla": info.get("tabla", ""),
                         "campos": info.get("campos", []),
+                        "metodos": info.get("metodos", []),
                     })
             except Exception:
                 pass
@@ -1245,6 +1295,21 @@ def analyze_zip(raw_bytes):
             except Exception:
                 pass
 
+    # Construir mapa global vista→tabla desde todos los .dbc
+    _vista_to_tabla = {}
+    for db in databases:
+        _vista_to_tabla.update(db.get("vista_to_tabla") or {})
+
+    # Resolver el campo "tabla" de cada form usando el mapa de vistas
+    for fd in forms_detail:
+        t = scaffold._slug(fd.get("tabla", ""))
+        if t and t in _vista_to_tabla:
+            fd["tabla_real"] = _vista_to_tabla[t]
+            fd["tabla_es_vista"] = True
+        else:
+            fd["tabla_real"] = t
+            fd["tabla_es_vista"] = False
+
     return {
         "total_files": len(names),
         "size_mb": round(len(raw_bytes) / 1024 / 1024, 1),
@@ -1259,6 +1324,7 @@ def analyze_zip(raw_bytes):
         "menus": menus,
         "project": project,
         "databases": databases,
+        "vista_to_tabla": _vista_to_tabla,
     }
 
 

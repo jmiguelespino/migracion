@@ -137,7 +137,8 @@ def _forms_index(inventory):
     (ControlSource/Caption/Top). Permite que el ABM se parezca al formulario."""
     idx = {}
     for f in inventory.get("forms_detail", []):
-        tabla, campos = f.get("tabla"), f.get("campos") or []
+        tabla = f.get("tabla_real") or f.get("tabla")
+        campos = f.get("campos") or []
         if not tabla or not campos:
             continue
         d = idx.setdefault(_slug(tabla), {"labels": {}, "order": {}})
@@ -1069,7 +1070,7 @@ def genera_proyecto_md(inventory, title="Sistema"):
 
     form_for_table = {}
     for f in forms:
-        k = _slug(f.get("tabla", ""))
+        k = _slug(f.get("tabla_real") or f.get("tabla", ""))
         if k:
             form_for_table[k] = f.get("name", "")
 
