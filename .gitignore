@@ -5,6 +5,10 @@ __pycache__/
 # Sistemas/legacy de prueba
 *.zip
 
+# Estado de runtime del servidor (se genera al subir un ZIP)
+migrador_estado.json
+_uploads/
+
 # OS / editores
 .DS_Store
 Thumbs.db
