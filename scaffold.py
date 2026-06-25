@@ -53,9 +53,12 @@ def _menu_to_tabla(texto, accion, table_index):
     if m:
         form_name = m.group(1)
         candidates.append(_norm(form_name))
-        # VFP nombra forms con prefijo numérico de programa: "2100_articulos" → probar "articulos"
+        # VFP nombra forms con prefijos que no son parte de la tabla:
+        #  - prefijo numérico de programa: "2100_articulos" → "articulos"
+        #  - prefijo de tipo "frm"/"form": "frmPedidos" → "Pedidos"
         suffix = re.sub(r'^\d+_?', '', form_name)
-        if suffix and suffix.lower() != form_name.lower():
+        suffix = re.sub(r'^(?:frm|form)_?', '', suffix, flags=re.IGNORECASE)
+        if suffix and _norm(suffix) != _norm(form_name):
             candidates.append(_norm(suffix))
     for cand in candidates:
         if not cand:
@@ -272,16 +275,80 @@ def build_meta(inventory, title, enrich=None):
             "data_expr": rd.get("data_expr") or "",
         })
 
-    formularios = [re.sub(r"\.\w+$", "", str(f)) for f in inventory.get("forms", [])]
+    # Formularios originales (.scx): cada uno se convierte en una PANTALLA de
+    # carga real sobre su tabla, respetando los campos, etiquetas (Caption) y el
+    # orden (Top) del formulario original. Así la app expone los MISMOS forms del
+    # sistema legacy, no sólo un ABM genérico por tabla.
+    formularios = []
+    forms_by_norm = {}   # nombre normalizado del form -> índice en `formularios`
+    for fd in (inventory.get("forms_detail") or []):
+        name = str(fd.get("name") or "").strip()
+        if not name:
+            continue
+        tkey = _slug(fd.get("tabla_real") or fd.get("tabla") or "")
+        if tkey not in table_keys:
+            tkey = ""   # form sin tabla conocida: se muestra como referencia
+        campos_form, seen_ff = [], set()
+        for c in sorted(fd.get("campos") or [], key=lambda x: x.get("top", 0)):
+            fld = _slug(c.get("field"))
+            if not fld or fld == "id" or fld in seen_ff:
+                continue
+            seen_ff.add(fld)
+            campos_form.append({
+                "field":   fld,
+                "label":   str(c.get("label") or fld)[:60],
+                "en_grid": bool(c.get("en_grid")),
+            })
+        forms_by_norm[_norm(name)] = len(formularios)
+        formularios.append({"name": name, "tabla": tkey, "campos": campos_form})
+    # Completar con forms declarados que no tienen detalle parseado (sólo nombre),
+    # para no perder ninguno (cobertura total de utilidades).
+    for f in (inventory.get("forms") or []):
+        nm = re.sub(r"\.\w+$", "", str(f))
+        nn = _norm(nm)
+        if not nm or nn in forms_by_norm:
+            continue
+        forms_by_norm[nn] = len(formularios)
+        formularios.append({"name": nm, "tabla": "", "campos": []})
 
-    # Menús: resolver cada ítem a una tabla (clave "tabla") para que la SPA
-    # pueda navegar directamente al ABM correspondiente.
+    # Menús: resolver cada ítem a su FORMULARIO (preferido) o a su tabla (ABM).
+    # "DO FORM xxx" se resuelve contra forms_by_norm — esto cubre los prefijos
+    # típicos de VFP (frm..., 2100_..., etc.) usando la tabla real del .scx.
+    # "REPORT FORM xxx" se resuelve contra los reportes generados.
+    reports_by_norm = {}
+    for ridx, r in enumerate(reportes):
+        nn = _norm(re.sub(r'^(?:rpt|report|rep)_?', '', r["name"], flags=re.IGNORECASE)) or _norm(r["name"])
+        reports_by_norm.setdefault(_norm(r["name"]), ridx)
+        reports_by_norm.setdefault(nn, ridx)
+    _REPORT_RE = re.compile(r'\bREPORT\s+FORM\s+(\w+)', re.IGNORECASE)
     menus = []
     for grp in (inventory.get("menus", []) or []):
         items = []
         for it in (grp.get("items", []) or []):
-            tabla = _menu_to_tabla(it.get("texto", ""), it.get("accion", ""), table_index)
-            items.append({**it, "tabla": tabla})
+            texto  = it.get("texto", "")
+            accion = it.get("accion", "")
+            tabla  = _menu_to_tabla(texto, accion, table_index)
+            form_idx = None
+            m = _DO_FORM_RE.search(accion or "")
+            if m:
+                form_idx = forms_by_norm.get(_norm(m.group(1)))
+            # Si hay form y aún no sabemos la tabla, usar la tabla real del form.
+            if form_idx is not None and tabla is None:
+                tabla = formularios[form_idx]["tabla"] or None
+            rep_idx = None
+            mr = _REPORT_RE.search(accion or "")
+            if mr:
+                rn = mr.group(1)
+                rep_idx = reports_by_norm.get(_norm(rn))
+                if rep_idx is None:
+                    rep_idx = reports_by_norm.get(
+                        _norm(re.sub(r'^(?:rpt|report|rep)_?', '', rn, flags=re.IGNORECASE)))
+            item = {**it, "tabla": tabla}
+            if form_idx is not None:
+                item["form"] = form_idx
+            if rep_idx is not None:
+                item["rep"] = rep_idx
+            items.append(item)
         menus.append({**grp, "items": items})
 
     proyecto = inventory.get("project") or None
@@ -348,7 +415,7 @@ def _coverage_md(meta):
         f"| Menús (navegación) | {len(meta['menus'])} | ✅ generado |",
         f"| Reportes (vista/consulta) | {s['reportes']} | ✅ generado |",
         f"| Vistas SQL (.dbc) | {s.get('vistas', 0)} | ✅ navegables + CSV |",
-        f"| Formularios originales | {s['formularios']} | 🟡 listados |",
+        f"| Formularios originales | {s['formularios']} | ✅ pantalla de carga por form |",
         f"| Relaciones FK (del .dbc) | {s.get('relaciones', 0)} | ✅ generado |",
         f"| Stored procedures | {s.get('stored_procs', 0)} | 🟡 informativo |",
         "",
@@ -934,12 +1001,19 @@ function buildNav() {
   (META.menus || []).forEach((m, mi) => {
     h += `<div class="grp">${esc(m.titulo || 'Menú')}</div>`;
     (m.items || []).forEach((it, ii) => {
-      // it.tabla viene pre-computado por Python; byName como fallback para meta.json antiguo.
+      // it.form / it.rep / it.tabla vienen pre-computados por Python; byName fallback.
       const t = byName(it.texto);
-      const href = it.tabla ? `#/abm/${it.tabla}` : (t ? `#/abm/${t.key}` : `#/info/${mi}/${ii}`);
+      const href = (it.form != null) ? `#/form/${it.form}`
+                 : (it.rep != null) ? `#/rep/${it.rep}`
+                 : it.tabla ? `#/abm/${it.tabla}`
+                 : (t ? `#/abm/${t.key}` : `#/info/${mi}/${ii}`);
       h += `<a href="${href}">${esc(it.texto || '')}</a>`;
     });
   });
+  if ((META.formularios || []).length) {
+    h += `<div class="grp">Formularios</div>`;
+    META.formularios.forEach((f, i) => { h += `<a href="#/form/${i}">${esc(f.name)}</a>`; });
+  }
   h += `<div class="grp">Tablas (ABM)</div>`;
   (META.tablas || []).forEach(t => {
     const c = COUNTS[t.key]; const badge = (c != null) ? `<span class="cnt">${c}</span>` : '';
@@ -974,6 +1048,7 @@ function route() {
   document.querySelectorAll('nav a').forEach(a => a.classList.toggle('active', a.getAttribute('href') === hash));
   const p = hash.split('/');
   if (p[1] === 'abm') return viewAbm(p[2]);
+  if (p[1] === 'form') return viewForm(+p[2]);
   if (p[1] === 'rep') return viewReport(+p[2]);
   if (p[1] === 'vista') return viewVista(p[2]);
   if (p[1] === 'info') return viewInfo(+p[2], +p[3]);
@@ -1138,14 +1213,14 @@ async function saveRow(key) {
     return false;
   }
   try { COUNTS = await (await fetch('/api/_counts')).json(); buildNav(); } catch(_) {}
-  viewAbm(key);
+  route();   // re-renderiza la vista actual (ABM o formulario)
   return false;
 }
 async function delRow(key, id) {
   if (!confirm('¿Borrar el registro?')) return;
   await fetch(`/api/t/${key}/${id}`, { method: 'DELETE' });
   try { COUNTS = await (await fetch('/api/_counts')).json(); buildNav(); } catch(_) {}
-  viewAbm(key);
+  route();   // re-renderiza la vista actual (ABM o formulario)
 }
 
 async function viewReport(i) {
@@ -1188,6 +1263,63 @@ async function viewReport(i) {
 function repSearch(i,v){const s=vstate('rep__'+i);s.q=v;s.page=1;clearTimeout(s._t);s._t=setTimeout(()=>viewReport(i),250);}
 function repSort(i,col){const s=vstate('rep__'+i);if(s.sort===col)s.dir=s.dir==='asc'?'desc':'asc';else{s.sort=col;s.dir='asc';}viewReport(i);}
 function repPage(i,p){vstate('rep__'+i).page=p;viewReport(i);}
+
+// ---------- FORMULARIOS (.scx del sistema original) ----------
+// Cada formulario original se materializa como una pantalla de carga real sobre
+// su tabla, mostrando exactamente los campos/etiquetas/orden del .scx. Reusa el
+// mismo motor de ABM (formHtml/saveRow/editRow/delRow) sobre la tabla real.
+async function viewForm(i) {
+  const f = (META.formularios || [])[i];
+  if (!f) { $('#main').innerHTML = '<p>Formulario no encontrado.</p>'; return; }
+  const base = f.tabla ? tableByKey(f.tabla) : null;
+  if (!base) {
+    $('#main').innerHTML = `<h2>📝 ${esc(f.name)}</h2>
+      <div class="card muted">Formulario <b>${esc(f.name)}</b> del sistema original.
+      No se pudo asociar a una tabla de datos; se muestra como referencia.</div>`;
+    return;
+  }
+  // Proyectar la tabla a los campos del formulario (orden + etiquetas del .scx).
+  let campos = (f.campos || []).map(c => {
+    const real = base.campos.find(tc => tc.name === c.field);
+    return real ? { ...real, label: c.label || real.label } : null;
+  }).filter(Boolean);
+  if (!campos.length) campos = base.campos;   // fallback: todos los campos
+  const t = { ...base, campos, titulo: f.name };
+  const key = base.key;
+
+  const fkTables = [...new Set(campos.filter(x=>x.fk).map(x=>x.fk.table))];
+  if (fkTables.length) await Promise.all(fkTables.map(loadFkOptions));
+
+  const st = vstate('form__' + i);
+  const qs = new URLSearchParams({ q:st.q, sort:st.sort, dir:st.dir, page:st.page, size:st.size });
+  const res = await (await fetch(`/api/t/${key}?${qs}`)).json();
+  const rows = res.rows || [], total = res.total || 0;
+  const pages = Math.max(1, Math.ceil(total / st.size));
+
+  const form = formHtml(t, key);
+  const head = '<tr>' + campos.map(fl => `<th>${esc(fl.label||fl.name)}</th>`).join('') + '<th></th></tr>';
+  const body = rows.map(r => '<tr>' + campos.map(fl => `<td>${cellHtml(fl, r[fl.name])}</td>`).join('') +
+    `<td class="actions"><button class="sec sm" onclick='editRow(${JSON.stringify(r).replace(/'/g,"&#39;")})'>✎</button>
+     <button class="del sm" onclick="delRow('${key}',${r.id})">🗑</button></td></tr>`).join('');
+
+  $('#main').innerHTML = `<h2>📝 ${esc(f.name)}</h2>
+    <p class="sub">Formulario del sistema original · tabla <b>${esc(key)}</b> · ${total} registros</p>
+    ${reglasHtml(t)}
+    ${form}
+    <div class="toolbar">
+      <input class="search" id="q" placeholder="🔎 Buscar..." value="${esc(st.q)}" oninput="formSearch(${i},this.value)">
+      <span class="sp"></span>
+      <button class="sec sm" onclick="window.open('/api/t/${key}/export.csv')">⬇ Exportar CSV</button>
+    </div>
+    <div class="tablewrap"><table><thead>${head}</thead><tbody>${body||'<tr><td class="muted" style="padding:16px">Sin registros.</td></tr>'}</tbody></table></div>
+    <div class="pager">
+      <span class="muted">Página ${st.page} de ${pages}</span>
+      <button class="sec sm" ${st.page<=1?'disabled':''} onclick="formPage(${i},${st.page-1})">‹ Anterior</button>
+      <button class="sec sm" ${st.page>=pages?'disabled':''} onclick="formPage(${i},${st.page+1})">Siguiente ›</button>
+    </div>`;
+}
+function formSearch(i,v){const s=vstate('form__'+i);s.q=v;s.page=1;clearTimeout(s._t);s._t=setTimeout(()=>viewForm(i),250);}
+function formPage(i,p){vstate('form__'+i).page=p;viewForm(i);}
 
 // ---------- VISTAS DEL .DBC ----------
 async function viewVista(key) {
