@@ -236,18 +236,35 @@ def build_meta(inventory, title, enrich=None):
                 if fk["table"] in tables_sql:
                     campo["fk"] = fk
 
-    # Reportes -> intentamos asociarlos a una tabla por nombre.
-    table_index = {_norm(x["name"]): x["key"] for x in tablas}
+    # Reportes: usar metadatos del .frx parseado (data_expr, columnas, título).
+    # Para cada reporte buscamos su detalle en reports_detail y si no, fallback por nombre.
+    table_index  = {_norm(x["name"]): x["key"] for x in tablas}
+    table_keys   = {x["key"] for x in tablas}
+    rd_by_name   = {_slug(r["name"]): r for r in (inventory.get("reports_detail") or [])}
+
+    def _match_tabla(stem, tabla_base):
+        # 1. tabla_base desde el .frx (más fiable)
+        if tabla_base and tabla_base in table_keys:
+            return tabla_base
+        # 2. match por similitud de nombre del archivo
+        n = _norm(stem)
+        for tn, tk in table_index.items():
+            if tn and (tn in n or n in tn):
+                return tk
+        return None
+
     reportes = []
     for r in inventory.get("reports", []):
         stem = re.sub(r"\.\w+$", "", str(r))
-        n = _norm(stem)
-        match = None
-        for tn, tk in table_index.items():
-            if tn and (tn in n or n in tn):
-                match = tk
-                break
-        reportes.append({"name": stem, "tabla": match})
+        rd   = rd_by_name.get(_slug(stem)) or {}
+        match = _match_tabla(stem, rd.get("tabla_base", ""))
+        reportes.append({
+            "name":      stem,
+            "title":     rd.get("title") or stem,
+            "tabla":     match,
+            "cols":      rd.get("cols")  or [],
+            "data_expr": rd.get("data_expr") or "",
+        })
 
     formularios = [re.sub(r"\.\w+$", "", str(f)) for f in inventory.get("forms", [])]
 
@@ -398,9 +415,10 @@ WEB = os.path.join(BASE, "..", "web")
 # problemas de escapado (true/false/null, comillas, backslashes de regex).
 with open(os.path.join(BASE, "meta.json"), encoding="utf-8") as _f:
     _DATA = json.load(_f)
-TABLES = _DATA["tables"]
-META   = _DATA["meta"]
-VIEWS  = _DATA.get("views") or {}   # {view_key: sql_sqlite}
+TABLES  = _DATA["tables"]
+META    = _DATA["meta"]
+VIEWS   = _DATA.get("views") or {}     # {view_key: sql_sqlite}
+REPORTS = META.get("reportes") or []   # lista de reportes con cols y tabla
 
 
 def conn():
@@ -648,6 +666,69 @@ def delete_row(table: str, rid: int):
     return {"ok": True}
 
 
+@app.get("/api/rep/{i}")
+def list_report(i: int, q: str = "", sort: str = "", dir: str = "asc",
+                page: int = 1, size: int = 50):
+    """Consulta de un reporte (.frx) con sus columnas originales, búsqueda y paginación."""
+    if i < 0 or i >= len(REPORTS):
+        raise HTTPException(404, "reporte desconocido")
+    rep = REPORTS[i]
+    tabla = rep.get("tabla")
+    if not tabla or tabla not in TABLES:
+        return {"rows": [], "total": 0, "cols": [], "labels": {}, "page": 1, "size": size}
+    tabla_cols = {cn for cn, _ in TABLES[tabla]}
+    rep_cols   = rep.get("cols") or []
+    # Columnas del reporte que existen en la tabla; fallback: todas las de la tabla
+    cols = [c["field"] for c in rep_cols if c.get("field") and c["field"] in tabla_cols]
+    if not cols:
+        cols = [cn for cn, _ in TABLES[tabla]]
+    labels = {c["field"]: c.get("label") or c["field"] for c in rep_cols if c.get("field")}
+    where, params = "", []
+    if q:
+        where = " WHERE " + " OR ".join('CAST("%s" AS TEXT) LIKE ?' % c for c in cols)
+        params = ["%" + q + "%"] * len(cols)
+    order = (' ORDER BY "%s" %s' % (sort, "DESC" if str(dir).lower() == "desc" else "ASC")
+             if sort in cols else ' ORDER BY id')
+    size = max(1, min(int(size or 50), 500))
+    page = max(1, int(page or 1))
+    col_sel = ", ".join('"id"' + (", " if cols else "") + ", ".join('"%s"' % c for c in cols))
+    c = conn()
+    total = c.execute('SELECT COUNT(*) FROM "%s"%s' % (tabla, where), params).fetchone()[0]
+    rows  = [dict(r) for r in c.execute(
+        'SELECT %s FROM "%s"%s%s LIMIT ? OFFSET ?' % (col_sel, tabla, where, order),
+        params + [size, (page - 1) * size])]
+    c.close()
+    return {"rows": rows, "total": total, "cols": cols, "labels": labels, "page": page, "size": size}
+
+
+@app.get("/api/rep/{i}/export.csv")
+def export_rep_csv(i: int):
+    if i < 0 or i >= len(REPORTS):
+        raise HTTPException(404)
+    rep = REPORTS[i]
+    tabla = rep.get("tabla")
+    if not tabla or tabla not in TABLES:
+        raise HTTPException(404, "reporte sin tabla")
+    tabla_cols = {cn for cn, _ in TABLES[tabla]}
+    rep_cols   = rep.get("cols") or []
+    cols = [c["field"] for c in rep_cols if c.get("field") and c["field"] in tabla_cols]
+    if not cols:
+        cols = [cn for cn, _ in TABLES[tabla]]
+    labels = {c["field"]: c.get("label") or c["field"] for c in rep_cols if c.get("field")}
+    import csv
+    out = io.StringIO()
+    w = csv.writer(out)
+    w.writerow([labels.get(c, c) for c in cols])
+    c = conn()
+    col_sel = ", ".join('"%s"' % x for x in cols)
+    for row in c.execute('SELECT %s FROM "%s" ORDER BY id' % (col_sel, tabla)):
+        w.writerow([row[x] for x in cols])
+    c.close()
+    return Response(out.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition":
+                             'attachment; filename="%s.csv"' % rep.get("name", str(i))})
+
+
 @app.get("/api/v/{view}")
 def list_view(view: str, q: str = "", sort: str = "", dir: str = "asc",
               page: int = 1, size: int = 50):
@@ -860,7 +941,7 @@ function buildNav() {
   });
   if ((META.reportes || []).length) {
     h += `<div class="grp">Reportes</div>`;
-    META.reportes.forEach((r, i) => { h += `<a href="#/rep/${i}">${esc(r.name)}</a>`; });
+    META.reportes.forEach((r, i) => { h += `<a href="#/rep/${i}">${esc(r.title||r.name)}</a>`; });
   }
   if ((META.vistas || []).length) {
     h += `<div class="grp">Vistas (.dbc)</div>`;
@@ -1064,17 +1145,43 @@ async function delRow(key, id) {
 async function viewReport(i) {
   const r = META.reportes[i];
   if (!r) { $('#main').innerHTML = '<p>Reporte no encontrado.</p>'; return; }
-  if (!r.tabla) { $('#main').innerHTML = `<h2>Reporte: ${esc(r.name)}</h2><div class="card muted">Sin tabla asociada.</div>`; return; }
-  const t = tableByKey(r.tabla);
-  const res = await (await fetch(`/api/t/${r.tabla}?size=500`).catch(()=>({json:()=>({rows:[]})}))).json();
-  const rows = res.rows || [];
-  const head = '<tr>' + t.campos.map(f => `<th>${esc(f.label||f.name)}</th>`).join('') + '</tr>';
-  const body = rows.map(x => '<tr>' + t.campos.map(f => `<td>${cellHtml(f, x[f.name])}</td>`).join('') + '</tr>').join('');
-  $('#main').innerHTML = `<h2>📊 ${esc(r.name)}</h2>
-    <p class="sub">Reporte sobre la tabla <b>${esc(t.name)}</b> · ${res.total||rows.length} filas</p>
-    <div class="toolbar"><span class="sp"></span><button class="sec sm" onclick="window.open('/api/t/${r.tabla}/export.csv')">⬇ Exportar CSV</button></div>
-    <div class="tablewrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
+  if (!r.tabla) {
+    $('#main').innerHTML = `<h2>📊 ${esc(r.title||r.name)}</h2><div class="card muted">Sin tabla asociada en el .frx.</div>`;
+    return;
+  }
+  const st = vstate('rep__' + i);
+  const qs = new URLSearchParams({ q:st.q, sort:st.sort, dir:st.dir, page:st.page, size:st.size });
+  let res;
+  try {
+    res = await (await fetch(`/api/rep/${i}?${qs}`)).json();
+  } catch(e) {
+    $('#main').innerHTML = `<h2>📊 ${esc(r.title||r.name)}</h2><div class="card muted">Error al cargar.</div>`;
+    return;
+  }
+  const rows = res.rows||[], total = res.total||0, cols = res.cols||[], lbls = res.labels||{};
+  const pages = Math.max(1, Math.ceil(total / st.size));
+  const head = '<tr>' + cols.map(c => {
+    const ar = st.sort === c ? `<span class="ar">${st.dir==='asc'?'▲':'▼'}</span>` : '';
+    return `<th onclick="repSort(${i},'${c}')">${esc(lbls[c]||c)} ${ar}</th>`;
+  }).join('') + '</tr>';
+  const body = rows.map(row => '<tr>' + cols.map(c => `<td>${esc(row[c])}</td>`).join('') + '</tr>').join('');
+  $('#main').innerHTML = `<h2>📊 ${esc(r.title||r.name)}</h2>
+    <p class="sub">Reporte · tabla <b>${esc(r.tabla)}</b> · ${total} registros</p>
+    <div class="toolbar">
+      <input class="search" id="rq" placeholder="🔎 Buscar..." value="${esc(st.q)}" oninput="repSearch(${i},this.value)">
+      <span class="sp"></span>
+      <button class="sec sm" onclick="window.open('/api/rep/${i}/export.csv')">⬇ Exportar CSV</button>
+    </div>
+    <div class="tablewrap"><table><thead>${head}</thead><tbody>${body||'<tr><td class="muted" style="padding:16px">Sin registros.</td></tr>'}</tbody></table></div>
+    <div class="pager">
+      <span class="muted">Página ${st.page} de ${pages}</span>
+      <button class="sec sm" ${st.page<=1?'disabled':''} onclick="repPage(${i},${st.page-1})">‹ Anterior</button>
+      <button class="sec sm" ${st.page>=pages?'disabled':''} onclick="repPage(${i},${st.page+1})">Siguiente ›</button>
+    </div>`;
 }
+function repSearch(i,v){const s=vstate('rep__'+i);s.q=v;s.page=1;clearTimeout(s._t);s._t=setTimeout(()=>viewReport(i),250);}
+function repSort(i,col){const s=vstate('rep__'+i);if(s.sort===col)s.dir=s.dir==='asc'?'desc':'asc';else{s.sort=col;s.dir='asc';}viewReport(i);}
+function repPage(i,p){vstate('rep__'+i).page=p;viewReport(i);}
 
 // ---------- VISTAS DEL .DBC ----------
 async function viewVista(key) {

@@ -691,6 +691,165 @@ def _dbc_get_prop(text, key):
     return m.group(1).strip().strip('"') if m else ""
 
 
+def _frx_field_name(expr):
+    """Extrae el slug del campo de una expresión FRX ('tabla.campo', FUNC(campo), etc.)."""
+    expr = expr.strip()
+    m = re.match(r'^[\w]+\.([\w]+)$', expr)
+    if m:
+        return scaffold._slug(m.group(1))
+    m = re.match(r'^([\w]+)$', expr)
+    if m:
+        return scaffold._slug(m.group(1))
+    for pat in [r'^\w+\s*\(\s*[\w]+\.([\w]+)', r'^\w+\s*\(\s*([\w]+)']:
+        m = re.match(pat, expr, re.I)
+        if m:
+            return scaffold._slug(m.group(1))
+    return scaffold._slug(re.sub(r'[^a-zA-Z0-9_]', '_', expr)[:30])
+
+
+def parse_frx(frx_bytes, frt_bytes=None):
+    """Extrae metadatos de un reporte VFP (.frx + .frt).
+
+    El .frx es una tabla DBF donde cada fila es un objeto del reporte:
+    OBJTYPE=1  → encabezado del reporte (data source en EXPR)
+    OBJTYPE=8  → banda (título, encabezado de página/columna, detalle, etc.)
+    OBJTYPE=9  → campo o etiqueta de texto
+
+    Estrategia: los campos de datos tienen expresiones sin comillas
+    (ej. clientes.nombre, ALLTRIM(nombre)) y los encabezados de columna
+    tienen expresiones entre comillas ("Nombre", "Importe").
+    Se ordenan por HPOS y se emparejan por proximidad.
+
+    Retorna {title, data_expr, tabla_base, cols: [{expr, field, label}]} o None.
+    """
+    rows = read_dbf_records(frx_bytes, frt_bytes or b"", max_records=5000)
+    if not rows:
+        return None
+
+    data_expr = ""
+    tabla_base = ""
+
+    # 1. Registro raíz (OBJTYPE=1) → fuente de datos del reporte
+    for r in rows:
+        if str(r.get("objtype") or "").strip() == "1":
+            data_expr = str(r.get("expr") or "").strip()
+            break
+
+    if data_expr:
+        # FROM tabla → tabla_base
+        m = re.search(r'\bFROM\b\s+([A-Za-z_][A-Za-z0-9_]*)', data_expr, re.I)
+        if m:
+            tabla_base = scaffold._slug(m.group(1))
+        elif re.match(r'^[A-Za-z_][A-Za-z0-9_]*$', data_expr):
+            tabla_base = scaffold._slug(data_expr)
+
+    # 2. Identificar bandas y sus rangos VPOS para clasificar campos
+    bands = {}   # objcode_str → (vpos_start, vpos_end)
+    for r in rows:
+        if str(r.get("objtype") or "").strip() != "8":
+            continue
+        try:
+            code = str(r.get("objcode") or "").strip()
+            vps = float(str(r.get("vpos") or 0))
+            hgt = float(str(r.get("height") or 0))
+            if code not in bands:
+                bands[code] = (vps, vps + max(hgt, 50))
+        except (TypeError, ValueError):
+            pass
+
+    def _which_band(vpos_val):
+        for code, (vs, ve) in bands.items():
+            if vs <= vpos_val <= ve + 80:
+                return code
+        return None
+
+    # 3. Clasificar OBJTYPE=9 por banda
+    detail_objs = []    # [(hpos, expr, width)]
+    header_objs = []    # [(hpos, quoted_label, width)]
+    title_text  = ""
+
+    for r in rows:
+        if str(r.get("objtype") or "").strip() != "9":
+            continue
+        expr = str(r.get("expr") or "").strip()
+        if not expr:
+            continue
+        try:
+            hpos  = float(str(r.get("hpos")   or 0))
+            vpos  = float(str(r.get("vpos")   or 0))
+            width = float(str(r.get("width")  or 720))
+        except (TypeError, ValueError):
+            continue
+
+        is_label = expr.startswith('"') or expr.startswith("'")
+        band = _which_band(vpos)
+
+        # Banda de detalle (3): campos de datos (no etiquetas)
+        if band == "3" and not is_label:
+            detail_objs.append((hpos, expr, width))
+        # Banda de encabezado de columna (2) o encabezado de página (1): etiquetas
+        elif band in ("1", "2") and is_label:
+            header_objs.append((hpos, expr.strip('"\''), width))
+        # Banda de título (0): primer texto → título del reporte
+        elif band == "0" and is_label and not title_text:
+            title_text = expr.strip('"\'')
+
+    # Fallback: si no hay bandas reconocidas, heurística por expresión
+    if not detail_objs and not header_objs:
+        all9 = []
+        for r in rows:
+            if str(r.get("objtype") or "").strip() != "9":
+                continue
+            expr = str(r.get("expr") or "").strip()
+            if not expr:
+                continue
+            try:
+                hpos  = float(str(r.get("hpos") or 0))
+                width = float(str(r.get("width") or 720))
+            except (TypeError, ValueError):
+                continue
+            is_label = expr.startswith('"') or expr.startswith("'")
+            if is_label:
+                header_objs.append((hpos, expr.strip('"\''), width))
+            else:
+                detail_objs.append((hpos, expr, width))
+
+    # Título desde encabezados si no se encontró en banda título
+    if not title_text:
+        for _, lbl, _ in sorted(header_objs):
+            if lbl:
+                title_text = lbl
+                break
+
+    # 4. Construir columnas: ordenar detalle por HPOS, emparejar con header
+    detail_objs.sort(key=lambda x: x[0])
+    header_objs.sort(key=lambda x: x[0])
+
+    cols = []
+    for hpos, expr, width in detail_objs:
+        label = expr   # default
+        best  = width * 2
+        for chpos, clabel, cwidth in header_objs:
+            dist = abs(chpos - hpos)
+            if dist < best:
+                best  = dist
+                label = clabel
+        cols.append({
+            "expr":  expr,
+            "field": _frx_field_name(expr),
+            "label": label,
+        })
+        if len(cols) >= 30:
+            break
+
+    return {
+        "title":      title_text,
+        "data_expr":  data_expr,
+        "tabla_base": tabla_base,
+        "cols":       cols,
+    }
+
+
 def _split_args(s):
     """Divide argumentos de función separados por coma, respetando paréntesis y comillas."""
     parts, depth, cur, in_str, str_ch = [], 0, [], False, ''
@@ -1300,7 +1459,9 @@ def analyze_zip(raw_bytes):
     forms, reports, programs = [], [], []
     tables = []
     seen_tables = set()  # evita tablas .dbf duplicadas (mismo nombre en varias carpetas)
-    forms_detail = []    # controles reales de los formularios .scx
+    forms_detail   = []  # controles reales de los formularios .scx
+    reports_detail = []  # metadatos parseados de los .frx
+    seen_reports   = set()
     samples = []
     menus = []           # estructura de menús (.mpr / .mnx)
     mnx_pending = []     # .mnx a parsear solo si no hubo .mpr
@@ -1318,7 +1479,8 @@ def analyze_zip(raw_bytes):
 
         if cat == "forms" and ext == ".scx" and len(forms) < MAX_NAME_LIST:
             forms.append(base)
-        elif cat == "reports" and ext == ".frx" and len(reports) < MAX_NAME_LIST:
+        elif cat == "reports" and ext == ".frx":
+            # Sin cap: listar TODOS los reportes del sistema
             reports.append(base)
         elif cat == "programs":
             programs.append(base)
@@ -1364,6 +1526,24 @@ def analyze_zip(raw_bytes):
                     })
             except Exception:
                 pass
+
+        # Reportes: parsear .frx (DBF) + .frt (memo) para obtener data source y columnas.
+        # Igual que .scx: se usa read_dbf_records + el memo .frt para campos memo.
+        if ext == ".frx":
+            stem = os.path.splitext(base)[0]
+            if stem.lower() not in seen_reports:
+                seen_reports.add(stem.lower())
+                try:
+                    frx_bytes = zf.read(name)
+                    frt_key   = (os.path.splitext(name)[0] + ".frt").lower()
+                    frt_real  = lower_map.get(frt_key)
+                    frt_bytes = zf.read(frt_real) if frt_real else b""
+                    info = parse_frx(frx_bytes, frt_bytes)
+                    if info is not None:
+                        info["name"] = stem
+                        reports_detail.append(info)
+                except Exception:
+                    pass
 
         # Menús: .mpr es código generado (texto) y se parsea mejor que el .mnx.
         if ext == ".mpr":
@@ -1471,6 +1651,7 @@ def analyze_zip(raw_bytes):
         "forms": forms,
         "forms_detail": forms_detail,
         "reports": reports,
+        "reports_detail": reports_detail,
         "programs": sorted(set(programs))[:MAX_NAME_LIST],
         "samples": samples,
         "menus": menus,
