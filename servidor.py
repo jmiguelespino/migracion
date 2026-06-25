@@ -1754,7 +1754,7 @@ def analyze_zip(source):
 
     return {
         "total_files": len(names),
-        "size_mb": round(len(raw_bytes) / 1024 / 1024, 1),
+        "size_mb": round(os.path.getsize(source) / 1024 / 1024, 1) if isinstance(source, str) else round(len(source) / 1024 / 1024, 1),
         "by_ext": by_ext,
         "counts": counts,
         "tables": tables,

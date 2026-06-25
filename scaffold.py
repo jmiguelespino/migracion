@@ -691,7 +691,7 @@ def list_report(i: int, q: str = "", sort: str = "", dir: str = "asc",
              if sort in cols else ' ORDER BY id')
     size = max(1, min(int(size or 50), 500))
     page = max(1, int(page or 1))
-    col_sel = ", ".join('"id"' + (", " if cols else "") + ", ".join('"%s"' % c for c in cols))
+    col_sel = '"id"' + (", " if cols else "") + ", ".join('"%s"' % c for c in cols)
     c = conn()
     total = c.execute('SELECT COUNT(*) FROM "%s"%s' % (tabla, where), params).fetchone()[0]
     rows  = [dict(r) for r in c.execute(
