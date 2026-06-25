@@ -46,11 +46,17 @@ def _menu_to_tabla(texto, accion, table_index):
     """Resuelve ítem de menú → key de tabla (o None).
     Prueba primero la etiqueta visible y luego el nombre del form de la acción.
     Usa coincidencia parcial para cubrir prefijos/sufijos (ej. 'Recetas' ↔ 'rececab'
-    si el nombre empieza con la raíz normalizada)."""
+    si el nombre empieza con la raíz normalizada).
+    Maneja prefijos numéricos VFP: '2100_articulos' → también prueba 'articulos'."""
     candidates = [_norm(texto)]
     m = _DO_FORM_RE.search(accion or "")
     if m:
-        candidates.append(_norm(m.group(1)))
+        form_name = m.group(1)
+        candidates.append(_norm(form_name))
+        # VFP nombra forms con prefijo numérico de programa: "2100_articulos" → probar "articulos"
+        suffix = re.sub(r'^\d+_?', '', form_name)
+        if suffix and suffix.lower() != form_name.lower():
+            candidates.append(_norm(suffix))
     for cand in candidates:
         if not cand:
             continue
