@@ -28,23 +28,53 @@ import scaffold  # generador determinístico de la app migrada (cobertura total)
 API_KEY = ""  # Se configura desde el navegador
 PORT = 8080
 
-# Caché en memoria del último ZIP subido. Permite que /api/scaffold lea los
-# datos e índices reales de los .dbf al generar la app, sin re-subir el archivo.
-# Se identifica por un token (hash) que el navegador guarda y reenvía.
-_ZIP_CACHE = {}        # token -> bytes del ZIP
+# ZIPs subidos se guardan en disco (carpeta _uploads/) en lugar de RAM.
+# El caché en memoria solo guarda rutas (strings), no los bytes completos.
+# Esto permite manejar ZIPs grandes sin agotar la memoria del proceso.
+UPLOAD_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "_uploads")
+_ZIP_CACHE = {}        # token -> path en disco
 _ZIP_CACHE_ORDER = []  # orden de inserción (para descartar los más viejos)
-ZIP_CACHE_MAX = 3
+ZIP_CACHE_MAX = 5      # rutas son baratas; guardamos más para facilitar recovery
 
 
 def _cache_zip(raw):
     import hashlib
+    os.makedirs(UPLOAD_DIR, exist_ok=True)
     token = hashlib.sha1(raw).hexdigest()[:16]
+    path = os.path.join(UPLOAD_DIR, f"{token}.zip")
     if token not in _ZIP_CACHE:
-        _ZIP_CACHE[token] = raw
+        if not os.path.exists(path):
+            with open(path, "wb") as f:
+                f.write(raw)
+        _ZIP_CACHE[token] = path
         _ZIP_CACHE_ORDER.append(token)
         while len(_ZIP_CACHE_ORDER) > ZIP_CACHE_MAX:
-            _ZIP_CACHE.pop(_ZIP_CACHE_ORDER.pop(0), None)
+            old_tok = _ZIP_CACHE_ORDER.pop(0)
+            old_path = _ZIP_CACHE.pop(old_tok, None)
+            if old_path and os.path.exists(old_path):
+                try:
+                    os.remove(old_path)
+                except Exception:
+                    pass
     return token
+
+
+def _get_zip_path(token):
+    """Devuelve la ruta al ZIP en disco, o None si no existe.
+
+    Primero busca en el caché de rutas en memoria; si no está (p.ej. después
+    de reiniciar el servidor), intenta reconstruir la ruta desde el token.
+    """
+    if not token:
+        return None
+    path = _ZIP_CACHE.get(token)
+    if path and os.path.exists(path):
+        return path
+    candidate = os.path.join(UPLOAD_DIR, f"{token}.zip")
+    if os.path.exists(candidate):
+        _ZIP_CACHE[token] = candidate
+        return candidate
+    return None
 
 
 # ── Estado persistente del proyecto ──────────────────────────────────────────
@@ -81,6 +111,7 @@ def _estado_nuevo(nombre_zip, zip_token):
     return {
         "proyecto": nombre_zip,
         "zip_token": zip_token,
+        "zip_path": os.path.join(UPLOAD_DIR, f"{zip_token}.zip"),
         "cargado": datetime.datetime.now().isoformat(timespec="seconds"),
         "unidades": {
             u: {"estado": "pendiente"} for u in UNIDADES_ORDEN
@@ -97,9 +128,10 @@ def _todas_completas(est):
     )
 
 
-def _procesar_unidad(nombre, raw_zip, est, body):
+def _procesar_unidad(nombre, zip_path, est, body):
     """Procesa la unidad `nombre` del proyecto.
 
+    zip_path es la ruta al ZIP en disco (no bytes en RAM).
     Actualiza est["unidades"][nombre] y est["datos"][nombre] en el lugar.
     Devuelve un dict con el resultado (se enviará como JSON al navegador).
     """
@@ -109,7 +141,7 @@ def _procesar_unidad(nombre, raw_zip, est, body):
         return datetime.datetime.now().isoformat(timespec="seconds")
 
     inv = est.get("datos", {}).get("zipinfo", {})
-    zf  = zipfile.ZipFile(io.BytesIO(raw_zip))
+    zf  = zipfile.ZipFile(zip_path)
     names = [n for n in zf.namelist() if not n.endswith("/")]
 
     if nombre == "proyecto":
@@ -205,7 +237,7 @@ def _procesar_unidad(nombre, raw_zip, est, body):
         return {"ok": True, "completado": completado, **resultado}
 
     if nombre == "imagenes":
-        imgs = extract_assets_from_zip(raw_zip)
+        imgs = extract_assets_from_zip(zip_path)
         resultado = {"count": len(imgs)}
         # Guardamos solo los nombres (los bytes son pesados)
         est["datos"]["imagenes"] = {"nombres": list(imgs.keys())}
@@ -237,19 +269,94 @@ def _procesar_unidad(nombre, raw_zip, est, body):
         return {"ok": True, **resultado}
 
     if nombre == "reportes":
-        frx_count = (inv.get("by_ext") or {}).get(".frx", 0)
-        resultado = {"frx": frx_count}
-        est["datos"]["reportes"] = resultado
-        est["unidades"]["reportes"] = {"estado": "completo", "cuando": _ts(), **resultado}
-        return {"ok": True, **resultado}
+        # Paginación: parsea N archivos .frx por pasada desde el ZIP en disco.
+        limite = max(1, min(100, int(body.get("limite") or 30)))
+        frx_all = sorted(n for n in names if n.lower().endswith(".frx"))
+        n_total = len(frx_all)
+
+        datos_rep = est.get("datos", {}).get("reportes") or {
+            "reports_detail": [], "frx_ok": 0, "frx_total": n_total,
+        }
+        n_ok = datos_rep.get("frx_ok", 0)
+        reports_detail = datos_rep.get("reports_detail", [])
+        seen_rep = {r["name"].lower() for r in reports_detail}
+        lower_map = {n.lower(): n for n in names}
+
+        for frx_name in frx_all[n_ok: n_ok + limite]:
+            base = os.path.basename(frx_name)
+            stem = os.path.splitext(base)[0]
+            if stem.lower() not in seen_rep:
+                seen_rep.add(stem.lower())
+                try:
+                    frx_bytes = zf.read(frx_name)
+                    frt_key   = (os.path.splitext(frx_name)[0] + ".frt").lower()
+                    frt_real  = lower_map.get(frt_key)
+                    frt_bytes = zf.read(frt_real) if frt_real else b""
+                    info = parse_frx(frx_bytes, frt_bytes)
+                    if info is not None:
+                        info["name"] = stem
+                        reports_detail.append(info)
+                except Exception:
+                    pass
+            n_ok += 1
+
+        completado = n_ok >= n_total
+        resultado = {"frx_ok": n_ok, "frx_total": n_total, "reports": len(reports_detail)}
+        datos_rep.update({"reports_detail": reports_detail, "frx_ok": n_ok, "frx_total": n_total})
+        est["datos"]["reportes"] = datos_rep
+        est["unidades"]["reportes"] = {
+            "estado": "completo" if completado else "parcial",
+            "cuando": _ts(), **resultado,
+        }
+        return {"ok": True, "completado": completado, **resultado}
 
     if nombre == "pantallas":
-        scx_count = (inv.get("by_ext") or {}).get(".scx", 0)
-        forms     = inv.get("forms_detail") or []
-        resultado = {"scx": scx_count, "forms_detail": len(forms)}
-        est["datos"]["pantallas"] = resultado
-        est["unidades"]["pantallas"] = {"estado": "completo", "cuando": _ts(), **resultado}
-        return {"ok": True, **resultado}
+        # Paginación: parsea N archivos .scx por pasada desde el ZIP en disco.
+        limite = max(1, min(100, int(body.get("limite") or 30)))
+        scx_all = sorted(n for n in names if n.lower().endswith(".scx"))
+        n_total = len(scx_all)
+
+        datos_pant = est.get("datos", {}).get("pantallas") or {
+            "forms_detail": [], "scx_ok": 0, "scx_total": n_total,
+        }
+        n_ok = datos_pant.get("scx_ok", 0)
+        forms_detail = datos_pant.get("forms_detail", [])
+        seen_scx = {f["name"].lower() for f in forms_detail}
+        lower_map = {n.lower(): n for n in names}
+
+        for scx_name in scx_all[n_ok: n_ok + limite]:
+            base = os.path.basename(scx_name)
+            stem = os.path.splitext(base)[0]
+            if stem.lower() not in seen_scx:
+                seen_scx.add(stem.lower())
+                try:
+                    scx_bytes = zf.read(scx_name)
+                    sct_key   = (os.path.splitext(scx_name)[0] + ".sct").lower()
+                    sct_real  = lower_map.get(sct_key)
+                    sct_bytes = zf.read(sct_real) if sct_real else b""
+                    info = parse_scx_controls(scx_bytes, sct_bytes)
+                    if info:
+                        forms_detail.append({
+                            "name": stem,
+                            "controles": info["counts"],
+                            "total": info["total"],
+                            "tabla": info.get("tabla", ""),
+                            "campos": info.get("campos", []),
+                            "metodos": info.get("metodos", []),
+                        })
+                except Exception:
+                    pass
+            n_ok += 1
+
+        completado = n_ok >= n_total
+        resultado = {"scx_ok": n_ok, "scx_total": n_total, "forms": len(forms_detail)}
+        datos_pant.update({"forms_detail": forms_detail, "scx_ok": n_ok, "scx_total": n_total})
+        est["datos"]["pantallas"] = datos_pant
+        est["unidades"]["pantallas"] = {
+            "estado": "completo" if completado else "parcial",
+            "cuando": _ts(), **resultado,
+        }
+        return {"ok": True, "completado": completado, **resultado}
 
     return {"error": f"Unidad desconocida: {nombre}"}
 
@@ -571,10 +678,11 @@ def parse_cdx_expressions(idx_bytes, field_slugs):
     return defs[:16]
 
 
-def build_seed_from_zip(raw_bytes, inventory):
+def build_seed_from_zip(source, inventory):
     """Extrae datos e índices reales del ZIP para sembrar la app generada.
+    source puede ser bytes (compat.) o una ruta a un archivo en disco.
     Devuelve (seed, indexes, total_filas) con claves = slug del nombre de tabla."""
-    zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
+    zf = zipfile.ZipFile(source if isinstance(source, str) else io.BytesIO(source))
     names = [n for n in zf.namelist() if not n.endswith("/")]
     # by_stem: nombre base sin extensión (lower) -> {ext: ruta real}
     # Cuando hay duplicados (p.ej. datos/ vs ZZ_EJECUTABLES/) preferimos el
@@ -627,10 +735,11 @@ ASSET_MAX_FILE = 8 * 1024 * 1024     # tamaño máx por imagen
 ASSET_MAX_TOTAL = 80 * 1024 * 1024   # tamaño máx total de imágenes a incluir
 
 
-def extract_assets_from_zip(raw_bytes):
+def extract_assets_from_zip(source):
     """Extrae las imágenes del ZIP para incluirlas en la app generada.
+    source puede ser bytes (compat.) o una ruta a un archivo en disco.
     Devuelve {nombre_base_lower: bytes}. Acota tamaño por archivo y total."""
-    zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
+    zf = zipfile.ZipFile(source if isinstance(source, str) else io.BytesIO(source))
     assets, total = {}, 0
     for info in zf.infolist():
         if info.is_dir():
@@ -1399,9 +1508,10 @@ def _parse_programa_menu(prog_bytes, menues_bytes=b""):
     return [by_menu[k] for k in sorted(by_menu) if by_menu[k]["items"]]
 
 
-def analyze_zip(raw_bytes):
-    """Lee el ZIP en memoria y devuelve un resumen real del sistema legacy."""
-    zf = zipfile.ZipFile(io.BytesIO(raw_bytes))
+def analyze_zip(source):
+    """Lee el ZIP y devuelve un resumen real del sistema legacy.
+    source puede ser bytes (compat.) o una ruta a un archivo en disco."""
+    zf = zipfile.ZipFile(source if isinstance(source, str) else io.BytesIO(source))
     names = [n for n in zf.namelist() if not n.endswith("/")]
     lower_map = {n.lower(): n for n in names}  # para ubicar el .sct de cada .scx
 
@@ -1717,7 +1827,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             est = _cargar_estado()
             # Informar si el ZIP sigue en caché (si no está, hay que re-subir)
             if est:
-                est["zip_en_cache"] = est.get("zip_token") in _ZIP_CACHE
+                est["zip_en_cache"] = bool(_get_zip_path(est.get("zip_token")))
             self.send_json(200, est or {})
 
         elif self.path == "/api/ollama/models":
@@ -1759,10 +1869,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_json(400, {"error": "No hay proyecto activo. Subí un ZIP primero."})
                 return
             zip_token = est.get("zip_token")
-            raw_zip = _ZIP_CACHE.get(zip_token)
-            if not raw_zip:
+            zip_path = _get_zip_path(zip_token)
+            if not zip_path:
                 self.send_json(400, {
-                    "error": "El ZIP ya no está en caché. Volvé a subir el archivo ZIP.",
+                    "error": "El ZIP no está disponible en disco. Volvé a subir el archivo ZIP.",
                     "zip_en_cache": False,
                 })
                 return
@@ -1774,7 +1884,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             est["unidades"][nombre]["estado"] = "corriendo"
             _guardar_estado(est)
             try:
-                resultado = _procesar_unidad(nombre, raw_zip, est, body)
+                resultado = _procesar_unidad(nombre, zip_path, est, body)
                 _guardar_estado(est)
                 self.send_json(200, resultado)
             except Exception as e:
@@ -1803,8 +1913,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_json(400, {"error": {"message": "No se recibió el archivo ZIP"}})
                 return
             try:
-                info = analyze_zip(raw)
-                token = _cache_zip(raw)
+                token = _cache_zip(raw)   # guarda en disco antes de analizar
+                del raw                   # libera RAM: el ZIP ya está en disco
+                zip_path = _get_zip_path(token)
+                info = analyze_zip(zip_path)
                 info["zip_token"] = token
                 print(f"  ✓ ZIP leído: {info['total_files']} archivos, "
                       f"{len(info['tables'])} tablas analizadas")
@@ -1828,33 +1940,48 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 self.send_json(400, {"error": {"message": "JSON inválido"}})
                 return
-            # Si tenemos el ZIP en caché, importamos los datos, índices e imágenes.
-            raw = _ZIP_CACHE.get(payload.get("zip_token"))
+            # Usar el ZIP desde disco (no desde RAM).
+            zip_path = _get_zip_path(payload.get("zip_token"))
             assets = {}
-            # Intentar usar datos ya procesados por la unidad "bases" del estado
+            # Usar datos ya procesados por las unidades del estado.
             est_actual = _cargar_estado()
-            datos_bases = (est_actual or {}).get("datos", {}).get("bases") or {}
+            datos_est = (est_actual or {}).get("datos", {})
+            datos_bases = datos_est.get("bases") or {}
             if datos_bases.get("seed") and datos_bases.get("tablas_ok"):
                 payload.setdefault("seed",    datos_bases["seed"])
                 payload.setdefault("indexes", datos_bases.get("indexes", {}))
                 print(f"  ✓ Datos del estado: {datos_bases.get('total_rows',0)} registros, "
                       f"{datos_bases.get('total_idx',0)} índices (unidad 'bases')")
-            elif raw:
+            elif zip_path:
                 try:
-                    seed, indexes, total = build_seed_from_zip(raw, payload.get("inventory") or {})
+                    seed, indexes, total = build_seed_from_zip(zip_path,
+                                                               payload.get("inventory") or {})
                     payload["seed"] = seed
                     payload["indexes"] = indexes
                     print(f"  ✓ Datos a importar: {total} registros en {len(seed)} tablas, "
                           f"{sum(len(v) for v in indexes.values())} índices")
                 except Exception as e:
                     print(f"  ! No se pudieron importar los datos: {e}")
-            if raw:
+            if zip_path:
                 try:
-                    assets = extract_assets_from_zip(raw)
+                    assets = extract_assets_from_zip(zip_path)
                     if assets:
                         print(f"  ✓ Imágenes a incluir: {len(assets)}")
                 except Exception as e:
                     print(f"  ! No se pudieron extraer las imágenes: {e}")
+            # Enriquecer el inventario con pantallas y reportes procesados por las unidades
+            # (que pueden tener cobertura total, superando los caps del analyze_zip inicial).
+            inv = payload.get("inventory") or {}
+            datos_pant = datos_est.get("pantallas") or {}
+            if datos_pant.get("forms_detail"):
+                inv["forms_detail"] = datos_pant["forms_detail"]
+                print(f"  ✓ Pantallas del estado: {len(datos_pant['forms_detail'])} formularios")
+            datos_rep = datos_est.get("reportes") or {}
+            if datos_rep.get("reports_detail"):
+                inv["reports_detail"] = datos_rep["reports_detail"]
+                print(f"  ✓ Reportes del estado: {len(datos_rep['reports_detail'])} reportes")
+            if inv:
+                payload["inventory"] = inv
             try:
                 data, meta = scaffold.build_app_scaffold(payload, assets=assets)
             except Exception as e:
