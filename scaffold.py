@@ -266,16 +266,36 @@ def build_meta(inventory, title, enrich=None):
     relaciones_activas = sum(1 for t in tablas for c in t["campos"] if c.get("fk"))
     sp_count = sum(len(db.get("stored_procs") or []) for db in dbs)
 
+    # Vistas del .dbc con SQL traducido a SQLite
+    vistas_list = []
+    seen_vk: set = set()
+    for db in dbs:
+        for v in (db.get("vistas") or []):
+            if not isinstance(v, dict) or not v.get("sql_sqlite"):
+                continue
+            vk = _slug(v["name"])
+            if not vk or vk in seen_vk:
+                continue
+            seen_vk.add(vk)
+            vistas_list.append({
+                "key":       vk,
+                "name":      v["name"],
+                "sql":       v["sql_sqlite"],
+                "tabla_base": v.get("tabla_base", ""),
+                "warnings":  v.get("warnings") or [],
+            })
+
     meta = {
         "titulo": title,
         "tablas": tablas,
         "menus": menus,
         "reportes": reportes,
         "formularios": formularios,
+        "vistas": vistas_list,
         "proyecto": proyecto,
         "stats": {
             "tablas": len(tablas), "formularios": len(formularios),
-            "reportes": len(reportes),
+            "reportes": len(reportes), "vistas": len(vistas_list),
             "items_menu": sum(len(m.get("items", [])) for m in menus),
             "enriquecidas": sum(1 for t in tablas if t.get("enriquecido")),
             "archivos_proyecto": len(proyecto["archivos"]) if proyecto else 0,
@@ -304,6 +324,7 @@ def _coverage_md(meta):
         f"| Campos mostrados como imagen | {s.get('campos_imagen', 0)} | ✅ render `<img>` |",
         f"| Menús (navegación) | {len(meta['menus'])} | ✅ generado |",
         f"| Reportes (vista/consulta) | {s['reportes']} | ✅ generado |",
+        f"| Vistas SQL (.dbc) | {s.get('vistas', 0)} | ✅ navegables + CSV |",
         f"| Formularios originales | {s['formularios']} | 🟡 listados |",
         f"| Relaciones FK (del .dbc) | {s.get('relaciones', 0)} | ✅ generado |",
         f"| Stored procedures | {s.get('stored_procs', 0)} | 🟡 informativo |",
@@ -378,7 +399,8 @@ WEB = os.path.join(BASE, "..", "web")
 with open(os.path.join(BASE, "meta.json"), encoding="utf-8") as _f:
     _DATA = json.load(_f)
 TABLES = _DATA["tables"]
-META = _DATA["meta"]
+META   = _DATA["meta"]
+VIEWS  = _DATA.get("views") or {}   # {view_key: sql_sqlite}
 
 
 def conn():
@@ -410,6 +432,14 @@ def init_db():
                     t, i, t, ",".join('"%s"' % x for x in cols)))
             except sqlite3.Error:
                 pass
+    # Vistas del .dbc originales → CREATE VIEW en SQLite
+    for vk, vsql in VIEWS.items():
+        if vsql:
+            try:
+                c.execute('DROP VIEW IF EXISTS "%s"' % vk)
+                c.execute('CREATE VIEW IF NOT EXISTS "%s" AS %s' % (vk, vsql))
+            except sqlite3.Error as e:
+                print("Vista %s: %s" % (vk, e))
     c.commit()
     # Importar los datos reales del sistema legacy una sola vez (si está vacío).
     seed_path = os.path.join(BASE, "seed.json")
@@ -618,6 +648,60 @@ def delete_row(table: str, rid: int):
     return {"ok": True}
 
 
+@app.get("/api/v/{view}")
+def list_view(view: str, q: str = "", sort: str = "", dir: str = "asc",
+              page: int = 1, size: int = 50):
+    """Consulta de una vista del .dbc (solo lectura, con búsqueda y paginación)."""
+    if view not in VIEWS:
+        raise HTTPException(404, "vista desconocida")
+    c = conn()
+    try:
+        row = c.execute('SELECT * FROM "%s" LIMIT 1' % view).fetchone()
+        cols = list(row.keys()) if row else []
+        if not cols:
+            cols = [r[1] for r in c.execute('PRAGMA table_info("%s")' % view).fetchall()]
+    except sqlite3.Error as e:
+        c.close(); raise HTTPException(500, str(e))
+    where, params = "", []
+    if q and cols:
+        where = " WHERE " + " OR ".join('CAST("%s" AS TEXT) LIKE ?' % col for col in cols)
+        params = ["%" + q + "%"] * len(cols)
+    order = (' ORDER BY "%s" %s' % (sort, "DESC" if str(dir).lower() == "desc" else "ASC")
+             if sort in cols else "")
+    size = max(1, min(int(size or 50), 500))
+    page = max(1, int(page or 1))
+    try:
+        total = c.execute('SELECT COUNT(*) FROM "%s"%s' % (view, where), params).fetchone()[0]
+        rows = [dict(r) for r in c.execute(
+            'SELECT * FROM "%s"%s%s LIMIT ? OFFSET ?' % (view, where, order),
+            params + [size, (page - 1) * size])]
+    except sqlite3.Error as e:
+        c.close(); raise HTTPException(500, str(e))
+    c.close()
+    return {"rows": rows, "total": total, "page": page, "size": size, "cols": cols}
+
+
+@app.get("/api/v/{view}/export.csv")
+def export_view_csv(view: str):
+    if view not in VIEWS:
+        raise HTTPException(404)
+    import csv
+    out = io.StringIO()
+    c = conn()
+    try:
+        rows = c.execute('SELECT * FROM "%s"' % view).fetchall()
+        cols = list(rows[0].keys()) if rows else []
+        w = csv.writer(out)
+        w.writerow(cols)
+        for r in rows:
+            w.writerow([r[cn] for cn in cols])
+    except sqlite3.Error as e:
+        c.close(); raise HTTPException(500, str(e))
+    c.close()
+    return Response(out.getvalue(), media_type="text/csv",
+                    headers={"Content-Disposition": 'attachment; filename="%s.csv"' % view})
+
+
 # SPA estática (debe ir al final para no tapar /api).
 app.mount("/", StaticFiles(directory=WEB, html=True), name="web")
 '''
@@ -778,6 +862,10 @@ function buildNav() {
     h += `<div class="grp">Reportes</div>`;
     META.reportes.forEach((r, i) => { h += `<a href="#/rep/${i}">${esc(r.name)}</a>`; });
   }
+  if ((META.vistas || []).length) {
+    h += `<div class="grp">Vistas (.dbc)</div>`;
+    META.vistas.forEach(v => { h += `<a href="#/vista/${v.key}">${esc(v.name)}</a>`; });
+  }
   $('#nav').innerHTML = h;
 }
 
@@ -800,6 +888,7 @@ function route() {
   const p = hash.split('/');
   if (p[1] === 'abm') return viewAbm(p[2]);
   if (p[1] === 'rep') return viewReport(+p[2]);
+  if (p[1] === 'vista') return viewVista(p[2]);
   if (p[1] === 'info') return viewInfo(+p[2], +p[3]);
   return viewHome();
 }
@@ -811,8 +900,8 @@ function viewHome() {
   const tablas = META.tablas || [];
   const cards = [
     ['Tablas', s.tablas||0], ['Registros', s.registros_importados||0],
-    ['Reportes', s.reportes||0], ['Índices', s.indices||0],
-    ['Relaciones FK', s.relaciones||0], ['Imágenes', s.imagenes||0],
+    ['Vistas (.dbc)', s.vistas||0], ['Reportes', s.reportes||0],
+    ['Índices', s.indices||0], ['Relaciones FK', s.relaciones||0],
   ].map(([l,n]) => `<div class="metric"><div class="n">${n}</div><div class="l">${l}</div></div>`).join('');
   const max = Math.max(1, ...tablas.map(t => COUNTS[t.key]||0));
   const bars = tablas.slice().sort((a,b)=>(COUNTS[b.key]||0)-(COUNTS[a.key]||0)).map(t => {
@@ -987,6 +1076,47 @@ async function viewReport(i) {
     <div class="tablewrap"><table><thead>${head}</thead><tbody>${body}</tbody></table></div>`;
 }
 
+// ---------- VISTAS DEL .DBC ----------
+async function viewVista(key) {
+  const vm = (META.vistas || []).find(v => v.key === key);
+  if (!vm) { $('#main').innerHTML = '<p>Vista no encontrada.</p>'; return; }
+  const st = vstate('v__' + key);
+  const qs = new URLSearchParams({ q:st.q, sort:st.sort, dir:st.dir, page:st.page, size:st.size });
+  let res;
+  try {
+    res = await (await fetch(`/api/v/${key}?${qs}`)).json();
+  } catch(e) {
+    $('#main').innerHTML = `<h2>Vista: ${esc(vm.name)}</h2><div class="card muted">Error al consultar la vista.</div>`;
+    return;
+  }
+  const rows = res.rows || [], total = res.total || 0, cols = res.cols || [];
+  const pages = Math.max(1, Math.ceil(total / st.size));
+  const head = '<tr>' + cols.map(c => {
+    const ar = st.sort === c ? `<span class="ar">${st.dir==='asc'?'▲':'▼'}</span>` : '';
+    return `<th onclick="vstSort('${key}','${c}')">${esc(c)} ${ar}</th>`;
+  }).join('') + '</tr>';
+  const body = rows.map(r => '<tr>' + cols.map(c => `<td>${esc(r[c])}</td>`).join('') + '</tr>').join('');
+  const warn = (vm.warnings && vm.warnings.length)
+    ? `<p class="muted" style="font-size:.85em">⚠ ${esc(vm.warnings.join('; '))}</p>` : '';
+  $('#main').innerHTML = `<h2>🔍 ${esc(vm.name)}</h2>
+    <p class="sub">Vista del .dbc original · tabla base: <b>${esc(vm.tabla_base||'?')}</b> · ${total} filas</p>
+    ${warn}
+    <div class="toolbar">
+      <input class="search" id="vq" placeholder="🔎 Buscar..." value="${esc(st.q)}" oninput="vstSearch('${key}',this.value)">
+      <span class="sp"></span>
+      <button class="sec sm" onclick="window.open('/api/v/${key}/export.csv')">⬇ Exportar CSV</button>
+    </div>
+    <div class="tablewrap"><table><thead>${head}</thead><tbody>${body||'<tr><td class="muted" style="padding:16px">Sin filas.</td></tr>'}</tbody></table></div>
+    <div class="pager">
+      <span class="muted">Página ${st.page} de ${pages}</span>
+      <button class="sec sm" ${st.page<=1?'disabled':''} onclick="vstPage('${key}',${st.page-1})">‹ Anterior</button>
+      <button class="sec sm" ${st.page>=pages?'disabled':''} onclick="vstPage('${key}',${st.page+1})">Siguiente ›</button>
+    </div>`;
+}
+function vstSearch(k,v){const s=vstate('v__'+k);s.q=v;s.page=1;clearTimeout(s._t);s._t=setTimeout(()=>viewVista(k),250);}
+function vstSort(k,col){const s=vstate('v__'+k);if(s.sort===col)s.dir=s.dir==='asc'?'desc':'asc';else{s.sort=col;s.dir='asc';}viewVista(k);}
+function vstPage(k,p){vstate('v__'+k).page=p;viewVista(k);}
+
 function viewInfo(mi, ii) {
   const it = ((META.menus[mi] || {}).items || [])[ii] || {};
   $('#main').innerHTML = `<h2>${esc(it.texto || 'Pantalla')}</h2>
@@ -1149,11 +1279,23 @@ def genera_proyecto_md(inventory, title="Sistema"):
         L.append("")
 
     if vistas:
-        L += [f"## Vistas (.dbc)", f"", f"{len(vistas)} vistas definidas:"]
-        for v in vistas[:30]:
-            L.append(f"- `{v}`")
-        if len(vistas) > 30:
-            L.append(f"- _(y {len(vistas)-30} más)_")
+        L += [f"## Vistas (.dbc)", "",
+              f"{len(vistas)} vistas — con SQL traducido a SQLite:", ""]
+        for v in vistas[:20]:
+            if isinstance(v, dict):
+                L.append(f"### `{v['name']}`")
+                if v.get("tabla_base"):
+                    L.append(f"Tabla base: `{v['tabla_base']}`")
+                if v.get("sql_sqlite"):
+                    snip = v["sql_sqlite"][:800]
+                    L += [f"```sql", snip, "```"]
+                if v.get("warnings"):
+                    L.append(f"_Advertencias: {'; '.join(v['warnings'])}_")
+                L.append("")
+            else:
+                L.append(f"- `{v}`")
+        if len(vistas) > 20:
+            L.append(f"_(y {len(vistas)-20} vistas más)_")
         L.append("")
 
     if menus:
@@ -1357,11 +1499,36 @@ def genera_import_sql(inventory, seed, indexes, title="Sistema"):
                 L.append("    " + ",\n    ".join(val_rows) + ";")
             L.append("")
 
+    # CREATE VIEW para cada vista del .dbc traducida a SQLite
+    vistas_sql = []
+    seen_vk: set = set()
+    for db in dbs:
+        for v in (db.get("vistas") or []):
+            if not isinstance(v, dict) or not v.get("sql_sqlite"):
+                continue
+            vk = _slug(v["name"])
+            if not vk or vk in seen_vk:
+                continue
+            seen_vk.add(vk)
+            vistas_sql.append((vk, v["name"], v["sql_sqlite"], v.get("warnings") or []))
+
+    if vistas_sql:
+        L += ["", "-- ── VISTAS DEL .DBC ─────────────────────────────────────",
+              "-- Traducidas de VFP a SQLite de forma automática.",
+              "-- Revisar si el sistema usa funciones VFP sin equivalente directo.", ""]
+        for vk, vname, vsql, warns in vistas_sql:
+            if warns:
+                L.append(f"-- Advertencias ({vname}): {'; '.join(warns)}")
+            L.append(f'DROP VIEW IF EXISTS "{vk}";')
+            L.append(f'CREATE VIEW IF NOT EXISTS "{vk}" AS')
+            L.append(f'  {vsql};')
+            L.append("")
+
     L += [
         "COMMIT;",
         "PRAGMA foreign_keys = ON;",
         "",
-        f"-- Fin de importar_datos.sql  ({len(tables_sql)} tablas)",
+        f"-- Fin de importar_datos.sql  ({len(tables_sql)} tablas, {len(vistas_sql)} vistas)",
     ]
     return "\n".join(L)
 
@@ -1419,7 +1586,9 @@ def build_app_scaffold(payload, assets=None):
     meta["stats"]["campos_imagen"] = img_fields
 
     app_py = APP_PY
-    meta_json = json.dumps({"tables": tables_sql, "meta": meta}, ensure_ascii=False)
+    views_dict = {v["key"]: v["sql"] for v in meta.get("vistas") or [] if v.get("sql")}
+    meta_json = json.dumps({"tables": tables_sql, "meta": meta, "views": views_dict},
+                           ensure_ascii=False)
     seed_json = json.dumps(seed, ensure_ascii=False) if seed else ""
 
     readme = "\n".join([
@@ -1446,6 +1615,7 @@ def build_app_scaffold(payload, assets=None):
         f"({meta['stats'].get('campos_imagen', 0)} campos se muestran como imagen)",
         f"- {len(meta['menus'])} menús como navegación",
         f"- {meta['stats']['reportes']} reportes como vistas de consulta",
+        f"- {meta['stats'].get('vistas', 0)} vistas del .dbc como consultas navegables (+ export CSV)",
         "- Base de datos SQLite local (`backend/datos.db`, se crea sola)",
         "",
         "Los datos se cargan en `datos.db` la **primera vez** que arranca la app",

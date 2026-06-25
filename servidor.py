@@ -691,6 +691,150 @@ def _dbc_get_prop(text, key):
     return m.group(1).strip().strip('"') if m else ""
 
 
+def _split_args(s):
+    """Divide argumentos de función separados por coma, respetando paréntesis y comillas."""
+    parts, depth, cur, in_str, str_ch = [], 0, [], False, ''
+    for ch in s:
+        if in_str:
+            cur.append(ch)
+            if ch == str_ch:
+                in_str = False
+        elif ch in ('"', "'"):
+            in_str, str_ch = True, ch
+            cur.append(ch)
+        elif ch == '(':
+            depth += 1; cur.append(ch)
+        elif ch == ')':
+            depth -= 1; cur.append(ch)
+        elif ch == ',' and depth == 0:
+            parts.append(''.join(cur)); cur = []
+        else:
+            cur.append(ch)
+    if cur:
+        parts.append(''.join(cur))
+    return parts
+
+
+def _translate_vfp_view_sql(sql):
+    """Traducción best-effort de SQL VFP a SQLite.
+    Retorna (sql_sqlite: str, warnings: list[str])."""
+    if not sql or not sql.strip():
+        return "", []
+    warns = []
+    s = sql.strip()
+
+    # Continuación de línea VFP con punto y coma
+    s = re.sub(r';\s*\n', ' ', s)
+
+    # Cláusulas de destino/salida exclusivas de VFP (no existen en SQLite)
+    for pat in [
+        r'\bINTO\s+(?:CURSOR|TABLE|ARRAY)\s+\w+',
+        r'\bTO\s+(?:FILE|PRINTER)\s*\S*',
+        r'\bNOFILTER\b', r'\bREADWRITE\b', r'\bNOUPDATE\b',
+        r'\bWITH\s+BUFFERING\b', r'\bNOCONSOLE\b', r'\bNOLOG\b',
+    ]:
+        s = re.sub(pat, '', s, flags=re.I)
+
+    # Comentarios VFP: && hasta fin de línea; * al inicio de línea
+    s = re.sub(r'&&[^\n]*', '', s)
+    lines = []
+    for line in s.split('\n'):
+        stripped = line.lstrip()
+        if stripped.startswith('* ') or stripped == '*':
+            lines.append('-- ' + stripped[1:].lstrip())
+        else:
+            lines.append(line)
+    s = '\n'.join(lines)
+
+    # Prefijo de esquema: database!tabla → tabla
+    s = re.sub(r'\b\w+!(\w+)\b', r'\1', s)
+
+    # Literales de fecha {^YYYY-MM-DD} → 'YYYY-MM-DD'
+    s = re.sub(
+        r'\{\^(\d{4}[-/]\d{2}[-/]\d{2})[^}]*\}',
+        lambda m: "'" + m.group(1).replace('/', '-') + "'", s)
+    def _mdy(m):
+        p = m.group(1).split('/')
+        return (f"'{p[2]}-{p[0].zfill(2)}-{p[1].zfill(2)}'"
+                if len(p) == 3 else m.group(0))
+    s = re.sub(r'\{(\d{1,2}/\d{1,2}/\d{4})\}', _mdy, s)
+
+    # Literales lógicos y operadores
+    s = re.sub(r'\.(T|TRUE)\.',  '1',     s, flags=re.I)
+    s = re.sub(r'\.(F|FALSE)\.', '0',     s, flags=re.I)
+    s = re.sub(r'\.NULL\.',      'NULL',  s, flags=re.I)
+    s = re.sub(r'\.NOT\.',       'NOT ',  s, flags=re.I)
+    s = re.sub(r'\.AND\.',       ' AND ', s, flags=re.I)
+    s = re.sub(r'\.OR\.',        ' OR ',  s, flags=re.I)
+
+    # DELETED() → 0 (SQLite no tiene flag de borrado lógico)
+    if re.search(r'\bDELETED\s*\(', s, re.I):
+        s = re.sub(r'\bDELETED\s*\(\s*\)', '0', s, flags=re.I)
+        warns.append("DELETED() → 0 (sin flag de borrado en SQLite)")
+
+    # EMPTY(x) → (x IS NULL OR TRIM(CAST(x AS TEXT))='')
+    s = re.sub(
+        r'\bEMPTY\s*\(([^)]+)\)',
+        lambda m: (f"({m.group(1).strip()} IS NULL OR "
+                   f"TRIM(CAST({m.group(1).strip()} AS TEXT))='')"),
+        s, flags=re.I)
+
+    # ISNULL(x) → x IS NULL; NVL → COALESCE
+    s = re.sub(r'\bISNULL\s*\(([^)]+)\)', r'\1 IS NULL', s, flags=re.I)
+    s = re.sub(r'\bNVL\s*\(', 'COALESCE(', s, flags=re.I)
+
+    # IIF(cond, a, b) → CASE WHEN cond THEN a ELSE b END (multipase para anidados)
+    def _iif(m):
+        parts = _split_args(m.group(1))
+        if len(parts) == 3:
+            return (f"CASE WHEN {parts[0].strip()} "
+                    f"THEN {parts[1].strip()} ELSE {parts[2].strip()} END")
+        warns.append(f"IIF() con {len(parts)} args no traducido")
+        return m.group(0)
+    for _ in range(5):
+        prev = s
+        s = re.sub(r'\bIIF\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)', _iif, s, flags=re.I)
+        if s == prev:
+            break
+    if re.search(r'\bIIF\s*\(', s, re.I):
+        warns.append("IIF() anidados profundos — revisar manualmente")
+
+    # Funciones de cadena
+    s = re.sub(r'\bALLTRIM\s*\(', 'TRIM(', s, flags=re.I)
+    s = re.sub(r'\bLEN\s*\(',     'LENGTH(', s, flags=re.I)
+    s = re.sub(r'\bSTR\s*\(([^,)]+)(?:,[^)]*)?\)', r'CAST(\1 AS TEXT)', s, flags=re.I)
+    s = re.sub(r'\bVAL\s*\(([^)]+)\)', r'CAST(\1 AS REAL)',    s, flags=re.I)
+    s = re.sub(r'\bINT\s*\(([^)]+)\)', r'CAST(\1 AS INTEGER)', s, flags=re.I)
+
+    # Funciones de fecha → strftime de SQLite
+    s = re.sub(r'\bYEAR\s*\(([^)]+)\)',  r"CAST(strftime('%Y',\1) AS INTEGER)", s, flags=re.I)
+    s = re.sub(r'\bMONTH\s*\(([^)]+)\)', r"CAST(strftime('%m',\1) AS INTEGER)", s, flags=re.I)
+    s = re.sub(r'\bDAY\s*\(([^)]+)\)',   r"CAST(strftime('%d',\1) AS INTEGER)", s, flags=re.I)
+    s = re.sub(r'\bDATE\s*\(\s*\)',      "date('now')", s, flags=re.I)
+    s = re.sub(r'\bDATETIME\s*\(\s*\)', "datetime('now')", s, flags=re.I)
+    s = re.sub(r'\bDTOC\s*\(([^)]+)\)', r"strftime('%d/%m/%Y',\1)", s, flags=re.I)
+    s = re.sub(r'\bDTOS\s*\(([^)]+)\)', r"strftime('%Y%m%d',\1)",   s, flags=re.I)
+
+    # SELECT TOP n → SELECT ... LIMIT n (VFP 9)
+    top_m = re.search(r'\bSELECT\s+TOP\s+(\d+)\s+', s, re.I)
+    if top_m:
+        n = top_m.group(1)
+        s = re.sub(r'\bSELECT\s+TOP\s+\d+\s+', 'SELECT ', s, flags=re.I, count=1)
+        if not re.search(r'\bLIMIT\s+\d+', s, re.I):
+            s = s.rstrip().rstrip(';') + f'\nLIMIT {n}'
+
+    # Limpiar ruido generado por DELETED() → 0
+    s = re.sub(r'\bWHERE\s+NOT\s+0\s*(?=$|\n)', '',  s, flags=re.I | re.M)
+    s = re.sub(r'\bWHERE\s+0\s+AND\s+', 'WHERE ', s, flags=re.I)
+    s = re.sub(r'\bAND\s+NOT\s+0\b', '',           s, flags=re.I)
+    s = re.sub(r'\bNOT\s+0\s+AND\s+', '',          s, flags=re.I)
+    s = re.sub(r'\bAND\s+0\b', '',                  s, flags=re.I)
+
+    s = re.sub(r'[ \t]{2,}', ' ', s)
+    s = re.sub(r'\n{3,}', '\n\n', s)
+    return s.strip(), warns
+
+
 def parse_dbc(dbc_bytes, dct_bytes):
     """Lee el Database Container de VFP (.dbc + memo .dct).
 
@@ -699,10 +843,11 @@ def parse_dbc(dbc_bytes, dct_bytes):
     Se identifica el tipo por el campo OBJECTTYPE y la jerarquía por PARENTID.
 
     Devuelve:
-    - relaciones: [{parent_table, parent_field, child_table, child_field}]
-    - campos:     {tabla_slug: {campo_slug: {caption, defaultvalue, inputmask, ...}}}
-    - stored_procs: [{name, code}]
-    - vistas: [name]
+    - relaciones:    [{parent_table, parent_field, child_table, child_field}]
+    - campos:        {tabla_slug: {campo_slug: {caption, defaultvalue, inputmask, ...}}}
+    - stored_procs:  [{name, code}]
+    - vistas:        [{name, sql_vfp, sql_sqlite, tabla_base, warnings}]
+    - vista_to_tabla: {vista_slug: tabla_base_slug}
     """
     rows = read_dbf_records(dbc_bytes, dct_bytes, max_records=10000)
     if not rows:
@@ -719,8 +864,8 @@ def parse_dbc(dbc_bytes, dct_bytes):
                 pass
 
     relaciones, campos_props, stored_procs, vistas = [], {}, [], []
-    vista_to_tabla = {}
-    seen_rels = set()
+    vista_to_tabla: dict = {}
+    seen_rels: set = set()
 
     for r in rows:
         otype = str(r.get("objecttype") or "").strip().lower()
@@ -773,19 +918,26 @@ def parse_dbc(dbc_bytes, dct_bytes):
 
         elif otype in ("view", "localview", "remoteview"):
             if oname:
-                vistas.append(oname)
-                # Extraer tabla base del SQL de la vista para resolver referencias
-                if code:
-                    m = re.search(r'\bFROM\b\s+([A-Za-z_][A-Za-z0-9_]*)', code, re.I)
-                    if m:
-                        base_tabla = scaffold._slug(m.group(1))
-                        vista_to_tabla[scaffold._slug(oname)] = base_tabla
+                sql_sqlite, warns = _translate_vfp_view_sql(code) if code else ("", [])
+                # Tabla base: buscar en el SQL traducido (o el original si falla)
+                src = sql_sqlite or code or ""
+                m2 = re.search(r'\bFROM\b\s+([A-Za-z_][A-Za-z0-9_]*)', src, re.I)
+                base_tabla = scaffold._slug(m2.group(1)) if m2 else ""
+                vistas.append({
+                    "name":       oname,
+                    "sql_vfp":    code[:3000] if code else "",
+                    "sql_sqlite": sql_sqlite,
+                    "tabla_base": base_tabla,
+                    "warnings":   warns,
+                })
+                if base_tabla:
+                    vista_to_tabla[scaffold._slug(oname)] = base_tabla
 
     return {
         "relaciones": relaciones,
         "campos": campos_props,
-        "stored_procs": stored_procs[:20],
-        "vistas": vistas[:50],
+        "stored_procs":   stored_procs[:20],
+        "vistas":         vistas[:50],
         "vista_to_tabla": vista_to_tabla,
     }
 
