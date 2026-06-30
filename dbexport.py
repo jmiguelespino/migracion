@@ -121,6 +121,14 @@ def _export_vistas(inventory, dest_dir, manifiesto):
             if not sql:
                 lines.append("-- (sin info de tablas/campos suficiente para armar el SELECT;"
                               " revisar las propiedades de arriba a mano)")
+                if v.get("raw_property"):
+                    lines.append("-- --- texto crudo de PROPERTY (para ajustar el parser) ---")
+                    for ln in str(v["raw_property"]).splitlines() or [str(v["raw_property"])]:
+                        lines.append("--   " + ln)
+                if v.get("raw_code"):
+                    lines.append("-- --- texto crudo de CODE ---")
+                    for ln in str(v["raw_code"]).splitlines() or [str(v["raw_code"])]:
+                        lines.append("--   " + ln)
                 lines.append("")
                 continue
 

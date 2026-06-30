@@ -599,6 +599,11 @@ def parse_dbc(dbc_bytes, dct_bytes):
                     "campos": allprops.get("Fields", ""),
                     "where": allprops.get("WhereClause", ""),
                     "propiedades": allprops,
+                    # Diagnóstico: si `_dbc_parse_properties` no reconoce el
+                    # formato real (distinto al asumido), esto permite ver el
+                    # texto tal cual viene y ajustar el parser sin adivinar.
+                    "raw_property": prop[:1500] if not allprops else "",
+                    "raw_code": code[:500] if (not allprops and code) else "",
                 })
 
     return {
