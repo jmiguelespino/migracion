@@ -181,6 +181,18 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       `_group_tables_by_database` arma las bases sobre ese universo completo.
       Probado con un ZIP sintético de 65 tablas: inventario capado a 60,
       export con las 65.
+- [x] **Sin topes artificiales en todo el camino de `dbexport`**: además del
+      `MAX_TABLES`, había varios recortes "de UI" que se filtraban al export
+      de datos real: `read_dbf_records` cortaba en 50 000 filas por tabla
+      (ahora default `None` = sin tope, usa el conteo real del header);
+      `parse_dbc` leía como máximo 10 000 registros del propio `.dbc` (podía
+      descartar tablas/vistas/campos en sistemas grandes — cada campo es un
+      registro); `vistas[:50]` y `stored_procs[:20]` cortaban listas;
+      `parse_cdx_expressions` y el armado de índices cortaban en 16 por
+      tabla. Se sacaron todos. Probado: 75 vistas simuladas → 75 detectadas
+      (antes 50), y un ZIP sintético de 1000 tablas → 1000 exportadas
+      (inventario de UI sigue capado a 60 a propósito, pero ya no afecta el
+      export).
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 

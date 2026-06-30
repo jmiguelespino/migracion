@@ -331,7 +331,7 @@ def export_databases(raw_zip_bytes, inventory, dest_dir):
                         except Exception:
                             pass
                 valid_cols = {cn for cn, _ in cols}
-                for i, idxcols in enumerate(idx_defs[:16]):
+                for i, idxcols in enumerate(idx_defs):
                     idxcols = [c for c in idxcols if c in valid_cols]
                     if not idxcols:
                         continue

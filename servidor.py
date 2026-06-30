@@ -278,9 +278,14 @@ def _decode_dbf_value(raw, ftype, dec, fpt, blocksize):
     return raw.decode("latin-1", "replace").replace("\x00", " ").rstrip()
 
 
-def read_dbf_records(dbf_bytes, fpt_bytes, max_records=50000):
+def read_dbf_records(dbf_bytes, fpt_bytes, max_records=None):
     """Lee los registros reales de un .dbf (datos, no solo el header). Devuelve
-    una lista de dicts {slug_campo: valor}, saltando los registros borrados."""
+    una lista de dicts {slug_campo: valor}, saltando los registros borrados.
+
+    `max_records=None` (default) = sin tope: lee TODOS los registros que
+    declare el header (o que entren en el archivo si el header no es
+    confiable). Los llamados que sí necesitan un tope chico (vistas previas,
+    samples de menú, etc.) lo pasan explícito."""
     layout = _dbf_layout(dbf_bytes[: 32 + 32 * 256])
     if not layout or layout["record_len"] <= 0:
         return []
@@ -292,7 +297,11 @@ def read_dbf_records(dbf_bytes, fpt_bytes, max_records=50000):
     rows = []
     pos = layout["header_len"]
     total = len(dbf_bytes)
-    limit = min(layout["num_records"], max_records) if layout["num_records"] > 0 else max_records
+    declared = layout["num_records"]
+    if max_records is None:
+        limit = declared if declared > 0 else float("inf")
+    else:
+        limit = min(declared, max_records) if declared > 0 else max_records
     count = 0
     while pos + rec_len <= total and count < limit:
         rec = dbf_bytes[pos:pos + rec_len]
@@ -361,7 +370,7 @@ def parse_cdx_expressions(idx_bytes, field_slugs):
             continue
         seen.add(sig)
         defs.append(cols)
-    return defs[:16]
+    return defs
 
 
 def build_seed_from_zip(raw_bytes, inventory):
@@ -411,7 +420,7 @@ def build_seed_from_zip(raw_bytes, inventory):
                 except Exception:
                     pass
         if defs:
-            indexes[key] = defs[:16]   # lista de índices; cada uno = lista de columnas
+            indexes[key] = defs   # lista de índices; cada uno = lista de columnas
     return seed, indexes, total
 
 
@@ -512,7 +521,10 @@ def parse_dbc(dbc_bytes, dct_bytes):
     - stored_procs: [{name, code}]
     - vistas: [name]
     """
-    rows = read_dbf_records(dbc_bytes, dct_bytes, max_records=10000)
+    # Sin tope: un .dbc real tiene un registro por tabla/campo/relación/vista/
+    # stored proc. Capar acá descartaría objetos en silencio en sistemas con
+    # muchas tablas (cada campo de cada tabla es un registro propio).
+    rows = read_dbf_records(dbc_bytes, dct_bytes)
     if not rows:
         return {"relaciones": [], "campos": {}, "stored_procs": [], "vistas": [], "tablas": []}
 
@@ -609,8 +621,8 @@ def parse_dbc(dbc_bytes, dct_bytes):
     return {
         "relaciones": relaciones,
         "campos": campos_props,
-        "stored_procs": stored_procs[:20],
-        "vistas": vistas[:50],
+        "stored_procs": stored_procs,
+        "vistas": vistas,
         "tablas": tablas,
     }
 
