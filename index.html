@@ -158,6 +158,25 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
       <div class="hint" id="hint"></div>
       <button class="bmd" id="bmd" onclick="downloadProjectMd()">📄 Descargar PROYECTO.md</button>
 
+      <details class="iacfg" id="bdcfg">
+        <summary>🗄️ Bases de datos + vínculos</summary>
+        <div class="inner">
+          <div style="font-size:12px;color:var(--text3);margin:2px 0 5px">Carpeta destino (en tu disco)</div>
+          <div class="apirow">
+            <input type="text" id="bdDirInput" placeholder="C:\LegacyMigrator\BD\MiSistema" oninput="S.bdDir=this.value;saveState()">
+            <button class="bsave" onclick="exportDatabases()">Generar</button>
+          </div>
+          <div class="amsg" id="bdmsg">Crea una base SQLite por cada .dbc del sistema, con sus índices y datos reales.</div>
+          <div id="bdResult"></div>
+          <label style="display:flex;gap:6px;align-items:flex-start;font-size:12px;color:var(--text3);margin-top:8px">
+            <input type="checkbox" id="bdUseForApp" onchange="S.bdUseForApp=this.checked;saveState()">
+            <span>Direccionar la app generada a esta carpeta (en vez de copiarle los datos adentro). Así varios sistemas pueden compartir las mismas bases.</span>
+          </label>
+          <button class="bgo" id="bdLinkBtn" onclick="openLinkEditor()" disabled style="margin-top:8px">🔗 Vincular tablas</button>
+          <div id="linkEditor"></div>
+        </div>
+      </details>
+
       <details class="iacfg" id="iacfg">
         <summary>✨ Mejorar con IA (opcional)</summary>
         <div class="inner">
@@ -227,7 +246,8 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 <script>
 const S = { apiKey:'', file:null, savedFileName:'', engine:'claude', ollamaModel:'',
   sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React',
-  zipInfo:null, systemInfo:null, reviewed:[], step:0 };
+  zipInfo:null, systemInfo:null, reviewed:[], step:0,
+  bdDir:'', bdUseForApp:false, bdManifest:null, bdLinks:[] };
 let ollamaAvailable = false;
 
 // ======================= RECORRIDO DEL PROYECTO =======================
@@ -406,6 +426,7 @@ function enterProject(){
   renderWalk();
   showStep(i);
   showView('project');
+  initBdUi();
 }
 
 // ======================= PROYECTO.md (resumen descargable) =======================
@@ -458,7 +479,8 @@ function saveState(){
   const base = {
     engine:S.engine, ollamaModel:S.ollamaModel,
     fileName:(S.file ? S.file.name : (S.savedFileName||'')),
-    reviewed:S.reviewed
+    reviewed:S.reviewed,
+    bdDir:S.bdDir, bdUseForApp:S.bdUseForApp, bdManifest:S.bdManifest
   };
   const tries = [
     () => JSON.stringify({ ...base, zipInfo:S.zipInfo }),
@@ -476,7 +498,8 @@ function loadState(){
     const engine = (d.engine === 'free') ? 'free' : 'claude';
     Object.assign(S, {
       engine, ollamaModel:d.ollamaModel||'', savedFileName:d.fileName||'',
-      zipInfo:d.zipInfo||null, reviewed:Array.isArray(d.reviewed)?d.reviewed:[]
+      zipInfo:d.zipInfo||null, reviewed:Array.isArray(d.reviewed)?d.reviewed:[],
+      bdDir:d.bdDir||'', bdUseForApp:!!d.bdUseForApp, bdManifest:d.bdManifest||null
     });
     return true;
   } catch(e) { return false; }
@@ -552,7 +575,7 @@ async function generateFullApp(){
   try {
     if (!S.zipInfo) { S.zipInfo = await readZip(); saveState(); }
     const title = ((S.file ? S.file.name : (S.savedFileName||'app')).replace(/\.zip$/i,'')) || 'App migrada';
-    const payload = { inventory: Object.assign({ nombre:title }, S.zipInfo), title, filename:'app-migrada.zip', zip_token:(S.zipInfo && S.zipInfo.zip_token) || '' };
+    const payload = Object.assign({ inventory: Object.assign({ nombre:title }, S.zipInfo), title, filename:'app-migrada.zip', zip_token:(S.zipInfo && S.zipInfo.zip_token) || '' }, bdPayloadExtra());
     const r = await fetch('/api/scaffold', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
     if (!r.ok) { const e = await r.json().catch(()=>({})); throw new Error(e.error?.message || ('HTTP '+r.status)); }
     const imported = parseInt(r.headers.get('X-Rows-Imported') || '0', 10);
@@ -574,6 +597,10 @@ async function generateFullApp(){
 }
 
 // ✨ ENRIQUECIMIENTO con IA (opcional): etiquetas, obligatorios y reglas por pantalla.
+function bdPayloadExtra(){
+  if (!S.bdUseForApp || !S.bdDir || !S.bdManifest) return {};
+  return { bd_dir:S.bdDir, bd_map:S.bdManifest.mapa_tabla_base || {} };
+}
 function _norm(s){ return String(s||'').toLowerCase().replace(/[^a-z0-9]/g,''); }
 function _slugKey(s){ return String(s||'').replace(/[^a-zA-Z0-9_]/g,'_').replace(/_+/g,'_').replace(/^_|_$/g,'').toLowerCase() || 'tabla'; }
 function controlsForTable(name){
@@ -620,7 +647,7 @@ async function generateEnrichedApp(){
     }
     setLoad('Armando la app…', 'Integrando las mejoras de la IA');
     const title=((S.file?S.file.name:(S.savedFileName||'app')).replace(/\.zip$/i,''))||'App migrada';
-    const payload={ inventory:Object.assign({nombre:title},S.zipInfo), enrich, title, filename:'app-migrada.zip', zip_token:(S.zipInfo&&S.zipInfo.zip_token)||'' };
+    const payload=Object.assign({ inventory:Object.assign({nombre:title},S.zipInfo), enrich, title, filename:'app-migrada.zip', zip_token:(S.zipInfo&&S.zipInfo.zip_token)||'' }, bdPayloadExtra());
     const r=await fetch('/api/scaffold',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(payload)});
     if(!r.ok){ const e=await r.json().catch(()=>({})); throw new Error(e.error?.message||('HTTP '+r.status)); }
     const imported=parseInt(r.headers.get('X-Rows-Imported')||'0',10);
@@ -633,6 +660,137 @@ async function generateEnrichedApp(){
   }catch(e){
     showView('project');
     showErr('No se pudo generar la app con IA: '+e.message);
+  }
+}
+
+// ======================= BASES DE DATOS (export + vinculaciones) =======================
+// 🗄️ Genera una base SQLite por cada .dbc del ZIP (con sus índices y datos reales)
+// en una carpeta del disco del usuario. Luego permite vincular tablas entre sí
+// (incluso entre bases distintas) — y eso se puede dejar para después: queda
+// guardado como vinculaciones.json en esa misma carpeta.
+function bdMsg(text, ok){
+  const el = document.getElementById('bdmsg');
+  el.textContent = text;
+  el.className = 'amsg' + (ok === true ? ' ok' : (ok === false ? ' err' : ''));
+}
+async function exportDatabases(){
+  const dir = (S.bdDir || '').trim();
+  if (!dir) { bdMsg('Escribí primero la carpeta destino.', false); return; }
+  if (!S.file && !S.zipInfo) { bdMsg('Subí un sistema primero.', false); return; }
+  bdMsg('Generando bases de datos…', null);
+  try {
+    if (!S.zipInfo) { S.zipInfo = await readZip(); saveState(); }
+    const payload = { dir, inventory:S.zipInfo, zip_token:(S.zipInfo && S.zipInfo.zip_token) || '' };
+    const r = await fetch('/api/dbexport', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(payload) });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP ' + r.status));
+    S.bdManifest = j;
+    S.bdLinks = await fetchLinks(dir);
+    saveState();
+    renderBdResult(j);
+    document.getElementById('bdLinkBtn').disabled = false;
+    const nTablas = j.bases.reduce((a,b)=>a+b.tablas.length,0);
+    bdMsg(`✅ ${j.bases.length} base(s), ${nTablas} tabla(s) exportadas a ${dir}.`, true);
+  } catch(e) {
+    bdMsg('No se pudo exportar: ' + e.message, false);
+  }
+}
+function renderBdResult(manifest){
+  const el = document.getElementById('bdResult');
+  if (!manifest || !manifest.bases || !manifest.bases.length) { el.innerHTML = ''; return; }
+  el.innerHTML = '<div style="font-size:12px;margin-top:8px">' + manifest.bases.map(b =>
+    `<div style="margin-bottom:4px"><b>${esc(b.archivo)}</b> — ${b.tablas.map(t=>esc(t.nombre||t.key)+' ('+fmt(t.registros)+')').join(', ')}</div>`
+  ).join('') + '</div>';
+}
+async function fetchLinks(dir){
+  try {
+    const r = await fetch('/api/dbexport/links', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dir}) });
+    const j = await r.json().catch(()=>({}));
+    return Array.isArray(j.links) ? j.links : [];
+  } catch(e) { return []; }
+}
+async function saveLinksToServer(){
+  const dir = (S.bdDir || '').trim();
+  if (!dir) return;
+  try {
+    const r = await fetch('/api/dbexport/links', { method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dir, links:S.bdLinks}) });
+    const j = await r.json().catch(()=>({}));
+    if (r.ok && Array.isArray(j.links)) { S.bdLinks = j.links; saveState(); }
+  } catch(e) { /* se reintenta la próxima vez que se abra el editor */ }
+}
+function bdAllTablas(){
+  const out = [];
+  ((S.bdManifest && S.bdManifest.bases) || []).forEach(b => (b.tablas||[]).forEach(t => out.push(t)));
+  return out;
+}
+async function openLinkEditor(){
+  const dir = (S.bdDir || '').trim();
+  if (!dir) return;
+  if (!S.bdManifest) {
+    // Retomar sin haber vuelto a subir el ZIP: reconstruye el manifiesto leyendo el directorio.
+    try {
+      const r = await fetch('/api/dbexport/list', { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({dir}) });
+      S.bdManifest = await r.json();
+    } catch(e) { bdMsg('No se pudo leer la carpeta: ' + e.message, false); return; }
+  }
+  S.bdLinks = await fetchLinks(dir);
+  renderLinkEditor();
+}
+function renderLinkEditor(){
+  const tablas = bdAllTablas();
+  const opt = (sel) => tablas.map(t => `<option value="${esc(t.key)}"${t.key===sel?' selected':''}>${esc(t.nombre||t.key)}</option>`).join('');
+  const campos = (key) => { const t = tablas.find(x=>x.key===key); return (t && t.campos) || []; };
+  const campoOpt = (key, sel) => ['id'].concat(campos(key)).map(c => `<option value="${esc(c)}"${c===sel?' selected':''}>${esc(c)}</option>`).join('');
+  const rows = (S.bdLinks||[]).map((l,i) => `
+    <div style="display:flex;align-items:center;gap:4px;font-size:12px;margin:3px 0">
+      <span>${esc(l.tabla_origen)}.${esc(l.campo_origen)} → ${esc(l.tabla_destino)}.${esc(l.campo_destino)}</span>
+      <span style="color:var(--text3)">(${esc(l.origen||'manual')})</span>
+      <button class="bsm" onclick="removeLink(${i})" style="margin-left:auto">✕</button>
+    </div>`).join('') || '<div class="amsg">Todavía no hay vinculaciones.</div>';
+  const t0 = tablas[0] ? tablas[0].key : '';
+  document.getElementById('linkEditor').innerHTML = `
+    <div style="border-top:1px solid var(--border);margin-top:10px;padding-top:8px">
+      <div style="font-size:12px;color:var(--text3);margin-bottom:4px">Vinculaciones (relaciones entre tablas)</div>
+      <div id="linkRows">${rows}</div>
+      <div style="display:flex;flex-wrap:wrap;gap:4px;align-items:center;margin-top:6px;font-size:12px">
+        <select id="lkOrigenT" onchange="document.getElementById('lkOrigenC').innerHTML=campoOptJs(this.value)">${opt(t0)}</select>.
+        <select id="lkOrigenC">${campoOpt(t0)}</select>
+        <span>→</span>
+        <select id="lkDestT" onchange="document.getElementById('lkDestC').innerHTML=campoOptJs(this.value)">${opt(t0)}</select>.
+        <select id="lkDestC">${campoOpt(t0)}</select>
+        <button class="bsave" onclick="addLink()">Agregar</button>
+      </div>
+      <div class="amsg" style="margin-top:6px">Si no querés vincular ahora, cerrá este panel: queda todo guardado en <code>vinculaciones.json</code> dentro de la carpeta, y podés volver cuando quieras con "🔗 Vincular tablas".</div>
+    </div>`;
+  window.campoOptJs = (key) => campoOpt(key);
+}
+function addLink(){
+  const l = {
+    tabla_origen: document.getElementById('lkOrigenT').value,
+    campo_origen: document.getElementById('lkOrigenC').value,
+    tabla_destino: document.getElementById('lkDestT').value,
+    campo_destino: document.getElementById('lkDestC').value,
+    origen: 'manual',
+  };
+  if (!l.tabla_origen || !l.tabla_destino) return;
+  S.bdLinks = (S.bdLinks||[]).concat([l]);
+  renderLinkEditor();
+  saveLinksToServer();
+}
+function removeLink(i){
+  S.bdLinks = (S.bdLinks||[]).filter((_,idx)=>idx!==i);
+  renderLinkEditor();
+  saveLinksToServer();
+}
+function initBdUi(){
+  const dirInput = document.getElementById('bdDirInput');
+  if (dirInput) dirInput.value = S.bdDir || '';
+  const chk = document.getElementById('bdUseForApp');
+  if (chk) chk.checked = !!S.bdUseForApp;
+  if (S.bdManifest) {
+    renderBdResult(S.bdManifest);
+    document.getElementById('bdLinkBtn').disabled = false;
   }
 }
 

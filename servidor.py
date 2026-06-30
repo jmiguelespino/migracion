@@ -499,7 +499,7 @@ def parse_dbc(dbc_bytes, dct_bytes):
     """
     rows = read_dbf_records(dbc_bytes, dct_bytes, max_records=10000)
     if not rows:
-        return {"relaciones": [], "campos": {}, "stored_procs": [], "vistas": []}
+        return {"relaciones": [], "campos": {}, "stored_procs": [], "vistas": [], "tablas": []}
 
     # Índice OBJECTID → fila para resolver parentid (jerarquía tabla→campo/relación).
     by_id = {}
@@ -512,7 +512,8 @@ def parse_dbc(dbc_bytes, dct_bytes):
                 pass
 
     relaciones, campos_props, stored_procs, vistas = [], {}, [], []
-    seen_rels = set()
+    tablas = []   # tablas que pertenecen a esta base (.dbc), para poder exportarla aparte
+    seen_rels, seen_tablas = set(), set()
 
     for r in rows:
         otype = str(r.get("objecttype") or "").strip().lower()
@@ -523,6 +524,12 @@ def parse_dbc(dbc_bytes, dct_bytes):
             parent_id = int(r.get("parentid") or 0)
         except (TypeError, ValueError):
             parent_id = 0
+
+        if otype == "table":
+            tkey = scaffold._slug(oname)
+            if tkey and tkey not in seen_tablas:
+                seen_tablas.add(tkey)
+                tablas.append(tkey)
 
         if otype == "relation":
             # Relación 1-N entre tablas (la tabla padre es el padre del registro).
@@ -572,6 +579,7 @@ def parse_dbc(dbc_bytes, dct_bytes):
         "campos": campos_props,
         "stored_procs": stored_procs[:20],
         "vistas": vistas[:50],
+        "tablas": tablas,
     }
 
 
@@ -1155,6 +1163,79 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_json(400, {"error": {"message": "El archivo no es un ZIP válido"}})
             except Exception as e:
                 self.send_json(500, {"error": {"message": f"Error al leer el ZIP: {e}"}})
+            return
+
+        if self.path == "/api/dbexport":
+            # Exporta una base SQLite por cada .dbc del ZIP (con índices y
+            # datos reales) a un directorio del disco del usuario.
+            import dbexport
+            try:
+                payload = json.loads(self.read_body() or b"{}")
+            except Exception:
+                self.send_json(400, {"error": {"message": "JSON inválido"}})
+                return
+            dest_dir = (payload.get("dir") or "").strip()
+            if not dest_dir:
+                self.send_json(400, {"error": {"message": "Falta el directorio destino"}})
+                return
+            raw = _ZIP_CACHE.get(payload.get("zip_token"))
+            if not raw:
+                self.send_json(400, {"error": {"message":
+                    "No hay un ZIP en memoria; volvé a subirlo antes de exportar"}})
+                return
+            try:
+                manifiesto = dbexport.export_databases(raw, payload.get("inventory") or {}, dest_dir)
+            except OSError as e:
+                self.send_json(400, {"error": {"message": f"No se pudo escribir en '{dest_dir}': {e}"}})
+                return
+            except Exception as e:
+                self.send_json(500, {"error": {"message": f"Error al exportar las bases: {e}"}})
+                return
+            n_tablas = sum(len(b["tablas"]) for b in manifiesto["bases"])
+            print(f"  ✓ Bases exportadas a {dest_dir}: "
+                  f"{len(manifiesto['bases'])} bases, {n_tablas} tablas")
+            self.send_json(200, manifiesto)
+            return
+
+        if self.path == "/api/dbexport/list":
+            import dbexport
+            try:
+                payload = json.loads(self.read_body() or b"{}")
+            except Exception:
+                self.send_json(400, {"error": {"message": "JSON inválido"}})
+                return
+            dest_dir = (payload.get("dir") or "").strip()
+            if not dest_dir:
+                self.send_json(400, {"error": {"message": "Falta el directorio"}})
+                return
+            try:
+                manifiesto = dbexport.list_databases(dest_dir)
+            except Exception as e:
+                self.send_json(500, {"error": {"message": f"Error al leer '{dest_dir}': {e}"}})
+                return
+            self.send_json(200, manifiesto)
+            return
+
+        if self.path == "/api/dbexport/links":
+            import dbexport
+            try:
+                payload = json.loads(self.read_body() or b"{}")
+            except Exception:
+                self.send_json(400, {"error": {"message": "JSON inválido"}})
+                return
+            dest_dir = (payload.get("dir") or "").strip()
+            if not dest_dir:
+                self.send_json(400, {"error": {"message": "Falta el directorio"}})
+                return
+            try:
+                if "links" in payload:
+                    links = dbexport.save_links(dest_dir, payload.get("links") or [])
+                else:
+                    links = dbexport.load_links(dest_dir)
+            except Exception as e:
+                self.send_json(500, {"error": {"message": f"Error con las vinculaciones: {e}"}})
+                return
+            self.send_json(200, {"links": links})
             return
 
         if self.path == "/api/scaffold":

@@ -14,6 +14,9 @@ del original (ABM por tabla, menús, reportes, lógica). Servidor local en Pytho
 
 - `servidor.py` — servidor/proxy/lector de ZIP/parser de menús. Solo stdlib.
 - `scaffold.py` — generador determinístico de la app migrada (cobertura total).
+- `dbexport.py` — exporta bases SQLite (una por `.dbc`) a un directorio del
+  disco, con índices y datos reales, y maneja `vinculaciones.json` (relaciones
+  entre tablas, incluso entre bases distintas). Ver subagente `@dbc-export`.
 - `index.html` — UI completa (HTML/CSS/JS).
 - `PROGRESO.md` — estado y próximos pasos (LEER PRIMERO).
 

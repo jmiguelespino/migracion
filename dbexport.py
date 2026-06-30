@@ -1,0 +1,272 @@
+#!/usr/bin/env python3
+"""
+Exportación de bases de datos a un directorio externo, con sus índices, y
+edición de vinculaciones (relaciones) entre tablas.
+
+Flujo:
+1. `export_databases()` — a partir del inventario + ZIP en memoria, crea UNA
+   base SQLite por cada `.dbc` del sistema legacy (mismo nombre que el
+   `.dbc` original), con sus tablas, índices (.cdx/.idx) y datos reales.
+   Las tablas que no pertenecen a ningún `.dbc` (tablas sueltas) van a una
+   base aparte `_libres.db`.
+2. `list_databases()` — vuelve a inspeccionar un directorio ya generado
+   (sin necesitar el ZIP ni el inventario en memoria), para poder retomar
+   el paso de vinculación en otra sesión.
+3. `load_links()` / `save_links()` — `vinculaciones.json` en el mismo
+   directorio: relaciones detectadas en el/los `.dbc` + las que el usuario
+   agregue o corrija a mano. Queda ahí para que las apps generadas que
+   apunten a ese directorio las puedan leer en runtime.
+
+Solo stdlib (sqlite3, json, os) — sin dependencias externas.
+"""
+import json
+import os
+import re
+import sqlite3
+
+import scaffold
+from servidor import read_dbf_records, parse_cdx_expressions
+
+LINKS_FILENAME = "vinculaciones.json"
+FREE_TABLES_DB = "_libres"
+
+
+def _safe_db_name(name):
+    name = re.sub(r"[^a-zA-Z0-9_\-]", "_", str(name or "").strip())
+    return name or "base"
+
+
+def _table_columns(fields):
+    cols = []
+    for f in fields or []:
+        cn = scaffold._slug(f.get("name"))
+        if not cn or cn == "id" or cn in [c[0] for c in cols]:
+            continue
+        sql, _inp = scaffold.DBF_SQL.get(f.get("type", "C"), ("TEXT", "text"))
+        cols.append((cn, sql))
+    return cols
+
+
+def _group_tables_by_database(inventory):
+    """Devuelve {db_name: set(tabla_key)} + el set de tablas sin base (.dbc)."""
+    tables_all = {scaffold._slug(t.get("name")) for t in inventory.get("tables", [])
+                  if t.get("name")}
+    groups = {}
+    asignadas = set()
+    for db in inventory.get("databases") or []:
+        nombre = db.get("name") or "base"
+        miembros = {tk for tk in (db.get("tablas") or []) if tk in tables_all}
+        if miembros:
+            groups[nombre] = miembros
+            asignadas |= miembros
+    libres = tables_all - asignadas
+    return groups, libres
+
+
+def export_databases(raw_zip_bytes, inventory, dest_dir):
+    """Crea (o actualiza) en `dest_dir` una base SQLite por `.dbc`, con sus
+    tablas, índices y datos reales. Devuelve el manifiesto generado.
+
+    `manifiesto` = {
+      "dir": dest_dir,
+      "bases": [{"nombre", "archivo", "tablas": [{"key","nombre","registros","campos":[...]}]}],
+      "mapa_tabla_base": {tabla_key: archivo_db},
+    }
+    """
+    import io
+    import zipfile
+
+    os.makedirs(dest_dir, exist_ok=True)
+
+    zf = zipfile.ZipFile(io.BytesIO(raw_zip_bytes))
+    names = [n for n in zf.namelist() if not n.endswith("/")]
+    by_stem = {}
+    file_sizes = {n: zf.getinfo(n).file_size for n in names}
+    for n in names:
+        base = os.path.basename(n)
+        stem, ext = os.path.splitext(base)
+        sk, ek = stem.lower(), ext.lower()
+        prev = by_stem.get(sk, {}).get(ek)
+        if prev is None or file_sizes.get(n, 0) > file_sizes.get(prev, 0):
+            by_stem.setdefault(sk, {})[ek] = n
+
+    tables_by_key = {scaffold._slug(t.get("name")): t for t in inventory.get("tables", [])
+                      if t.get("name")}
+    groups, libres = _group_tables_by_database(inventory)
+    if libres:
+        groups[FREE_TABLES_DB] = libres
+
+    manifiesto = {"dir": dest_dir, "bases": [], "mapa_tabla_base": {}}
+
+    for db_nombre, tkeys in groups.items():
+        archivo = _safe_db_name(db_nombre) + ".db"
+        path = os.path.join(dest_dir, archivo)
+        conn = sqlite3.connect(path)
+        tablas_info = []
+        try:
+            for tkey in sorted(tkeys):
+                t = tables_by_key.get(tkey)
+                if not t:
+                    continue
+                cols = _table_columns(t.get("fields"))
+                if not cols:
+                    continue
+                defs = ", ".join('"%s" %s' % (cn, ct) for cn, ct in cols)
+                conn.execute(
+                    'CREATE TABLE IF NOT EXISTS "%s" '
+                    '(id INTEGER PRIMARY KEY AUTOINCREMENT, %s)' % (tkey, defs))
+
+                entry = by_stem.get((t.get("name") or "").lower(), {})
+                field_slugs = [cn for cn, _ in cols]
+
+                # Índices reales del .cdx/.idx original.
+                idx_defs, seen = [], set()
+                for ext in (".cdx", ".idx"):
+                    if ext in entry:
+                        try:
+                            for idxcols in parse_cdx_expressions(zf.read(entry[ext]), field_slugs):
+                                sig = tuple(idxcols)
+                                if idxcols and sig not in seen:
+                                    seen.add(sig)
+                                    idx_defs.append(idxcols)
+                        except Exception:
+                            pass
+                valid_cols = {cn for cn, _ in cols}
+                for i, idxcols in enumerate(idx_defs[:16]):
+                    idxcols = [c for c in idxcols if c in valid_cols]
+                    if not idxcols:
+                        continue
+                    try:
+                        conn.execute(
+                            'CREATE INDEX IF NOT EXISTS "ix_%s_%d" ON "%s" (%s)' % (
+                                tkey, i, tkey, ",".join('"%s"' % c for c in idxcols)))
+                    except sqlite3.Error:
+                        pass
+
+                # Datos reales (.dbf + memo .fpt).
+                registros = 0
+                if ".dbf" in entry:
+                    try:
+                        dbf_bytes = zf.read(entry[".dbf"])
+                        fpt_bytes = zf.read(entry[".fpt"]) if ".fpt" in entry else b""
+                        rows = read_dbf_records(dbf_bytes, fpt_bytes)
+                    except Exception:
+                        rows = []
+                    if rows and conn.execute('SELECT COUNT(*) FROM "%s"' % tkey).fetchone()[0] == 0:
+                        for r in rows:
+                            use = [k for k in valid_cols if k in r]
+                            if not use:
+                                continue
+                            try:
+                                conn.execute(
+                                    'INSERT INTO "%s" (%s) VALUES (%s)' % (
+                                        tkey, ",".join('"%s"' % x for x in use),
+                                        ",".join("?" * len(use))),
+                                    [r[x] for x in use])
+                            except sqlite3.Error:
+                                pass
+                    registros = conn.execute('SELECT COUNT(*) FROM "%s"' % tkey).fetchone()[0]
+                conn.commit()
+
+                tablas_info.append({
+                    "key": tkey, "nombre": t.get("name"), "registros": registros,
+                    "campos": field_slugs,
+                })
+                manifiesto["mapa_tabla_base"][tkey] = archivo
+        finally:
+            conn.close()
+
+        if tablas_info:
+            manifiesto["bases"].append({
+                "nombre": db_nombre, "archivo": archivo, "tablas": tablas_info,
+            })
+
+    # Sembramos vinculaciones.json con las relaciones que ya trae el .dbc,
+    # sin pisar las que el usuario ya haya agregado/corregido a mano.
+    existentes = load_links(dest_dir)
+    ya = {(r.get("tabla_origen"), r.get("campo_origen"),
+           r.get("tabla_destino"), r.get("campo_destino")) for r in existentes}
+    for db in inventory.get("databases") or []:
+        for rel in db.get("relaciones") or []:
+            sig = (rel.get("child_table"), rel.get("child_field"),
+                   rel.get("parent_table"), rel.get("parent_field") or "id")
+            if sig in ya or not sig[0] or not sig[2]:
+                continue
+            ya.add(sig)
+            existentes.append({
+                "tabla_origen": sig[0], "campo_origen": sig[1],
+                "tabla_destino": sig[2], "campo_destino": sig[3],
+                "origen": "dbc",
+            })
+    save_links(dest_dir, existentes)
+
+    return manifiesto
+
+
+def list_databases(dest_dir):
+    """Inspecciona un directorio ya generado (sin ZIP en memoria): lee cada
+    .db con sqlite3 y devuelve la misma forma que `export_databases`."""
+    manifiesto = {"dir": dest_dir, "bases": [], "mapa_tabla_base": {}}
+    if not os.path.isdir(dest_dir):
+        return manifiesto
+    for archivo in sorted(os.listdir(dest_dir)):
+        if not archivo.endswith(".db"):
+            continue
+        path = os.path.join(dest_dir, archivo)
+        try:
+            conn = sqlite3.connect(path)
+            conn.row_factory = sqlite3.Row
+            tnames = [r[0] for r in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%'")]
+            tablas_info = []
+            for tkey in sorted(tnames):
+                try:
+                    registros = conn.execute('SELECT COUNT(*) FROM "%s"' % tkey).fetchone()[0]
+                    campos = [r[1] for r in conn.execute('PRAGMA table_info("%s")' % tkey)
+                              if r[1] != "id"]
+                except sqlite3.Error:
+                    registros, campos = 0, []
+                tablas_info.append({"key": tkey, "nombre": tkey, "registros": registros,
+                                    "campos": campos})
+                manifiesto["mapa_tabla_base"][tkey] = archivo
+            conn.close()
+        except sqlite3.Error:
+            tablas_info = []
+        if tablas_info:
+            manifiesto["bases"].append({
+                "nombre": os.path.splitext(archivo)[0], "archivo": archivo,
+                "tablas": tablas_info,
+            })
+    return manifiesto
+
+
+def load_links(dest_dir):
+    path = os.path.join(dest_dir, LINKS_FILENAME)
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def save_links(dest_dir, links):
+    os.makedirs(dest_dir, exist_ok=True)
+    path = os.path.join(dest_dir, LINKS_FILENAME)
+    limpio = []
+    for r in links or []:
+        to = scaffold._slug(r.get("tabla_origen"))
+        co = scaffold._slug(r.get("campo_origen"))
+        td = scaffold._slug(r.get("tabla_destino"))
+        cd = scaffold._slug(r.get("campo_destino")) if r.get("campo_destino") else "id"
+        if not to or not td:
+            continue
+        limpio.append({"tabla_origen": to, "campo_origen": co,
+                       "tabla_destino": td, "campo_destino": cd,
+                       "origen": r.get("origen") or "manual"})
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(limpio, f, ensure_ascii=False, indent=2)
+    return limpio

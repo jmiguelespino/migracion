@@ -379,38 +379,44 @@ with open(os.path.join(BASE, "meta.json"), encoding="utf-8") as _f:
 TABLES = _DATA["tables"]
 META = _DATA["meta"]
 
+# Config opcional para apuntar a un directorio de bases externo (compartido
+# entre varios sistemas generados) en vez del datos.db embebido. Si no existe
+# el archivo, o no trae bd_dir, el comportamiento es el de siempre (embebido).
+_DB_CONFIG_PATH = os.path.join(BASE, "db_config.json")
+_DB_CONFIG = {}
+if os.path.exists(_DB_CONFIG_PATH):
+    try:
+        with open(_DB_CONFIG_PATH, encoding="utf-8") as _f:
+            _DB_CONFIG = json.load(_f)
+    except (OSError, ValueError):
+        _DB_CONFIG = {}
 
-def conn():
-    c = sqlite3.connect(DB)
+
+def _db_path(table):
+    """Ruta de la base SQLite para `table`: la externa (bd_dir/bases.json) si
+    está configurada y el directorio existe, si no la embebida (datos.db)."""
+    bd_dir = _DB_CONFIG.get("bd_dir")
+    bases = _DB_CONFIG.get("bases") or {}
+    if bd_dir and table in bases and os.path.isdir(bd_dir):
+        return os.path.join(bd_dir, bases[table])
+    return DB
+
+
+def conn(table=None):
+    c = sqlite3.connect(_db_path(table) if table else DB)
     c.row_factory = sqlite3.Row
     return c
 
 
 def init_db():
-    c = conn()
-    for t, cols in TABLES.items():
-        defs = ", ".join('"%s" %s' % (cn, ct) for cn, ct in cols)
-        c.execute('CREATE TABLE IF NOT EXISTS "%s" (id INTEGER PRIMARY KEY AUTOINCREMENT, %s)' % (t, defs))
-    # Índices del sistema original, derivados de las expresiones de clave de los
-    # .cdx/.idx. Cada entrada es una lista de índices; cada índice una lista de
-    # columnas (compuesto si tiene más de una). Acepta también el formato viejo
-    # (lista de columnas sueltas) por compatibilidad.
-    for t, idxdefs in (META.get("indexes") or {}).items():
-        if t not in TABLES:
-            continue
-        valid = {cn for cn, _ in TABLES[t]}
-        for i, cols in enumerate(idxdefs):
-            cols = cols if isinstance(cols, list) else [cols]
-            cols = [c for c in cols if c in valid]
-            if not cols:
-                continue
-            try:
-                c.execute('CREATE INDEX IF NOT EXISTS "ix_%s_%d" ON "%s" (%s)' % (
-                    t, i, t, ",".join('"%s"' % x for x in cols)))
-            except sqlite3.Error:
-                pass
-    c.commit()
-    # Importar los datos reales del sistema legacy una sola vez (si está vacío).
+    # Agrupamos las tablas por archivo de base real (pueden ser varias si
+    # apuntan a un directorio externo con más de un .db) para crearlas/
+    # indexarlas/sembrarlas con una conexión por archivo.
+    by_path = {}
+    for t in TABLES:
+        by_path.setdefault(_db_path(t), []).append(t)
+
+    seed = {}
     seed_path = os.path.join(BASE, "seed.json")
     if os.path.exists(seed_path):
         try:
@@ -418,8 +424,37 @@ def init_db():
                 seed = json.load(f)
         except (OSError, ValueError):
             seed = {}
-        for t, rows in seed.items():
-            if t not in TABLES or not rows:
+
+    for path, tbls in by_path.items():
+        c = sqlite3.connect(path)
+        for t in tbls:
+            cols = TABLES[t]
+            defs = ", ".join('"%s" %s' % (cn, ct) for cn, ct in cols)
+            c.execute('CREATE TABLE IF NOT EXISTS "%s" (id INTEGER PRIMARY KEY AUTOINCREMENT, %s)' % (t, defs))
+        # Índices del sistema original, derivados de las expresiones de clave de los
+        # .cdx/.idx. Cada entrada es una lista de índices; cada índice una lista de
+        # columnas (compuesto si tiene más de una). Acepta también el formato viejo
+        # (lista de columnas sueltas) por compatibilidad.
+        for t in tbls:
+            idxdefs = (META.get("indexes") or {}).get(t) or []
+            valid = {cn for cn, _ in TABLES[t]}
+            for i, cols in enumerate(idxdefs):
+                cols = cols if isinstance(cols, list) else [cols]
+                cols = [c for c in cols if c in valid]
+                if not cols:
+                    continue
+                try:
+                    c.execute('CREATE INDEX IF NOT EXISTS "ix_%s_%d" ON "%s" (%s)' % (
+                        t, i, t, ",".join('"%s"' % x for x in cols)))
+                except sqlite3.Error:
+                    pass
+        c.commit()
+        # Importar los datos reales del sistema legacy una sola vez (si está vacío).
+        # Si la tabla vive en una base externa ya sembrada por la exportación
+        # de bases, esto no hace nada (la tabla ya tiene filas).
+        for t in tbls:
+            rows = seed.get(t)
+            if not rows:
                 continue
             if c.execute('SELECT COUNT(*) FROM "%s"' % t).fetchone()[0]:
                 continue  # ya tiene datos: no re-importamos
@@ -436,7 +471,7 @@ def init_db():
                 except sqlite3.Error:
                     pass
         c.commit()
-    c.close()
+        c.close()
 
 
 app = FastAPI(title=META.get("titulo", "App migrada"))
@@ -507,14 +542,14 @@ def meta():
 
 @app.get("/api/_counts")
 def counts():
-    c = conn()
     out = {}
     for t in TABLES:
+        c = conn(t)
         try:
             out[t] = c.execute('SELECT COUNT(*) FROM "%s"' % t).fetchone()[0]
         except sqlite3.Error:
             out[t] = 0
-    c.close()
+        c.close()
     return out
 
 
@@ -535,7 +570,7 @@ def list_rows(table: str, q: str = "", sort: str = "", dir: str = "asc",
         order = " ORDER BY id DESC"
     size = max(1, min(int(size or 50), 500))
     page = max(1, int(page or 1))
-    c = conn()
+    c = conn(table)
     total = c.execute('SELECT COUNT(*) FROM "%s"%s' % (table, where), params).fetchone()[0]
     rows = [dict(r) for r in c.execute(
         'SELECT * FROM "%s"%s%s LIMIT ? OFFSET ?' % (table, where, order),
@@ -553,7 +588,7 @@ def export_csv(table: str):
     cols = ["id"] + [cn for cn, _ in TABLES[table]]
     w = csv.writer(out)
     w.writerow(cols)
-    c = conn()
+    c = conn(table)
     for r in c.execute('SELECT * FROM "%s" ORDER BY id' % table):
         w.writerow([r[cn] for cn in cols])
     c.close()
@@ -573,7 +608,7 @@ async def create_row(table: str, req: Request):
     use = [c for c in cols if c in data]
     if not use:
         raise HTTPException(400, "sin datos")
-    c = conn()
+    c = conn(table)
     cur = c.execute(
         'INSERT INTO "%s" (%s) VALUES (%s)' % (table, ",".join('"%s"' % x for x in use), ",".join("?" * len(use))),
         [data[x] for x in use],
@@ -596,7 +631,7 @@ async def update_row(table: str, rid: int, req: Request):
     use = [c for c in cols if c in data]
     if not use:
         raise HTTPException(400, "sin datos")
-    c = conn()
+    c = conn(table)
     c.execute(
         'UPDATE "%s" SET %s WHERE id=?' % (table, ",".join('"%s"=?' % x for x in use)),
         [data[x] for x in use] + [rid],
@@ -610,7 +645,7 @@ async def update_row(table: str, rid: int, req: Request):
 def delete_row(table: str, rid: int):
     if table not in TABLES:
         raise HTTPException(404)
-    c = conn()
+    c = conn(table)
     c.execute('DELETE FROM "%s" WHERE id=?' % table, [rid])
     c.commit()
     c.close()
@@ -1089,6 +1124,16 @@ def build_app_scaffold(payload, assets=None):
     meta_json = json.dumps({"tables": tables_sql, "meta": meta}, ensure_ascii=False)
     seed_json = json.dumps(seed, ensure_ascii=False) if seed else ""
 
+    # Directorio de bases externo (opcional): si se generó con "📁 Exportar
+    # bases de datos" y se pidió direccionar esta app a esa carpeta, no se
+    # arma datos.db acá — las tablas que tengan mapa se leen/escriben directo
+    # del directorio compartido. Las que falten siguen usando datos.db embebido.
+    bd_dir = (payload.get("bd_dir") or "").strip()
+    bd_map_in = payload.get("bd_map") or {}
+    bd_map = {k: v for k, v in bd_map_in.items() if k in tables_sql}
+    db_config_json = json.dumps({"bd_dir": bd_dir, "bases": bd_map}, ensure_ascii=False) \
+        if bd_dir and bd_map else ""
+
     readme = "\n".join([
         f"# {title} — app migrada",
         "",
@@ -1113,10 +1158,20 @@ def build_app_scaffold(payload, assets=None):
         f"({meta['stats'].get('campos_imagen', 0)} campos se muestran como imagen)",
         f"- {len(meta['menus'])} menús como navegación",
         f"- {meta['stats']['reportes']} reportes como vistas de consulta",
+    ] + ([
+        f"- Base de datos SQLite en un **directorio compartido**: `{bd_dir}`",
+        "  (`backend/db_config.json`). Otros sistemas generados pueden apuntar",
+        "  a la misma carpeta y compartir datos.",
+        "",
+        "Para redirigir esta app a otra carpeta de bases, editá `backend/db_config.json`",
+        "(campo `bd_dir`) sin necesidad de volver a generar el ZIP. Si la carpeta no",
+        "existe o queda vacío, la app usa `backend/datos.db` embebido como respaldo.",
+    ] if db_config_json else [
         "- Base de datos SQLite local (`backend/datos.db`, se crea sola)",
         "",
         "Los datos se cargan en `datos.db` la **primera vez** que arranca la app",
         "(si la tabla está vacía). Para re-importar desde cero, borrá `backend/datos.db`.",
+    ]) + [
         "",
         "Ver `COBERTURA.md` para el detalle de qué se cubrió.",
     ])
@@ -1180,6 +1235,8 @@ def build_app_scaffold(payload, assets=None):
     }
     if seed_json:
         files["backend/seed.json"] = seed_json
+    if db_config_json:
+        files["backend/db_config.json"] = db_config_json
 
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:

@@ -135,6 +135,23 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       (p.ej. `ZZ_EJECUTABLES/` y `datos/`), se prefiere el de la ruta con "dato".
 - [x] **Deduplicación de `.dbf` en seed**: cuando hay dos copias del mismo DBF, se
       importa la **más grande** (más registros = datos de producción).
+- [x] **Exportar bases de datos a un directorio + vincular tablas** (`dbexport.py`,
+      nuevo): botón **🗄️ Bases de datos + vínculos** en la sidebar. Genera UNA
+      base SQLite por cada `.dbc` del ZIP (mismo nombre, con sus índices reales
+      de `.cdx`/`.idx` y los datos) en una carpeta del disco que elige el
+      usuario; las tablas sin `.dbc` van a `_libres.db`. Editor de relaciones
+      (`🔗 Vincular tablas`) que muestra TODAS las relaciones — las que trae el
+      `.dbc` + las que se agreguen a mano, incluso entre tablas de bases
+      distintas — y se puede dejar para después: queda en `vinculaciones.json`
+      junto a las bases, recuperable sin volver a subir el ZIP
+      (`/api/dbexport/list`). Si se tilda "Direccionar la app generada a esta
+      carpeta", `scaffold.py` escribe `backend/db_config.json` y la app
+      generada NO arma `datos.db` propio: lee/escribe directo en esa carpeta
+      compartida (`conn(table)` resuelve la ruta según `db_config.json`,
+      editable después sin regenerar). Endpoints: `POST /api/dbexport`,
+      `/api/dbexport/list`, `/api/dbexport/links`. Probado end-to-end: export +
+      vínculos vía HTTP + app generada en ambos modos (embebido y carpeta
+      externa) arrancando con `uvicorn` y sirviendo datos reales.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
