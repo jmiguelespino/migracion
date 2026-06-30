@@ -25,7 +25,9 @@ import re
 import sqlite3
 
 import scaffold
-from servidor import read_dbf_records, parse_cdx_expressions
+from servidor import (
+    read_dbf_records, parse_cdx_expressions, parse_dbf_structure, VFP_SYSTEM_TABLES,
+)
 
 LINKS_FILENAME = "vinculaciones.json"
 FREE_TABLES_DB = "_libres"
@@ -47,10 +49,37 @@ def _table_columns(fields):
     return cols
 
 
-def _group_tables_by_database(inventory):
-    """Devuelve {db_name: set(tabla_key)} + el set de tablas sin base (.dbc)."""
-    tables_all = {scaffold._slug(t.get("name")) for t in inventory.get("tables", [])
-                  if t.get("name")}
+def _scan_all_tables(zf, by_stem):
+    """Estructura de TODAS las .dbf del ZIP, leyendo el header real de cada
+    una — a diferencia de `inventory["tables"]` (servidor.analyze_zip), que
+    recorta a MAX_TABLES porque ese inventario alimenta una pantalla de ABM
+    por tabla. Acá no generamos pantallas, así que no hace falta el tope: si
+    no se exportan todas las tablas, alguna queda fuera de la base sin que el
+    usuario se entere (como pasó con una tabla de `login` más allá del
+    tope)."""
+    tables = {}
+    for stem, exts in by_stem.items():
+        if ".dbf" not in exts:
+            continue
+        if stem in VFP_SYSTEM_TABLES:
+            continue
+        base = os.path.splitext(os.path.basename(exts[".dbf"]))[0]
+        try:
+            with zf.open(exts[".dbf"]) as fp:
+                head = fp.read(32 + 32 * 256)
+            struct = parse_dbf_structure(head)
+        except Exception:
+            struct = None
+        if struct:
+            tables[scaffold._slug(base)] = {
+                "name": base, "records": struct["records"], "fields": struct["fields"],
+            }
+    return tables
+
+
+def _group_tables_by_database(inventory, tables_all):
+    """Devuelve {db_name: set(tabla_key)} + el set de tablas sin base (.dbc).
+    `tables_all` = claves (slug) de TODAS las tablas conocidas (sin tope)."""
     groups = {}
     asignadas = set()
     for db in inventory.get("databases") or []:
@@ -245,9 +274,10 @@ def export_databases(raw_zip_bytes, inventory, dest_dir):
         if prev is None or file_sizes.get(n, 0) > file_sizes.get(prev, 0):
             by_stem.setdefault(sk, {})[ek] = n
 
-    tables_by_key = {scaffold._slug(t.get("name")): t for t in inventory.get("tables", [])
-                      if t.get("name")}
-    groups, libres = _group_tables_by_database(inventory)
+    # Todas las .dbf del ZIP (sin el tope MAX_TABLES del inventario de
+    # pantallas), para no perder tablas que están más allá de ese tope.
+    tables_by_key = _scan_all_tables(zf, by_stem)
+    groups, libres = _group_tables_by_database(inventory, set(tables_by_key))
     if libres:
         groups[FREE_TABLES_DB] = libres
 

@@ -171,6 +171,16 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       y `export_databases` comparten `_scan_db_objects()` para que tablas y
       vistas salgan siempre juntas (con conteo de filas), tanto recién
       generadas como al retomar un directorio ya existente.
+- [x] **`dbexport` ya no depende de `MAX_TABLES` (60)**: ese tope es de
+      `analyze_zip` (inventario para pantallas de ABM, no tiene sentido
+      generar 200 pantallas) pero `dbexport.export_databases` lo heredaba sin
+      necesidad — con sistemas de más de 60 tablas, las que quedaban afuera
+      del tope (p.ej. `usuarios` en una base `login` real) desaparecían
+      silenciosamente del export. Ahora `dbexport._scan_all_tables()` lee el
+      header de TODAS las `.dbf` del ZIP directo (sin tope), y
+      `_group_tables_by_database` arma las bases sobre ese universo completo.
+      Probado con un ZIP sintético de 65 tablas: inventario capado a 60,
+      export con las 65.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
