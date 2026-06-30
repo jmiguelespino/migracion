@@ -63,6 +63,92 @@ def _group_tables_by_database(inventory):
     return groups, libres
 
 
+def _vista_sql(v):
+    """SELECT best-effort a partir de las propiedades de una vista VFP
+    (Tables/Fields/WhereClause). VFP no guarda el SELECT como texto plano —
+    esto es una reconstrucción aproximada, no garantizada."""
+    tablas = [t.strip() for t in (v.get("tablas") or "").split(",") if t.strip()]
+    if not tablas:
+        return None
+    campos = (v.get("campos") or "").strip() or "*"
+    where = (v.get("where") or "").strip()
+    sql = 'SELECT %s FROM %s' % (campos, ", ".join('"%s"' % t for t in tablas))
+    if where:
+        sql += ' WHERE %s' % where
+    return sql
+
+
+def _export_vistas(inventory, dest_dir, manifiesto):
+    """Escribe `vistas.sql` con TODAS las vistas detectadas en los .dbc, para
+    no perderlas aunque no tengan tablas propias para exportar. Es best-effort
+    (VFP no guarda el SELECT como texto): se documentan crudas las propiedades
+    Y se arma un CREATE VIEW aproximado. Cuando todas las tablas de la vista
+    quedaron en UNA sola base ya exportada, además se la crea de verdad ahí.
+    Devuelve (total_vistas, creadas_de_verdad)."""
+    mapa = manifiesto.get("mapa_tabla_base") or {}
+    lines = [
+        "-- Vistas extraídas de los .dbc del sistema legacy.",
+        "-- VFP no guarda las vistas como texto SQL: se reconstruyen best-effort",
+        "-- a partir de las propiedades Tables/Fields/WhereClause. Revisar antes",
+        "-- de usar en producción. Donde se pudo, ya se crearon (CREATE VIEW)",
+        "-- en la base SQLite correspondiente — ver el comentario 'creada en ...'.",
+        "",
+    ]
+    n_total = n_creadas = 0
+    for db in inventory.get("databases") or []:
+        for v in (db.get("vistas") or []):
+            if not isinstance(v, dict):
+                v = {"nombre": str(v)}
+            nombre = v.get("nombre") or ""
+            if not nombre:
+                continue
+            n_total += 1
+            slug = scaffold._slug(nombre)
+            lines.append("-- " + "-" * 60)
+            lines.append("-- Vista: %s  (base origen: %s)" % (nombre, db.get("name") or "?"))
+            if v.get("tablas"):
+                lines.append("-- Tablas: %s" % v["tablas"])
+            if v.get("campos"):
+                lines.append("-- Campos: %s" % v["campos"])
+            if v.get("where"):
+                lines.append("-- Where:  %s" % v["where"])
+            extra = {k: val for k, val in (v.get("propiedades") or {}).items()
+                     if k not in ("Tables", "Fields", "WhereClause")}
+            for k, val in list(extra.items())[:15]:
+                lines.append("--   %s = %s" % (k, val))
+
+            sql = _vista_sql(v)
+            if not sql:
+                lines.append("-- (sin info de tablas/campos suficiente para armar el SELECT;"
+                              " revisar las propiedades de arriba a mano)")
+                lines.append("")
+                continue
+
+            tablas_slug = [scaffold._slug(t) for t in (v.get("tablas") or "").split(",") if t.strip()]
+            archivos = {mapa.get(t) for t in tablas_slug}
+            archivo = next(iter(archivos)) if len(archivos) == 1 and None not in archivos else None
+            creada = False
+            if archivo:
+                try:
+                    conn = sqlite3.connect(os.path.join(dest_dir, archivo))
+                    conn.execute('CREATE VIEW IF NOT EXISTS "%s" AS %s' % (slug, sql))
+                    conn.commit()
+                    conn.close()
+                    creada = True
+                    n_creadas += 1
+                except sqlite3.Error as e:
+                    lines.append("-- (no se pudo crear automáticamente: %s)" % e)
+            lines.append('CREATE VIEW IF NOT EXISTS "%s" AS %s;' % (slug, sql))
+            if creada:
+                lines.append("-- creada en %s" % archivo)
+            lines.append("")
+
+    if n_total:
+        with open(os.path.join(dest_dir, "vistas.sql"), "w", encoding="utf-8") as f:
+            f.write("\n".join(lines))
+    return n_total, n_creadas
+
+
 def export_databases(raw_zip_bytes, inventory, dest_dir):
     """Crea (o actualiza) en `dest_dir` una base SQLite por `.dbc`, con sus
     tablas, índices y datos reales. Devuelve el manifiesto generado.
@@ -194,6 +280,11 @@ def export_databases(raw_zip_bytes, inventory, dest_dir):
             manifiesto["bases"].append({
                 "nombre": db_nombre, "archivo": archivo, "tablas": tablas_info,
             })
+
+    n_vistas, n_vistas_creadas = _export_vistas(inventory, dest_dir, manifiesto)
+    if n_vistas:
+        manifiesto["vistas"] = {"total": n_vistas, "creadas": n_vistas_creadas,
+                                "archivo": "vistas.sql"}
 
     # Sembramos vinculaciones.json con las relaciones que ya trae el .dbc,
     # sin pisar las que el usuario ya haya agregado/corregido a mano.

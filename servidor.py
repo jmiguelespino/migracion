@@ -484,6 +484,21 @@ def _dbc_get_prop(text, key):
     return m.group(1).strip().strip('"') if m else ""
 
 
+_DBC_PROP_LINE_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^\r\n]*?)"?\s*$', re.M)
+
+
+def _dbc_parse_properties(text):
+    """Todas las propiedades 'Clave = valor' del bloque PROPERTY de un objeto
+    .dbc (no solo las conocidas), para no perder info de objetos que no
+    tenemos mapeados a propósito (p.ej. vistas)."""
+    out = {}
+    for m in _DBC_PROP_LINE_RE.finditer(text or ""):
+        k, v = m.group(1), m.group(2).strip()
+        if k and v:
+            out[k] = v
+    return out
+
+
 def parse_dbc(dbc_bytes, dct_bytes):
     """Lee el Database Container de VFP (.dbc + memo .dct).
 
@@ -572,7 +587,19 @@ def parse_dbc(dbc_bytes, dct_bytes):
 
         elif otype in ("view", "localview", "remoteview"):
             if oname:
-                vistas.append(oname)
+                allprops = _dbc_parse_properties(prop)
+                vistas.append({
+                    "nombre": oname,
+                    "tipo": otype,
+                    # Best-effort: en VFP la vista NO se guarda como un SELECT de
+                    # texto, sino como propiedades (Tables/Fields/WhereClause).
+                    # Las exponemos tal cual para reconstruir un SQL aproximado
+                    # y, si no alcanza, para no perder la info igual.
+                    "tablas": allprops.get("Tables", ""),
+                    "campos": allprops.get("Fields", ""),
+                    "where": allprops.get("WhereClause", ""),
+                    "propiedades": allprops,
+                })
 
     return {
         "relaciones": relaciones,

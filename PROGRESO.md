@@ -152,6 +152,16 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       `/api/dbexport/list`, `/api/dbexport/links`. Probado end-to-end: export +
       vínculos vía HTTP + app generada en ambos modos (embebido y carpeta
       externa) arrancando con `uvicorn` y sirviendo datos reales.
+- [x] **Extraer las vistas de los `.dbc` "solo vistas"** (p.ej. `vistgest` con 50
+      vistas sobre tablas de otra base): antes desaparecían del export porque no
+      tenían tablas propias. `parse_dbc` ahora captura, por vista, las
+      propiedades `Tables`/`Fields`/`WhereClause` + todas las demás crudas
+      (VFP no guarda el SELECT como texto plano). `dbexport._export_vistas()`
+      escribe `vistas.sql` con un `CREATE VIEW` best-effort por cada una
+      (documentando lo crudo si no alcanza para armar el SELECT) y, cuando
+      TODAS las tablas de la vista quedaron en una sola base ya exportada, la
+      crea de verdad ahí (`CREATE VIEW` ejecutado, queda consultable). Probado
+      con vista de 1 tabla + WHERE: se creó y devolvió filas reales.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 

@@ -693,7 +693,8 @@ async function exportDatabases(){
     const nTablas = (j.bases||[]).reduce((a,b)=>a+b.tablas.length,0);
     const sinTablas = (j.sin_tablas||[]).length;
     const extra = sinTablas ? ` (+${sinTablas} base(s) sin tablas propias, solo vistas)` : '';
-    bdMsg(`✅ ${(j.bases||[]).length} base(s), ${nTablas} tabla(s) exportadas a ${dir}.${extra}`, true);
+    const vw = j.vistas ? ` Se extrajeron ${j.vistas.total} vistas a vistas.sql (${j.vistas.creadas} ya creadas como CREATE VIEW, el resto a revisar a mano).` : '';
+    bdMsg(`✅ ${(j.bases||[]).length} base(s), ${nTablas} tabla(s) exportadas a ${dir}.${extra}${vw}`, true);
   } catch(e) {
     bdMsg('No se pudo exportar: ' + e.message, false);
   }
@@ -709,7 +710,10 @@ function renderBdResult(manifest){
   const sinTablas = (manifest.sin_tablas||[]).map(d =>
     `<div style="margin-bottom:4px;color:var(--text3)">${esc(d.nombre)} — sin tablas propias (${fmt(d.vistas)} vistas, ${fmt(d.relaciones)} relaciones; no genera .db)</div>`
   ).join('');
-  el.innerHTML = '<div style="font-size:12px;margin-top:8px">' + bases + sinTablas + '</div>';
+  const vw = manifest.vistas
+    ? `<div style="margin-top:6px;color:var(--text3)">📄 ${fmt(manifest.vistas.total)} vistas extraídas a <code>vistas.sql</code> (${fmt(manifest.vistas.creadas)} ya creadas, el resto a revisar a mano).</div>`
+    : '';
+  el.innerHTML = '<div style="font-size:12px;margin-top:8px">' + bases + sinTablas + vw + '</div>';
 }
 async function fetchLinks(dir){
   try {
