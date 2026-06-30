@@ -496,6 +496,35 @@ def _dbc_get_prop(text, key):
 _DBC_PROP_LINE_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^\r\n]*?)"?\s*$', re.M)
 
 
+_VFP_QUALIFIER_RE = re.compile(r'\b\w+!(\w+)')
+
+
+def _dbc_extract_view_sql(prop):
+    """Las vistas SQL de VFP a veces guardan el SELECT completo como texto
+    plano dentro de PROPERTY — pero el bloque es binario (strings con
+    prefijo de longitud empaquetados), no 'Clave = Valor'. Lo buscamos
+    directo: una línea que contenga "SELECT ...", cortada en el ')' suelto
+    final (delimitador del empaquetado — no aparece balanceado con un '('
+    real en el propio SELECT). Confirmado con datos reales:
+    "...FROM login!usuarios ORDER BY Usuarios.usuario)".
+    Devuelve (sql_limpio, tablas_de_FROM) o ("", "") si no encuentra nada."""
+    for line in (prop or "").splitlines():
+        m = re.search(r'SELECT\s.+', line, re.I)
+        if not m:
+            continue
+        sql = m.group(0).strip()
+        if sql.endswith(")") and "(" not in sql:
+            sql = sql[:-1].strip()
+        # "login!usuarios" -> "usuarios": VFP califica la tabla con la base
+        # de origen; cada base ya es un archivo SQLite aparte, no hace falta.
+        sql = _VFP_QUALIFIER_RE.sub(r'\1', sql)
+        fm = re.search(r'\bFROM\b\s+(.+?)(?:\bWHERE\b|\bORDER\s+BY\b|\bGROUP\s+BY\b|$)',
+                        sql, re.I)
+        tablas = fm.group(1).strip().rstrip(",") if fm else ""
+        return sql, tablas
+    return "", ""
+
+
 def _dbc_parse_properties(text):
     """Todas las propiedades 'Clave = valor' del bloque PROPERTY de un objeto
     .dbc (no solo las conocidas), para no perder info de objetos que no
@@ -600,22 +629,25 @@ def parse_dbc(dbc_bytes, dct_bytes):
         elif otype in ("view", "localview", "remoteview"):
             if oname:
                 allprops = _dbc_parse_properties(prop)
+                # Confirmado con datos reales: el PROPERTY de una vista es un
+                # blob binario (strings empaquetados con prefijo de longitud,
+                # no "Clave = Valor"), pero ADENTRO trae el SELECT completo
+                # como texto plano (con sintaxis "base!tabla" de VFP). Si está,
+                # se usa tal cual (ya limpio) en vez de reconstruir aproximado.
+                sql_directo, tablas_de_from = _dbc_extract_view_sql(prop)
                 vistas.append({
                     "nombre": oname,
                     "tipo": otype,
-                    # Best-effort: en VFP la vista NO se guarda como un SELECT de
-                    # texto, sino como propiedades (Tables/Fields/WhereClause).
-                    # Las exponemos tal cual para reconstruir un SQL aproximado
-                    # y, si no alcanza, para no perder la info igual.
-                    "tablas": allprops.get("Tables", ""),
+                    "sql": sql_directo,
+                    "tablas": tablas_de_from or allprops.get("Tables", ""),
                     "campos": allprops.get("Fields", ""),
                     "where": allprops.get("WhereClause", ""),
                     "propiedades": allprops,
-                    # Diagnóstico: si `_dbc_parse_properties` no reconoce el
-                    # formato real (distinto al asumido), esto permite ver el
-                    # texto tal cual viene y ajustar el parser sin adivinar.
-                    "raw_property": prop[:1500] if not allprops else "",
-                    "raw_code": code[:500] if (not allprops and code) else "",
+                    # Diagnóstico: si ni el SELECT directo ni las propiedades
+                    # con nombre dieron nada, esto permite ver el texto tal
+                    # cual viene y seguir ajustando sin adivinar.
+                    "raw_property": prop[:1500] if not (allprops or sql_directo) else "",
+                    "raw_code": code[:500] if (not (allprops or sql_directo) and code) else "",
                 })
 
     return {

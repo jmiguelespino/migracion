@@ -93,9 +93,13 @@ def _group_tables_by_database(inventory, tables_all):
 
 
 def _vista_sql(v):
-    """SELECT best-effort a partir de las propiedades de una vista VFP
-    (Tables/Fields/WhereClause). VFP no guarda el SELECT como texto plano —
-    esto es una reconstrucción aproximada, no garantizada."""
+    """SELECT de la vista VFP. Si `parse_dbc` encontró el SELECT real dentro
+    del PROPERTY (caso confirmado con datos reales: VFP lo guarda como texto
+    plano, ya limpio de "base!tabla"), se usa tal cual. Si no, se reconstruye
+    best-effort a partir de Tables/Fields/WhereClause (aproximado, no
+    garantizado)."""
+    if v.get("sql"):
+        return v["sql"]
     tablas = [t.strip() for t in (v.get("tablas") or "").split(",") if t.strip()]
     if not tablas:
         return None
@@ -117,10 +121,11 @@ def _export_vistas(inventory, dest_dir, manifiesto):
     mapa = manifiesto.get("mapa_tabla_base") or {}
     lines = [
         "-- Vistas extraídas de los .dbc del sistema legacy.",
-        "-- VFP no guarda las vistas como texto SQL: se reconstruyen best-effort",
-        "-- a partir de las propiedades Tables/Fields/WhereClause. Revisar antes",
-        "-- de usar en producción. Donde se pudo, ya se crearon (CREATE VIEW)",
-        "-- en la base SQLite correspondiente — ver el comentario 'creada en ...'.",
+        "-- Cuando VFP guardó el SELECT como texto plano dentro de PROPERTY se usa",
+        "-- tal cual (limpio de la sintaxis base!tabla); si no, se reconstruye",
+        "-- best-effort a partir de Tables/Fields/WhereClause (revisar antes de usar",
+        "-- en producción). Donde se pudo, ya se crearon (CREATE VIEW) en la base",
+        "-- SQLite correspondiente — ver el comentario 'creada en ...'.",
         "",
     ]
     n_total = n_creadas = 0

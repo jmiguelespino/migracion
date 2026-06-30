@@ -74,6 +74,16 @@ No todos los sistemas VFP usan `.mpr`/`.mnx`. Hay un patrón alternativo con tab
   descartaba el filtro anti-binario); el PRG legible (`PROCEDURE keyseek`,
   etc.) está en el memo `METHODS`, y un mismo registro puede traer **varios**
   `PROCEDURE`/`FUNCTION` concatenados ahí — hay que separarlos.
+- **Vistas SQL del `.dbc`: el `PROPERTY` de una vista NO es `Clave = Valor`**.
+  Es un blob binario (strings con prefijo de longitud empaquetados), pero
+  ADENTRO trae el `SELECT` completo como texto plano, con sintaxis VFP
+  `base!tabla` (hay que limpiarla para SQLite). Confirmado con datos reales
+  (`login.dbc` → vista `vusuario`):
+  `...+login!usuarios *SELECT Usuarios.usuario, ... FROM login!usuarios
+  ORDER BY Usuarios.usuario)`. El SELECT se extrae buscando una línea con
+  `SELECT `, cortando el `)` suelto final (delimitador del empaquetado, no
+  balanceado con un `(` real) y reemplazando `base!tabla` → `tabla` (ver
+  `_dbc_extract_view_sql` en `servidor.py`).
 
 ## Flujo de entrega
 

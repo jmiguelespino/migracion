@@ -201,6 +201,19 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       "InGrid: Incremental Grid"): ahora extrae los 4 métodos reales
       (`keyseek`, `KeyPress`, `LostFocus`, `GotFocus`), separando los
       `PROCEDURE`/`FUNCTION` concatenados en un mismo registro.
+- [x] **`vistas.sql` con el SELECT real (no solo best-effort)**: con datos
+      reales (`login.dbc` → vistas `vusuario`/`vgrupos`) se vio que el
+      `PROPERTY` de una vista VFP es un blob binario (strings empaquetados
+      con prefijo de longitud), no "Clave = Valor" — por eso el parser
+      anterior no sacaba nada. Pero adentro trae el `SELECT` completo como
+      texto plano, con sintaxis `base!tabla`. `_dbc_extract_view_sql()`
+      (servidor.py) lo extrae buscando la línea con `SELECT `, corta el `)`
+      suelto del empaquetado y limpia `base!tabla` → `tabla`. `dbexport`
+      usa ese SQL directo (en vez de la reconstrucción Tables/Fields/
+      WhereClause) cuando está disponible. Probado de punta a punta:
+      `SELECT clientes.nombre, clientes.email FROM login!clientes ORDER BY
+      clientes.nombre` → vista creada de verdad en SQLite y consultada con
+      filas reales.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
