@@ -96,7 +96,21 @@ def export_databases(raw_zip_bytes, inventory, dest_dir):
     if libres:
         groups[FREE_TABLES_DB] = libres
 
-    manifiesto = {"dir": dest_dir, "bases": [], "mapa_tabla_base": {}}
+    # Bases .dbc que no tienen ninguna tabla propia (sólo vistas/stored procs,
+    # p.ej. "vistgest" con 50 vistas armadas sobre tablas de otras bases): no
+    # generan un .db (no hay nada que exportar como tabla), pero igual se
+    # listan para que no desaparezcan del panel.
+    sin_tablas = []
+    for db in inventory.get("databases") or []:
+        nombre = db.get("name") or "base"
+        if nombre not in groups:
+            sin_tablas.append({
+                "nombre": nombre,
+                "vistas": len(db.get("vistas") or []),
+                "relaciones": len(db.get("relaciones") or []),
+            })
+
+    manifiesto = {"dir": dest_dir, "bases": [], "sin_tablas": sin_tablas, "mapa_tabla_base": {}}
 
     for db_nombre, tkeys in groups.items():
         archivo = _safe_db_name(db_nombre) + ".db"

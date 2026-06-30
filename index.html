@@ -690,18 +690,26 @@ async function exportDatabases(){
     saveState();
     renderBdResult(j);
     document.getElementById('bdLinkBtn').disabled = false;
-    const nTablas = j.bases.reduce((a,b)=>a+b.tablas.length,0);
-    bdMsg(`✅ ${j.bases.length} base(s), ${nTablas} tabla(s) exportadas a ${dir}.`, true);
+    const nTablas = (j.bases||[]).reduce((a,b)=>a+b.tablas.length,0);
+    const sinTablas = (j.sin_tablas||[]).length;
+    const extra = sinTablas ? ` (+${sinTablas} base(s) sin tablas propias, solo vistas)` : '';
+    bdMsg(`✅ ${(j.bases||[]).length} base(s), ${nTablas} tabla(s) exportadas a ${dir}.${extra}`, true);
   } catch(e) {
     bdMsg('No se pudo exportar: ' + e.message, false);
   }
 }
 function renderBdResult(manifest){
   const el = document.getElementById('bdResult');
-  if (!manifest || !manifest.bases || !manifest.bases.length) { el.innerHTML = ''; return; }
-  el.innerHTML = '<div style="font-size:12px;margin-top:8px">' + manifest.bases.map(b =>
+  if (!manifest || ((!manifest.bases || !manifest.bases.length) && (!manifest.sin_tablas || !manifest.sin_tablas.length))) {
+    el.innerHTML = ''; return;
+  }
+  const bases = (manifest.bases||[]).map(b =>
     `<div style="margin-bottom:4px"><b>${esc(b.archivo)}</b> — ${b.tablas.map(t=>esc(t.nombre||t.key)+' ('+fmt(t.registros)+')').join(', ')}</div>`
-  ).join('') + '</div>';
+  ).join('');
+  const sinTablas = (manifest.sin_tablas||[]).map(d =>
+    `<div style="margin-bottom:4px;color:var(--text3)">${esc(d.nombre)} — sin tablas propias (${fmt(d.vistas)} vistas, ${fmt(d.relaciones)} relaciones; no genera .db)</div>`
+  ).join('');
+  el.innerHTML = '<div style="font-size:12px;margin-top:8px">' + bases + sinTablas + '</div>';
 }
 async function fetchLinks(dir){
   try {
