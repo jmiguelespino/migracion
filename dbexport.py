@@ -115,6 +115,31 @@ _PARAM_TOKEN_RE = re.compile(r'\?([A-Za-z_]\w*)')
 PARAMS_FILENAME = "vistas_parametrizadas.json"
 
 
+def _autotrim(execute_fn, sql, max_trim=60):
+    """El empaquetado binario de VFP a veces deja basura al final del SQL
+    que sobrevive la limpieza por bytes (ni se ve al imprimir/copiar el
+    texto), y rompe la tokenización en SQLite ("unrecognized token"). En vez
+    de adivinar qué carácter es, dejamos que SQLite mismo valide: si falla,
+    recortamos UN carácter del final y reintentamos. En cuanto funciona, paramos
+    — nunca se sigue recortando hacia el WHERE/JOIN/SELECT real, porque el
+    intento exitoso es, por definición, el primero que ya no tiene basura.
+
+    `execute_fn(candidate_sql)` debe ejecutar/crear con ese texto y devolver
+    lo que haga falta (o lanzar sqlite3.Error si falla).
+    Devuelve (ok, sql_final, resultado_de_execute_fn, error)."""
+    last_err = None
+    for i in range(max_trim + 1):
+        candidate = sql if i == 0 else sql[:-i]
+        if not candidate.strip():
+            break
+        try:
+            result = execute_fn(candidate)
+            return True, candidate, result, None
+        except sqlite3.Error as e:
+            last_err = e
+    return False, sql, None, last_err
+
+
 def _export_vistas(inventory, dest_dir, manifiesto):
     """Escribe `vistas.sql` con TODAS las vistas detectadas en los .dbc, para
     no perderlas aunque no tengan tablas propias para exportar. Es best-effort
@@ -206,15 +231,26 @@ def _export_vistas(inventory, dest_dir, manifiesto):
             archivo = next(iter(archivos)) if len(archivos) == 1 and None not in archivos else None
             creada = False
             if archivo:
-                try:
-                    conn = sqlite3.connect(os.path.join(dest_dir, archivo))
-                    conn.execute('CREATE VIEW IF NOT EXISTS "%s" AS %s' % (slug, sql))
+                conn = sqlite3.connect(os.path.join(dest_dir, archivo))
+                ok, sql_final, _r, err = _autotrim(
+                    lambda cand: conn.execute('CREATE VIEW IF NOT EXISTS "%s" AS %s' % (slug, cand)),
+                    sql)
+                if ok:
                     conn.commit()
-                    conn.close()
                     creada = True
                     n_creadas += 1
-                except sqlite3.Error as e:
-                    lines.append("-- (no se pudo crear automáticamente: %s)" % e)
+                    if sql_final != sql:
+                        lines.append("-- (se recortaron bytes de empaquetado invisibles al final"
+                                      " para que SQLite la pudiera crear; el SQL de abajo es el"
+                                      " texto resultante, idéntico al original a la vista)")
+                        sql = sql_final
+                else:
+                    lines.append("-- (no se pudo crear automáticamente, ni recortando hasta 60"
+                                  " caracteres del final: %s)" % err)
+                    lines.append("-- repr() de los últimos 80 caracteres (para ver bytes"
+                                  " invisibles que el copy/paste normal pierde):")
+                    lines.append("--   %r" % sql[-80:])
+                conn.close()
             lines.append('CREATE VIEW IF NOT EXISTS "%s" AS %s;' % (slug, sql))
             if creada:
                 lines.append("-- creada en %s" % archivo)
@@ -339,17 +375,38 @@ def run_parametrized_view(dest_dir, nombre, valores, limit=100):
             "No encontré una única base con las tablas de esta vista (%s)" %
             ", ".join(entry.get("tablas") or []))
 
-    runnable = _PARAM_TOKEN_RE.sub(lambda m: ":" + m.group(1), sql)
     conn = sqlite3.connect(os.path.join(dest_dir, archivo))
     conn.row_factory = sqlite3.Row
     try:
         limit = max(1, min(int(limit or 100), 500))
-        cur = conn.execute(runnable, {k: valores[k] for k in entry["params"]})
+
+        def _ejecutar(candidate_sql):
+            runnable = _PARAM_TOKEN_RE.sub(lambda m: ":" + m.group(1), candidate_sql)
+            return conn.execute(runnable, {k: valores[k] for k in entry["params"]})
+
+        ok, sql_final, cur, err = _autotrim(_ejecutar, sql)
+        if not ok:
+            raise ValueError(
+                "Error al ejecutar (probé recortando basura de empaquetado "
+                "invisible al final, sin tocar el resto de la consulta): %s "
+                "| repr() de los últimos 80 caracteres: %r" % (err, sql[-80:]))
         cols = [d[0] for d in cur.description] if cur.description else []
         rows = [dict(r) for r in cur.fetchmany(limit)]
     finally:
         conn.close()
-    return {"columns": cols, "rows": rows, "archivo": archivo, "sql": sql}
+
+    if sql_final != entry["sql"]:
+        # Guardamos el SQL ya limpio (idéntico al original a la vista, solo
+        # sin la cola de empaquetado invisible) para no tener que recortar
+        # de nuevo la próxima vez.
+        todas = load_parametrizadas(dest_dir)
+        for p in todas:
+            if p.get("nombre") == nombre:
+                p["sql"] = sql_final
+        with open(os.path.join(dest_dir, PARAMS_FILENAME), "w", encoding="utf-8") as f:
+            json.dump(todas, f, ensure_ascii=False, indent=2)
+
+    return {"columns": cols, "rows": rows, "archivo": archivo, "sql": sql_final}
 
 
 def export_databases(raw_zip_bytes, inventory, dest_dir):

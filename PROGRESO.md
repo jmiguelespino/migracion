@@ -259,6 +259,24 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       con bytes de control Y altos simulados (`\x01\xff\xff`) al final de un
       SELECT con join + parámetro: se limpia bien y la vista se ejecuta con
       el valor real, sin tocar el WHERE/JOIN.
+- [x] **Auto-recorte validado por SQLite (en vez de seguir adivinando el byte
+      exacto)**: con el `vistas.sql` real del usuario (sistema completo, ~150
+      vistas reales pegadas), varias seguían dando `unrecognized token: ""`
+      pese a la limpieza por rango de bytes — quedaba basura invisible que ni
+      mis pruebas sintéticas (comillas, backtick, corchete, bytes de control)
+      reproducían el mensaje exacto. En vez de seguir adivinando qué carácter
+      es, `dbexport._autotrim()` deja que SQLite mismo valide: si
+      `CREATE VIEW`/la ejecución falla, recorta UN carácter del final y
+      reintenta (hasta 60 veces) — para en cuanto funciona, así que nunca
+      sigue recortando hacia el WHERE/JOIN/SELECT real (el primer éxito es,
+      por definición, el punto exacto donde termina la basura). Se usa tanto
+      al crear vistas no parametrizadas como al ejecutar las parametrizadas
+      (`run_parametrized_view`, que además persiste el SQL ya limpio para no
+      recortar de nuevo la próxima vez). Si ni así funciona, se vuelca un
+      `repr()` de los últimos 80 caracteres en vez del texto crudo (que se
+      pierde al copiar/pegar) para diagnosticar con datos que sí sobreviven
+      el copy-paste. Probado: recorta comillas, backtick, corchete y bytes de
+      control colgando — todos casos donde mi limpieza por rango no alcanzaba.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
