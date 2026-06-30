@@ -803,35 +803,43 @@ def parse_mnx_menu(mnx_bytes, mnt_bytes=b""):
     return [{"titulo": "Menú", "items": items}] if items else []
 
 
+_VCX_PROC_RE = re.compile(r'^\s*(?:PROCEDURE|FUNCTION)\s+(\w+)', re.I | re.M)
+
+
 def parse_vcx_methods(vcx_bytes, vct_bytes):
-    """Extrae los métodos (código) de una biblioteca de clases VFP (.vcx + .vct).
+    """Extrae los métodos (código fuente real) de una biblioteca de clases VFP
+    (.vcx + .vct).
 
-    Un .vcx es un DBF donde cada registro es un miembro de clase. El campo
-    OBJCODE (memo, en el .vct) contiene el código PRG del método.
+    Un .vcx es un DBF donde cada registro es un miembro de clase. El código
+    PRG LEGIBLE está en el memo METHODS — OBJCODE es el bytecode YA
+    COMPILADO (binario, no texto; ver tabla de "no se leen" en CLAUDE.md). Un
+    mismo registro puede traer varios PROCEDURE/FUNCTION concatenados en
+    METHODS; se separan en muestras individuales.
 
-    Devuelve lista de {name, class_name, code} con los métodos no vacíos.
+    Devuelve lista de {name, class_name, code}.
     """
-    rows = read_dbf_records(vcx_bytes, vct_bytes, max_records=2000)
+    rows = read_dbf_records(vcx_bytes, vct_bytes)
     methods = []
     for r in rows:
-        code = str(r.get("objcode") or "").strip()
-        if not code or len(code) < 15:
+        text = str(r.get("methods") or "")
+        if not text.strip():
             continue
-        # El campo OBJCODE puede contener código compilado (binario). Si el primer
-        # carácter es no-imprimible el bloque entero es código objeto → descartarlo.
-        if ord(code[0]) < 32:
-            continue
-        # Verificación adicional: descartar si más del 20 % son caracteres no-ASCII.
-        non_ascii = sum(1 for c in code[:200] if ord(c) > 127 or ord(c) < 9)
-        if non_ascii > len(code[:200]) * 0.20:
-            continue
-        objname  = str(r.get("objname")  or "").strip()
+        objname = str(r.get("objname") or "").strip()
         baseclass = str(r.get("baseclass") or "").strip()
-        methods.append({
-            "name":       objname,
-            "class_name": baseclass,
-            "code":       code[:MAX_SAMPLE_BYTES],
-        })
+        matches = list(_VCX_PROC_RE.finditer(text))
+        if not matches:
+            continue
+        for i, m in enumerate(matches):
+            start = m.start()
+            end = matches[i + 1].start() if i + 1 < len(matches) else len(text)
+            block = text[start:end].strip()
+            if len(block) < 15:
+                continue
+            methods.append({
+                "name":       f"{objname}.{m.group(1)}" if objname else m.group(1),
+                "class_name": baseclass,
+                "code":       block[:MAX_SAMPLE_BYTES],
+            })
     return methods
 
 

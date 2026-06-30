@@ -193,6 +193,14 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       (antes 50), y un ZIP sintético de 1000 tablas → 1000 exportadas
       (inventario de UI sigue capado a 60 a propósito, pero ya no afecta el
       export).
+- [x] **`parse_vcx_methods` leía el campo equivocado**: el código fuente PRG
+      legible vive en el memo `METHODS`, no en `OBJCODE` (que es bytecode YA
+      COMPILADO, binario). Con `OBJCODE` siempre daba 0 métodos — el filtro
+      anti-binario lo descartaba correctamente, pero nunca había nada bueno
+      que mostrar. Confirmado con un `.vcx`/`.vct` real (`INGRID`, clase
+      "InGrid: Incremental Grid"): ahora extrae los 4 métodos reales
+      (`keyseek`, `KeyPress`, `LostFocus`, `GotFocus`), separando los
+      `PROCEDURE`/`FUNCTION` concatenados en un mismo registro.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 

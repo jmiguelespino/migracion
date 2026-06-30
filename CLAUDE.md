@@ -68,6 +68,12 @@ No todos los sistemas VFP usan `.mpr`/`.mnx`. Hay un patrón alternativo con tab
   `%VAR% ...` se expande mal.
 - **`uvicorn` en Windows**: invocá `python -m uvicorn` (no `uvicorn` directo,
   que suele quedar fuera del PATH en `Scripts\`).
+- **`.vcx`: el código fuente vive en `METHODS`, no en `OBJCODE`**. `OBJCODE`
+  es el bytecode YA COMPILADO (binario). Confirmado con un `.vcx` real
+  (`INGRID.VCX`/`.VCT`): leer `OBJCODE` daba 0 métodos siempre (lo
+  descartaba el filtro anti-binario); el PRG legible (`PROCEDURE keyseek`,
+  etc.) está en el memo `METHODS`, y un mismo registro puede traer **varios**
+  `PROCEDURE`/`FUNCTION` concatenados ahí — hay que separarlos.
 
 ## Flujo de entrega
 
@@ -92,7 +98,7 @@ No todos los sistemas VFP usan `.mpr`/`.mnx`. Hay un patrón alternativo con tab
 | `.cdx`/`.idx` | Índice compuesto | — | Expresiones de clave → índices SQLite | `parse_cdx_expressions` |
 | `.scx` | Formulario | `.sct` (memo) | Layout: ControlSource, Caption, orden por Top | `parse_scx_controls` |
 | `.frx` | Reporte | `.frt` (memo) | Se listan → vista de consulta por reporte | (inventario) |
-| `.vcx` | Biblioteca de clases | `.vct` (memo) | Métodos (OBJCODE) → muestras de código/lógica | `parse_vcx_methods` |
+| `.vcx` | Biblioteca de clases | `.vct` (memo) | Métodos (campo **METHODS**, no OBJCODE) → muestras de código/lógica | `parse_vcx_methods` |
 | `.mpr` | Menú (código generado) | `.mpx` (compilado) | Estructura PAD/POPUP/BAR + acciones | `parse_mpr_menu` |
 | `.mnx` | Menú (tabla DBF) | `.mnt` (memo) | Ítems + PROCEDURE (fallback si no hay `.mpr`) | `parse_mnx_menu` |
 | `.prg` | Código fuente | `.fxp` (compilado) | Muestra de código (lógica de negocio) | (samples) |
