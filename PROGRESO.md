@@ -162,6 +162,15 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       TODAS las tablas de la vista quedaron en una sola base ya exportada, la
       crea de verdad ahí (`CREATE VIEW` ejecutado, queda consultable). Probado
       con vista de 1 tabla + WHERE: se creó y devolvió filas reales.
+- [x] **Ver y probar cada tabla/vista exportada desde la UI**: en el panel
+      "Bases de datos + vínculos" cada tabla y vista listada es un botón —
+      al hacer clic abre un panel con sus columnas y primeras 100 filas
+      reales (`POST /api/dbexport/peek`, valida que la tabla/vista exista en
+      ese `.db` antes de consultar). También hay un botón para ver el
+      `vistas.sql` completo (`POST /api/dbexport/vistas_sql`). `list_databases`
+      y `export_databases` comparten `_scan_db_objects()` para que tablas y
+      vistas salgan siempre juntas (con conteo de filas), tanto recién
+      generadas como al retomar un directorio ya existente.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 

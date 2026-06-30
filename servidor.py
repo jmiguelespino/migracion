@@ -1265,6 +1265,51 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_json(200, {"links": links})
             return
 
+        if self.path == "/api/dbexport/peek":
+            # Primeras filas de una tabla o vista ya exportada, para verla/
+            # probarla desde la UI sin abrir un cliente SQLite aparte.
+            import dbexport
+            try:
+                payload = json.loads(self.read_body() or b"{}")
+            except Exception:
+                self.send_json(400, {"error": {"message": "JSON inválido"}})
+                return
+            dest_dir = (payload.get("dir") or "").strip()
+            archivo = safe_name(payload.get("archivo"), "")
+            tabla = (payload.get("tabla") or "").strip()
+            if not dest_dir or not archivo or not tabla:
+                self.send_json(400, {"error": {"message": "Faltan datos (dir, archivo, tabla)"}})
+                return
+            try:
+                data = dbexport.peek(dest_dir, archivo, tabla, payload.get("limit") or 100)
+            except ValueError as e:
+                self.send_json(400, {"error": {"message": str(e)}})
+                return
+            except Exception as e:
+                self.send_json(500, {"error": {"message": f"Error al leer '{tabla}': {e}"}})
+                return
+            self.send_json(200, data)
+            return
+
+        if self.path == "/api/dbexport/vistas_sql":
+            import dbexport
+            try:
+                payload = json.loads(self.read_body() or b"{}")
+            except Exception:
+                self.send_json(400, {"error": {"message": "JSON inválido"}})
+                return
+            dest_dir = (payload.get("dir") or "").strip()
+            if not dest_dir:
+                self.send_json(400, {"error": {"message": "Falta el directorio"}})
+                return
+            try:
+                content = dbexport.read_vistas_sql(dest_dir)
+            except Exception as e:
+                self.send_json(500, {"error": {"message": f"Error al leer vistas.sql: {e}"}})
+                return
+            self.send_json(200, {"content": content})
+            return
+
         if self.path == "/api/scaffold":
             # Cobertura total: arma una app completa (FastAPI + SPA) que expone
             # TODAS las utilidades del ZIP. Determinístico, sin IA.

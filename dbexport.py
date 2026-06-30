@@ -149,6 +149,67 @@ def _export_vistas(inventory, dest_dir, manifiesto):
     return n_total, n_creadas
 
 
+def _scan_db_objects(path):
+    """Tablas y vistas que YA existen en un .db (consulta sqlite_master), con
+    columnas y cantidad de filas — para listarlas/previsualizarlas en la UI."""
+    tablas, vistas = [], []
+    try:
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        for row in conn.execute(
+                "SELECT name, type, sql FROM sqlite_master "
+                "WHERE type IN ('table','view') AND name NOT LIKE 'sqlite_%'"):
+            try:
+                registros = conn.execute('SELECT COUNT(*) FROM "%s"' % row["name"]).fetchone()[0]
+                campos = [r[1] for r in conn.execute('PRAGMA table_info("%s")' % row["name"])
+                          if r[1] != "id"]
+            except sqlite3.Error:
+                registros, campos = 0, []
+            item = {"key": row["name"], "nombre": row["name"], "registros": registros,
+                    "campos": campos}
+            (vistas if row["type"] == "view" else tablas).append(item)
+        conn.close()
+    except sqlite3.Error:
+        pass
+    return (sorted(tablas, key=lambda x: x["key"]), sorted(vistas, key=lambda x: x["key"]))
+
+
+def peek(dest_dir, archivo, nombre, limit=100):
+    """Primeras filas + columnas de una tabla o vista ya generada, para
+    verla/probarla desde la UI sin abrir un cliente SQLite aparte."""
+    archivo = os.path.basename(str(archivo or ""))
+    path = os.path.join(dest_dir, archivo)
+    if not os.path.isfile(path):
+        raise ValueError("No existe '%s' en '%s'" % (archivo, dest_dir))
+    conn = sqlite3.connect(path)
+    conn.row_factory = sqlite3.Row
+    try:
+        existe = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type IN ('table','view') AND name = ?",
+            (nombre,)).fetchone()
+        if not existe:
+            raise ValueError("'%s' no existe en %s" % (nombre, archivo))
+        ident = str(nombre).replace('"', '""')
+        cols = [r[1] for r in conn.execute('PRAGMA table_info("%s")' % ident)]
+        limit = max(1, min(int(limit or 100), 500))
+        rows = [dict(r) for r in conn.execute('SELECT * FROM "%s" LIMIT ?' % ident, (limit,))]
+        try:
+            total = conn.execute('SELECT COUNT(*) FROM "%s"' % ident).fetchone()[0]
+        except sqlite3.Error:
+            total = len(rows)
+    finally:
+        conn.close()
+    return {"columns": cols, "rows": rows, "total": total}
+
+
+def read_vistas_sql(dest_dir):
+    path = os.path.join(dest_dir, "vistas.sql")
+    if not os.path.isfile(path):
+        return ""
+    with open(path, encoding="utf-8") as f:
+        return f.read()
+
+
 def export_databases(raw_zip_bytes, inventory, dest_dir):
     """Crea (o actualiza) en `dest_dir` una base SQLite por `.dbc`, con sus
     tablas, índices y datos reales. Devuelve el manifiesto generado.
@@ -285,6 +346,12 @@ def export_databases(raw_zip_bytes, inventory, dest_dir):
     if n_vistas:
         manifiesto["vistas"] = {"total": n_vistas, "creadas": n_vistas_creadas,
                                 "archivo": "vistas.sql"}
+    # Adjuntamos a cada base las vistas que efectivamente se crearon ahí, para
+    # poder verlas/probarlas igual que las tablas.
+    for b in manifiesto["bases"]:
+        _tablas_db, vistas_db = _scan_db_objects(os.path.join(dest_dir, b["archivo"]))
+        if vistas_db:
+            b["vistas"] = vistas_db
 
     # Sembramos vinculaciones.json con las relaciones que ya trae el .dbc,
     # sin pisar las que el usuario ya haya agregado/corregido a mano.
@@ -309,40 +376,24 @@ def export_databases(raw_zip_bytes, inventory, dest_dir):
 
 
 def list_databases(dest_dir):
-    """Inspecciona un directorio ya generado (sin ZIP en memoria): lee cada
-    .db con sqlite3 y devuelve la misma forma que `export_databases`."""
+    """Inspecciona un directorio ya generado (sin ZIP ni inventario en
+    memoria): lee cada .db con sqlite3 y devuelve la misma forma que
+    `export_databases` (tablas Y vistas que ya existan en el archivo)."""
     manifiesto = {"dir": dest_dir, "bases": [], "mapa_tabla_base": {}}
     if not os.path.isdir(dest_dir):
         return manifiesto
     for archivo in sorted(os.listdir(dest_dir)):
         if not archivo.endswith(".db"):
             continue
-        path = os.path.join(dest_dir, archivo)
-        try:
-            conn = sqlite3.connect(path)
-            conn.row_factory = sqlite3.Row
-            tnames = [r[0] for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table' "
-                "AND name NOT LIKE 'sqlite_%'")]
-            tablas_info = []
-            for tkey in sorted(tnames):
-                try:
-                    registros = conn.execute('SELECT COUNT(*) FROM "%s"' % tkey).fetchone()[0]
-                    campos = [r[1] for r in conn.execute('PRAGMA table_info("%s")' % tkey)
-                              if r[1] != "id"]
-                except sqlite3.Error:
-                    registros, campos = 0, []
-                tablas_info.append({"key": tkey, "nombre": tkey, "registros": registros,
-                                    "campos": campos})
-                manifiesto["mapa_tabla_base"][tkey] = archivo
-            conn.close()
-        except sqlite3.Error:
-            tablas_info = []
-        if tablas_info:
-            manifiesto["bases"].append({
-                "nombre": os.path.splitext(archivo)[0], "archivo": archivo,
-                "tablas": tablas_info,
-            })
+        tablas_info, vistas_info = _scan_db_objects(os.path.join(dest_dir, archivo))
+        for t in tablas_info:
+            manifiesto["mapa_tabla_base"][t["key"]] = archivo
+        if tablas_info or vistas_info:
+            base = {"nombre": os.path.splitext(archivo)[0], "archivo": archivo,
+                    "tablas": tablas_info}
+            if vistas_info:
+                base["vistas"] = vistas_info
+            manifiesto["bases"].append(base)
     return manifiesto
 
 

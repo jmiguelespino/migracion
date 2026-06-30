@@ -77,6 +77,18 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 .amsg.ok { color:var(--teal); }
 .amsg.err { color:var(--red); }
 #bdResult { max-height:180px; overflow-y:auto; }
+.bdItem { background:none; border:none; padding:0; font:inherit; color:var(--purple); cursor:pointer; text-decoration:underline; text-align:left; }
+.bdItem:hover { color:var(--ptxt); }
+.peekOverlay { position:fixed; inset:0; background:rgba(20,18,15,.45); display:flex; align-items:center; justify-content:center; z-index:50; padding:24px; }
+.peekPanel { background:var(--bg2); border-radius:var(--r); width:920px; max-width:100%; max-height:100%; display:flex; flex-direction:column; overflow:hidden; box-shadow:0 20px 60px rgba(0,0,0,.3); }
+.peekHead { display:flex; align-items:center; gap:10px; padding:14px 18px; border-bottom:1px solid var(--border); }
+.peekHead b { font-size:14px; }
+.peekClose { margin-left:auto; background:none; border:none; font-size:18px; cursor:pointer; color:var(--text3); }
+.peekBody { overflow:auto; padding:0 18px 18px; }
+.peekTable { border-collapse:collapse; width:100%; font-size:12px; }
+.peekTable th, .peekTable td { border:1px solid var(--border); padding:5px 9px; text-align:left; white-space:nowrap; }
+.peekTable th { background:var(--bg3); position:sticky; top:0; }
+.peekSql { white-space:pre-wrap; font-family:ui-monospace,Consolas,monospace; font-size:12px; background:var(--bg3); padding:12px 18px; margin:0; overflow:auto; max-height:60vh; }
 
 /* MAIN */
 .main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
@@ -699,21 +711,80 @@ async function exportDatabases(){
     bdMsg('No se pudo exportar: ' + e.message, false);
   }
 }
+function _bdItemBtn(archivo, item){
+  return `<button class="bdItem" onclick="peekItem('${esc(archivo)}','${esc(item.key)}')">${esc(item.nombre||item.key)}</button> <span style="color:var(--text3)">(${fmt(item.registros)})</span>`;
+}
 function renderBdResult(manifest){
   const el = document.getElementById('bdResult');
   if (!manifest || ((!manifest.bases || !manifest.bases.length) && (!manifest.sin_tablas || !manifest.sin_tablas.length))) {
     el.innerHTML = ''; return;
   }
-  const bases = (manifest.bases||[]).map(b =>
-    `<div style="margin-bottom:4px"><b>${esc(b.archivo)}</b> — ${b.tablas.map(t=>esc(t.nombre||t.key)+' ('+fmt(t.registros)+')').join(', ')}</div>`
-  ).join('');
+  const bases = (manifest.bases||[]).map(b => {
+    const tablas = (b.tablas||[]).map(t => _bdItemBtn(b.archivo, t)).join(', ');
+    const vistas = (b.vistas||[]).length
+      ? `<br><span style="color:var(--text3)">Vistas: </span>` + b.vistas.map(v => _bdItemBtn(b.archivo, v)).join(', ')
+      : '';
+    return `<div style="margin-bottom:6px"><b>${esc(b.archivo)}</b> — ${tablas}${vistas}</div>`;
+  }).join('');
   const sinTablas = (manifest.sin_tablas||[]).map(d =>
     `<div style="margin-bottom:4px;color:var(--text3)">${esc(d.nombre)} — sin tablas propias (${fmt(d.vistas)} vistas, ${fmt(d.relaciones)} relaciones; no genera .db)</div>`
   ).join('');
   const vw = manifest.vistas
-    ? `<div style="margin-top:6px;color:var(--text3)">📄 ${fmt(manifest.vistas.total)} vistas extraídas a <code>vistas.sql</code> (${fmt(manifest.vistas.creadas)} ya creadas, el resto a revisar a mano).</div>`
+    ? `<div style="margin-top:6px;color:var(--text3)">📄 ${fmt(manifest.vistas.total)} vistas extraídas a
+       <button class="bdItem" onclick="peekVistasSql()">vistas.sql</button>
+       (${fmt(manifest.vistas.creadas)} ya creadas, el resto a revisar a mano).</div>`
     : '';
   el.innerHTML = '<div style="font-size:12px;margin-top:8px">' + bases + sinTablas + vw + '</div>';
+}
+function closePeek(){
+  const ov = document.getElementById('peekOverlay');
+  if (ov) ov.remove();
+}
+function _peekShow(titleHtml, bodyHtml){
+  closePeek();
+  const ov = document.createElement('div');
+  ov.id = 'peekOverlay';
+  ov.className = 'peekOverlay';
+  ov.onclick = (e) => { if (e.target === ov) closePeek(); };
+  ov.innerHTML = `<div class="peekPanel">
+    <div class="peekHead"><b>${titleHtml}</b><button class="peekClose" onclick="closePeek()">✕</button></div>
+    <div class="peekBody">${bodyHtml}</div>
+  </div>`;
+  document.body.appendChild(ov);
+}
+async function peekItem(archivo, tabla){
+  _peekShow(esc(tabla) + ' — cargando…', '<p class="amsg">Leyendo…</p>');
+  try {
+    const r = await fetch('/api/dbexport/peek', { method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dir:S.bdDir, archivo, tabla, limit:100}) });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP '+r.status));
+    const cols = j.columns || [];
+    const head = '<tr>' + cols.map(c=>`<th>${esc(c)}</th>`).join('') + '</tr>';
+    const body = (j.rows||[]).map(row =>
+      '<tr>' + cols.map(c=>`<td>${esc(row[c])}</td>`).join('') + '</tr>'
+    ).join('');
+    const tableHtml = cols.length
+      ? `<table class="peekTable">${head}${body}</table>`
+      : '<p class="amsg">Sin columnas.</p>';
+    const nota = (j.rows||[]).length < (j.total||0)
+      ? `<p class="amsg">Mostrando ${fmt((j.rows||[]).length)} de ${fmt(j.total)} filas.</p>` : '';
+    _peekShow(`${esc(tabla)} <span style="color:var(--text3);font-weight:400">(${esc(archivo)})</span>`, tableHtml + nota);
+  } catch(e) {
+    _peekShow(esc(tabla), `<p class="amsg err">No se pudo leer: ${esc(e.message)}</p>`);
+  }
+}
+async function peekVistasSql(){
+  _peekShow('vistas.sql — cargando…', '<p class="amsg">Leyendo…</p>');
+  try {
+    const r = await fetch('/api/dbexport/vistas_sql', { method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dir:S.bdDir}) });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP '+r.status));
+    _peekShow('vistas.sql', `<pre class="peekSql">${esc(j.content || '(vacío)')}</pre>`);
+  } catch(e) {
+    _peekShow('vistas.sql', `<p class="amsg err">No se pudo leer: ${esc(e.message)}</p>`);
+  }
 }
 async function fetchLinks(dir){
   try {
