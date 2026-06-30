@@ -229,6 +229,16 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       críptico de SQLite). Probado: vista normal con parámetro simulado →
       `)` colgando se saca y la vista se crea/consulta bien; vista con
       `?nactivo` → se documenta como parametrizada y NO se intenta crear.
+- [x] **Las vistas parametrizadas TAMBIÉN se crean** (pedido explícito: "el
+      parámetro lo pasan desde donde llaman a la vista"). En vez de
+      descartarlas, `dbexport._strip_view_params()` saca del `WHERE` solo
+      la(s) condición(es) que usan `?param` (conserva joins y condiciones
+      estáticas) y crea la vista sin ese filtro — quien la consulte agrega
+      su propio `WHERE` con el valor, igual que antes se lo pasaba a VFP.
+      `vistas.sql` documenta qué parámetro se sacó. Probado con join de dos
+      tablas + `WHERE a=b AND c=?param ORDER BY ...`: la vista se crea y
+      devuelve filas reales; filtrar después por el valor que antes daba el
+      parámetro reproduce el mismo resultado que tendría la vista en VFP.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 

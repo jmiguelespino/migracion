@@ -111,6 +111,48 @@ def _vista_sql(v):
     return sql
 
 
+_PARAM_TOKEN_RE = re.compile(r'\?([A-Za-z_]\w*)')
+
+
+def _strip_view_params(sql):
+    """Vistas SQL de VFP parametrizadas (WHERE campo = ?param): el valor lo
+    pasa quien la usa en tiempo de ejecución (vía DBSETPROP/abrir la vista
+    con el parámetro), no es parte fija de la vista. Para poder crearla
+    igual en SQLite, sacamos del WHERE solo la(s) condición(es) que usan el
+    parámetro — el resto del filtro (joins, condiciones estáticas) queda
+    intacto. Quien consulte la vista agrega su propio WHERE con el valor
+    que necesite, igual que antes se lo pasaba a VFP.
+
+    Devuelve (sql_sin_params, [nombres_de_parámetro])."""
+    params = _PARAM_TOKEN_RE.findall(sql)
+    if not params:
+        return sql, []
+    m = re.search(r'\bWHERE\b\s+(.+?)(?=\bORDER\s+BY\b|\bGROUP\s+BY\b|$)', sql, re.I)
+    if not m:
+        return sql, []  # el parámetro no está en el WHERE; no lo tocamos
+    where_text = m.group(1)
+    tokens = re.split(r'(\s+AND\s+|\s+OR\s+)', where_text, flags=re.I)
+    conds = tokens[0::2]
+    seps = tokens[1::2]
+    keep = [i for i, c in enumerate(conds) if "?" not in c]
+    if not keep:
+        new_where = ""
+    else:
+        pieces = [conds[keep[0]]]
+        for j in range(1, len(keep)):
+            i = keep[j]
+            pieces.append(seps[i - 1] if i - 1 < len(seps) else " AND ")
+            pieces.append(conds[i])
+        new_where = "".join(pieces).strip()
+    if new_where:
+        # espacio explícito: lo que sigue (ORDER BY/GROUP BY) puede empezar
+        # justo en m.end(1), sin separador propio.
+        new_sql = sql[:m.start(1)] + new_where + " " + sql[m.end(1):]
+    else:
+        new_sql = sql[:m.start()] + sql[m.end():]
+    return re.sub(r'\s+', ' ', new_sql).strip(), params
+
+
 def _export_vistas(inventory, dest_dir, manifiesto):
     """Escribe `vistas.sql` con TODAS las vistas detectadas en los .dbc, para
     no perderlas aunque no tengan tablas propias para exportar. Es best-effort
@@ -166,19 +208,15 @@ def _export_vistas(inventory, dest_dir, manifiesto):
                 lines.append("")
                 continue
 
-            # Vistas SQL "parametrizadas" de VFP: piden un valor en tiempo de
-            # ejecución (ej. "WHERE Grupo = ?ngrupo"). No son una VIEW válida
-            # de SQLite sin reemplazar el parámetro por un valor concreto —
-            # documentamos y NO intentamos crearla (daría un error críptico).
-            params = re.findall(r'\?([A-Za-z_]\w*)', sql)
+            # Vistas SQL "parametrizadas" de VFP (ej. "WHERE Grupo = ?ngrupo"):
+            # el valor lo pasa quien usa la vista, no es fijo. Sacamos esa
+            # condición del WHERE para poder crearla igual — el que la
+            # consulte agrega su propio WHERE con el valor que necesite.
+            sql, params = _strip_view_params(sql)
             if params:
-                lines.append("-- Vista PARAMETRIZADA de VFP (pide un valor en tiempo de "
-                              "ejecución: %s). No se puede crear como VIEW fija de SQLite "
-                              "sin ese valor — reemplazá '?%s' por uno concreto antes de "
-                              "correr este CREATE VIEW." % (", ".join(params), params[0]))
-                lines.append('-- CREATE VIEW IF NOT EXISTS "%s" AS %s;' % (slug, sql))
-                lines.append("")
-                continue
+                lines.append("-- Vista parametrizada en VFP (%s). Se creó SIN ese filtro: "
+                              "quien la consulte agrega su propio WHERE con el valor."
+                              % ", ".join(params))
 
             tablas_slug = [scaffold._slug(t) for t in (v.get("tablas") or "").split(",") if t.strip()]
             archivos = {mapa.get(t) for t in tablas_slug}
