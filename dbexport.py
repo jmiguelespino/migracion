@@ -112,64 +112,39 @@ def _vista_sql(v):
 
 
 _PARAM_TOKEN_RE = re.compile(r'\?([A-Za-z_]\w*)')
-
-
-def _strip_view_params(sql):
-    """Vistas SQL de VFP parametrizadas (WHERE campo = ?param): el valor lo
-    pasa quien la usa en tiempo de ejecución (vía DBSETPROP/abrir la vista
-    con el parámetro), no es parte fija de la vista. Para poder crearla
-    igual en SQLite, sacamos del WHERE solo la(s) condición(es) que usan el
-    parámetro — el resto del filtro (joins, condiciones estáticas) queda
-    intacto. Quien consulte la vista agrega su propio WHERE con el valor
-    que necesite, igual que antes se lo pasaba a VFP.
-
-    Devuelve (sql_sin_params, [nombres_de_parámetro])."""
-    params = _PARAM_TOKEN_RE.findall(sql)
-    if not params:
-        return sql, []
-    m = re.search(r'\bWHERE\b\s+(.+?)(?=\bORDER\s+BY\b|\bGROUP\s+BY\b|$)', sql, re.I)
-    if not m:
-        return sql, []  # el parámetro no está en el WHERE; no lo tocamos
-    where_text = m.group(1)
-    tokens = re.split(r'(\s+AND\s+|\s+OR\s+)', where_text, flags=re.I)
-    conds = tokens[0::2]
-    seps = tokens[1::2]
-    keep = [i for i, c in enumerate(conds) if "?" not in c]
-    if not keep:
-        new_where = ""
-    else:
-        pieces = [conds[keep[0]]]
-        for j in range(1, len(keep)):
-            i = keep[j]
-            pieces.append(seps[i - 1] if i - 1 < len(seps) else " AND ")
-            pieces.append(conds[i])
-        new_where = "".join(pieces).strip()
-    if new_where:
-        # espacio explícito: lo que sigue (ORDER BY/GROUP BY) puede empezar
-        # justo en m.end(1), sin separador propio.
-        new_sql = sql[:m.start(1)] + new_where + " " + sql[m.end(1):]
-    else:
-        new_sql = sql[:m.start()] + sql[m.end():]
-    return re.sub(r'\s+', ' ', new_sql).strip(), params
+PARAMS_FILENAME = "vistas_parametrizadas.json"
 
 
 def _export_vistas(inventory, dest_dir, manifiesto):
     """Escribe `vistas.sql` con TODAS las vistas detectadas en los .dbc, para
     no perderlas aunque no tengan tablas propias para exportar. Es best-effort
     (VFP no guarda el SELECT como texto): se documentan crudas las propiedades
-    Y se arma un CREATE VIEW aproximado. Cuando todas las tablas de la vista
-    quedaron en UNA sola base ya exportada, además se la crea de verdad ahí.
+    Y se arma un CREATE VIEW con el SQL EXACTO que se encontró — no se toca
+    ni un carácter de la consulta (ni el WHERE, ni los parámetros).
+
+    Las vistas parametrizadas de VFP (`WHERE campo = ?param`, el valor lo
+    pasa quien la usa) NO se pueden crear como CREATE VIEW: SQLite rechaza
+    cualquier parámetro adentro de una vista ("parameters are not allowed in
+    views"). Se guardan tal cual en `vistas_parametrizadas.json` para
+    ejecutarlas bajo demanda con el valor real (ver `run_parametrized_view`).
+
+    Cuando todas las tablas de la vista quedaron en UNA sola base ya
+    exportada, además se la crea de verdad ahí (si no es parametrizada).
     Devuelve (total_vistas, creadas_de_verdad)."""
     mapa = manifiesto.get("mapa_tabla_base") or {}
     lines = [
-        "-- Vistas extraídas de los .dbc del sistema legacy.",
+        "-- Vistas extraídas de los .dbc del sistema legacy, SIN MODIFICAR.",
         "-- Cuando VFP guardó el SELECT como texto plano dentro de PROPERTY se usa",
-        "-- tal cual (limpio de la sintaxis base!tabla); si no, se reconstruye",
-        "-- best-effort a partir de Tables/Fields/WhereClause (revisar antes de usar",
-        "-- en producción). Donde se pudo, ya se crearon (CREATE VIEW) en la base",
-        "-- SQLite correspondiente — ver el comentario 'creada en ...'.",
+        "-- tal cual (solo se limpia la sintaxis base!tabla, que no es SQL válido",
+        "-- en ningún motor); si no, se reconstruye best-effort a partir de",
+        "-- Tables/Fields/WhereClause (revisar antes de usar en producción).",
+        "-- Donde se pudo, ya se crearon (CREATE VIEW) en la base SQLite",
+        "-- correspondiente — ver el comentario 'creada en ...'. Las vistas",
+        "-- parametrizadas (?param) NO se crean como VIEW —SQLite no lo permite—,",
+        "-- quedan en vistas_parametrizadas.json para ejecutarlas con un valor.",
         "",
     ]
+    parametrizadas = []
     n_total = n_creadas = 0
     for db in inventory.get("databases") or []:
         for v in (db.get("vistas") or []):
@@ -208,17 +183,25 @@ def _export_vistas(inventory, dest_dir, manifiesto):
                 lines.append("")
                 continue
 
-            # Vistas SQL "parametrizadas" de VFP (ej. "WHERE Grupo = ?ngrupo"):
-            # el valor lo pasa quien usa la vista, no es fijo. Sacamos esa
-            # condición del WHERE para poder crearla igual — el que la
-            # consulte agrega su propio WHERE con el valor que necesite.
-            sql, params = _strip_view_params(sql)
-            if params:
-                lines.append("-- Vista parametrizada en VFP (%s). Se creó SIN ese filtro: "
-                              "quien la consulte agrega su propio WHERE con el valor."
-                              % ", ".join(params))
-
+            params = _PARAM_TOKEN_RE.findall(sql)
             tablas_slug = [scaffold._slug(t) for t in (v.get("tablas") or "").split(",") if t.strip()]
+
+            if params:
+                # SQLite no permite parámetros en CREATE VIEW: queda tal cual
+                # (sin tocar) para correrla bajo demanda con el valor real.
+                lines.append("-- Vista PARAMETRIZADA en VFP (%s). SQLite no permite parámetros"
+                              " en CREATE VIEW, así que NO se crea como vista — se ejecuta tal"
+                              " cual, con el valor real, desde la UI o /api/dbexport/vista_param."
+                              % ", ".join(sorted(set(params))))
+                lines.append("-- SQL exacto (sin modificar):")
+                lines.append("--   " + sql)
+                lines.append("")
+                parametrizadas.append({
+                    "nombre": slug, "sql": sql, "params": sorted(set(params)),
+                    "tablas": tablas_slug, "base_origen": db.get("name") or "",
+                })
+                continue
+
             archivos = {mapa.get(t) for t in tablas_slug}
             archivo = next(iter(archivos)) if len(archivos) == 1 and None not in archivos else None
             creada = False
@@ -240,6 +223,9 @@ def _export_vistas(inventory, dest_dir, manifiesto):
     if n_total:
         with open(os.path.join(dest_dir, "vistas.sql"), "w", encoding="utf-8") as f:
             f.write("\n".join(lines))
+    with open(os.path.join(dest_dir, PARAMS_FILENAME), "w", encoding="utf-8") as f:
+        json.dump(parametrizadas, f, ensure_ascii=False, indent=2)
+    manifiesto["vistas_parametrizadas"] = parametrizadas
     return n_total, n_creadas
 
 
@@ -302,6 +288,68 @@ def read_vistas_sql(dest_dir):
         return ""
     with open(path, encoding="utf-8") as f:
         return f.read()
+
+
+def load_parametrizadas(dest_dir):
+    """Vistas parametrizadas guardadas tal cual (sin modificar) por
+    `_export_vistas`, para listarlas/ejecutarlas aunque no haya ZIP/
+    inventario en memoria (retomar en otra sesión)."""
+    path = os.path.join(dest_dir, PARAMS_FILENAME)
+    if not os.path.isfile(path):
+        return []
+    try:
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        return data if isinstance(data, list) else []
+    except (OSError, ValueError):
+        return []
+
+
+def run_parametrized_view(dest_dir, nombre, valores, limit=100):
+    """Ejecuta una vista parametrizada de VFP CON EL SQL EXACTO que se
+    extrajo del .dbc — no se le cambia ni un carácter al WHERE/JOIN/SELECT
+    original. Lo único que cambia, solo para que el motor pueda correrla, es
+    el MARCADOR del parámetro: VFP escribe "?nombre" (no es sintaxis SQLite
+    válida para parámetros), se traduce a ":nombre" y se liga el valor real
+    que el usuario tipeó — el resto de la consulta queda intacto."""
+    nombre = scaffold._slug(nombre)
+    entry = next((p for p in load_parametrizadas(dest_dir) if p.get("nombre") == nombre), None)
+    if not entry:
+        raise ValueError("No hay una vista parametrizada llamada '%s'" % nombre)
+    sql = entry["sql"]
+    if not re.match(r'^\s*SELECT\b', sql, re.I):
+        raise ValueError("La vista '%s' no es un SELECT" % nombre)
+    faltan = [p for p in entry["params"] if p not in (valores or {})]
+    if faltan:
+        raise ValueError("Faltan valores para: %s" % ", ".join(faltan))
+
+    # Resolvemos en qué .db están las tablas AHORA (no dependemos de un
+    # mapeo viejo: sirve también si se retoma sin volver a exportar).
+    mapa = {}
+    if os.path.isdir(dest_dir):
+        for archivo in sorted(os.listdir(dest_dir)):
+            if archivo.endswith(".db"):
+                tablas_db, _vistas_db = _scan_db_objects(os.path.join(dest_dir, archivo))
+                for t in tablas_db:
+                    mapa[t["key"]] = archivo
+    archivos = {mapa.get(t) for t in entry.get("tablas") or []}
+    archivo = next(iter(archivos)) if len(archivos) == 1 and None not in archivos else None
+    if not archivo:
+        raise ValueError(
+            "No encontré una única base con las tablas de esta vista (%s)" %
+            ", ".join(entry.get("tablas") or []))
+
+    runnable = _PARAM_TOKEN_RE.sub(lambda m: ":" + m.group(1), sql)
+    conn = sqlite3.connect(os.path.join(dest_dir, archivo))
+    conn.row_factory = sqlite3.Row
+    try:
+        limit = max(1, min(int(limit or 100), 500))
+        cur = conn.execute(runnable, {k: valores[k] for k in entry["params"]})
+        cols = [d[0] for d in cur.description] if cur.description else []
+        rows = [dict(r) for r in cur.fetchmany(limit)]
+    finally:
+        conn.close()
+    return {"columns": cols, "rows": rows, "archivo": archivo, "sql": sql}
 
 
 def export_databases(raw_zip_bytes, inventory, dest_dir):
@@ -489,6 +537,9 @@ def list_databases(dest_dir):
             if vistas_info:
                 base["vistas"] = vistas_info
             manifiesto["bases"].append(base)
+    parametrizadas = load_parametrizadas(dest_dir)
+    if parametrizadas:
+        manifiesto["vistas_parametrizadas"] = parametrizadas
     return manifiesto
 
 

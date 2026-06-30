@@ -229,16 +229,25 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       críptico de SQLite). Probado: vista normal con parámetro simulado →
       `)` colgando se saca y la vista se crea/consulta bien; vista con
       `?nactivo` → se documenta como parametrizada y NO se intenta crear.
-- [x] **Las vistas parametrizadas TAMBIÉN se crean** (pedido explícito: "el
-      parámetro lo pasan desde donde llaman a la vista"). En vez de
-      descartarlas, `dbexport._strip_view_params()` saca del `WHERE` solo
-      la(s) condición(es) que usan `?param` (conserva joins y condiciones
-      estáticas) y crea la vista sin ese filtro — quien la consulte agrega
-      su propio `WHERE` con el valor, igual que antes se lo pasaba a VFP.
-      `vistas.sql` documenta qué parámetro se sacó. Probado con join de dos
-      tablas + `WHERE a=b AND c=?param ORDER BY ...`: la vista se crea y
-      devuelve filas reales; filtrar después por el valor que antes daba el
-      parámetro reproduce el mismo resultado que tendría la vista en VFP.
+- [x] **Vistas parametrizadas: SQL sin modificar, ejecutadas bajo demanda**
+      (pedido explícito del usuario: "el parámetro lo pasan desde donde
+      llaman a la vista, no modifiques nada de la vista"). El primer intento
+      sacaba la condición `?param` del `WHERE` para poder crearla como
+      `CREATE VIEW` — eso SÍ modificaba la consulta, así que se descartó.
+      SQLite además rechaza de raíz cualquier parámetro dentro de un
+      `CREATE VIEW` ("parameters are not allowed in views", confirmado),
+      así que no hay forma de crearla como vista fija sin alterarla.
+      Solución: la vista se guarda **tal cual se extrajo** (ni un carácter
+      tocado) en `vistas_parametrizadas.json`, y se ejecuta bajo demanda
+      (`dbexport.run_parametrized_view`) con el valor real que se le pase —
+      el único cambio es el MARCADOR del parámetro (`?nombre` de VFP no es
+      sintaxis válida de SQLite → se traduce a `:nombre` solo para poder
+      ligar el valor; el WHERE/JOIN/SELECT no se tocan). Nuevo endpoint
+      `POST /api/dbexport/vista_param` y botón "Probar" por vista
+      parametrizada en la UI (pide el valor de cada parámetro y muestra el
+      resultado). `list_databases` también las trae al retomar sin ZIP.
+      Probado: vista con join + `WHERE a=b AND c=?param` ejecutada con tres
+      valores distintos → cada uno trae las filas correctas.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 

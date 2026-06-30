@@ -734,7 +734,57 @@ function renderBdResult(manifest){
        <button class="bdItem" onclick="peekVistasSql()">vistas.sql</button>
        (${fmt(manifest.vistas.creadas)} ya creadas, el resto a revisar a mano).</div>`
     : '';
-  el.innerHTML = '<div style="font-size:12px;margin-top:8px">' + bases + sinTablas + vw + '</div>';
+  const pv = (manifest.vistas_parametrizadas||[]).length
+    ? `<div style="margin-top:6px"><span style="color:var(--text3)">Vistas parametrizadas (piden un valor, SQL sin modificar): </span>` +
+      manifest.vistas_parametrizadas.map(p =>
+        `<button class="bdItem" onclick="probarVistaParam('${esc(p.nombre)}')">${esc(p.nombre)}</button>`
+      ).join(', ') + '</div>'
+    : '';
+  el.innerHTML = '<div style="font-size:12px;margin-top:8px">' + bases + sinTablas + vw + pv + '</div>';
+}
+function probarVistaParam(nombre){
+  const manifest = S.bdManifest || {};
+  const entry = (manifest.vistas_parametrizadas||[]).find(p => p.nombre === nombre);
+  if (!entry) { _peekShow(esc(nombre), '<p class="amsg err">No encontré los datos de esta vista.</p>'); return; }
+  const inputs = entry.params.map(p =>
+    `<label style="display:block;margin:6px 0;font-size:12px">${esc(p)}
+       <input type="text" id="pv_${esc(p)}" style="display:block;width:100%;margin-top:2px">
+     </label>`
+  ).join('');
+  _peekShow(`${esc(nombre)} <span style="color:var(--text3);font-weight:400">(parametrizada)</span>`, `
+    <p class="amsg">SQL exacto (sin modificar): <code style="word-break:break-all">${esc(entry.sql)}</code></p>
+    ${inputs}
+    <button class="bsave" onclick="ejecutarVistaParam('${esc(nombre)}')">Ejecutar</button>
+    <div id="pvResult"></div>
+  `);
+}
+async function ejecutarVistaParam(nombre){
+  const manifest = S.bdManifest || {};
+  const entry = (manifest.vistas_parametrizadas||[]).find(p => p.nombre === nombre);
+  if (!entry) return;
+  const valores = {};
+  for (const p of entry.params) {
+    const el = document.getElementById('pv_' + p);
+    valores[p] = el ? el.value : '';
+  }
+  const out = document.getElementById('pvResult');
+  out.innerHTML = '<p class="amsg">Ejecutando…</p>';
+  try {
+    const r = await fetch('/api/dbexport/vista_param', { method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({dir:S.bdDir, nombre, valores}) });
+    const j = await r.json().catch(()=>({}));
+    if (!r.ok) throw new Error((j.error && j.error.message) || ('HTTP '+r.status));
+    const cols = j.columns || [];
+    const head = '<tr>' + cols.map(c=>`<th>${esc(c)}</th>`).join('') + '</tr>';
+    const body = (j.rows||[]).map(row =>
+      '<tr>' + cols.map(c=>`<td>${esc(row[c])}</td>`).join('') + '</tr>'
+    ).join('');
+    out.innerHTML = cols.length
+      ? `<table class="peekTable">${head}${body}</table><p class="amsg">${fmt((j.rows||[]).length)} fila(s).</p>`
+      : '<p class="amsg">Sin filas.</p>';
+  } catch(e) {
+    out.innerHTML = `<p class="amsg err">No se pudo ejecutar: ${esc(e.message)}</p>`;
+  }
 }
 function closePeek(){
   const ov = document.getElementById('peekOverlay');

@@ -1374,6 +1374,36 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.send_json(200, {"content": content})
             return
 
+        if self.path == "/api/dbexport/vista_param":
+            # Ejecuta una vista parametrizada de VFP con el SQL EXACTO que se
+            # extrajo del .dbc (no se modifica), ligando el valor real que
+            # mandó el usuario en lugar del "?param" de VFP.
+            import dbexport
+            try:
+                payload = json.loads(self.read_body() or b"{}")
+            except Exception:
+                self.send_json(400, {"error": {"message": "JSON inválido"}})
+                return
+            dest_dir = (payload.get("dir") or "").strip()
+            nombre = (payload.get("nombre") or "").strip()
+            valores = payload.get("valores") or {}
+            if not dest_dir or not nombre:
+                self.send_json(400, {"error": {"message": "Faltan datos (dir, nombre)"}})
+                return
+            if not isinstance(valores, dict):
+                self.send_json(400, {"error": {"message": "'valores' debe ser un objeto"}})
+                return
+            try:
+                data = dbexport.run_parametrized_view(dest_dir, nombre, valores)
+            except ValueError as e:
+                self.send_json(400, {"error": {"message": str(e)}})
+                return
+            except Exception as e:
+                self.send_json(500, {"error": {"message": f"Error al ejecutar '{nombre}': {e}"}})
+                return
+            self.send_json(200, data)
+            return
+
         if self.path == "/api/scaffold":
             # Cobertura total: arma una app completa (FastAPI + SPA) que expone
             # TODAS las utilidades del ZIP. Determinístico, sin IA.
