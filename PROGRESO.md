@@ -248,6 +248,17 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       resultado). `list_databases` también las trae al retomar sin ZIP.
       Probado: vista con join + `WHERE a=b AND c=?param` ejecutada con tres
       valores distintos → cada uno trae las filas correctas.
+- [x] **Limpieza del empaquetado: faltaban bytes "altos" (>126)**. Con la
+      vista real `vusurgrp` seguía dando `unrecognized token` al ejecutarla.
+      La limpieza de basura binaria al final del SQL solo sacaba bytes de
+      control bajos (0-31); el empaquetado de VFP también deja bytes altos
+      tipo `0xFF`/`ÿ` (se ve en el dump crudo: `'ÿÿÿÿ+login!usuarios`), que
+      no se veían al imprimir/copiar pero rompían la ejecución igual. Ahora
+      `_dbc_extract_view_sql` corta cualquier byte fuera del rango ASCII
+      imprimible (`\x20`-`\x7e`) al final, no solo los de control. Probado
+      con bytes de control Y altos simulados (`\x01\xff\xff`) al final de un
+      SELECT con join + parámetro: se limpia bien y la vista se ejecuta con
+      el valor real, sin tocar el WHERE/JOIN.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 

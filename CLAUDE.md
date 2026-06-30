@@ -81,9 +81,16 @@ No todos los sistemas VFP usan `.mpr`/`.mnx`. Hay un patrón alternativo con tab
   (`login.dbc` → vista `vusuario`):
   `...+login!usuarios *SELECT Usuarios.usuario, ... FROM login!usuarios
   ORDER BY Usuarios.usuario)`. El SELECT se extrae buscando una línea con
-  `SELECT `, cortando el `)` suelto final (delimitador del empaquetado, no
+  `SELECT `, cortando **todos** los bytes no imprimibles finales (de control
+  0-31 Y "altos" >126, como `0xFF`/`ÿ` que separa los strings empaquetados —
+  ninguno se ve al imprimir/copiar pero rompen el SQL con "unrecognized
+  token"), cortando el `)` suelto final (delimitador del empaquetado, no
   balanceado con un `(` real) y reemplazando `base!tabla` → `tabla` (ver
-  `_dbc_extract_view_sql` en `servidor.py`).
+  `_dbc_extract_view_sql` en `servidor.py`). **No se modifica el resto del
+  SQL** (WHERE, joins, parámetros `?nombre` de VFP) — si la vista es
+  parametrizada, SQLite no admite parámetros en `CREATE VIEW`, así que se
+  guarda tal cual en `vistas_parametrizadas.json` y se ejecuta bajo demanda
+  (`dbexport.run_parametrized_view`).
 
 ## Flujo de entrega
 

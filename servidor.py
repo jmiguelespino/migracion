@@ -513,10 +513,12 @@ def _dbc_extract_view_sql(prop):
         if not m:
             continue
         sql = m.group(0)
-        # Bytes de control del empaquetado binario al final (no se ven al
-        # imprimir/copiar, pero rompen el SQL — SQLite tira "unrecognized
-        # token"). .strip() no alcanza porque no son espacios.
-        sql = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]+$', '', sql).strip()
+        # Bytes del empaquetado binario al final (de control 0-31 O bytes
+        # "altos" >126, como el 0xFF/'ÿ' que separa los strings empaquetados
+        # de VFP — se ve en el dump crudo: "'ÿÿÿÿ+login!usuarios"). No se ven
+        # al imprimir/copiar el texto, pero rompen el SQL: SQLite tira
+        # "unrecognized token". .strip() no alcanza porque no son espacios.
+        sql = re.sub(r'[^\x20-\x7e]+$', '', sql).strip()
         # ')' suelto(s) del empaquetado al final, sin '(' que los balancee.
         opens, closes = sql.count("("), sql.count(")")
         while sql.endswith(")") and closes > opens:
