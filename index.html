@@ -35,7 +35,7 @@ body { font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif; backg
 /* SIDEBAR (recorrido del proyecto) */
 .sidebar { width:300px; min-width:300px; background:var(--bg2); border-right:1px solid var(--border); display:flex; flex-direction:column; overflow:hidden; }
 .sb-top { flex:1; overflow-y:auto; min-height:0; padding:14px; }
-.sb-bot { flex-shrink:0; padding:14px; border-top:1px solid var(--border); background:var(--bg2); }
+.sb-bot { flex-shrink:1; min-height:0; overflow-y:auto; padding:14px; border-top:1px solid var(--border); background:var(--bg2); }
 .phdr { margin-bottom:14px; }
 .phdr .pttl { font-size:17px; font-weight:800; display:flex; gap:6px; align-items:center; }
 .pbar { height:9px; background:var(--bg3); border-radius:6px; overflow:hidden; margin:9px 0 5px; }
@@ -76,6 +76,7 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 .amsg { font-size:11px; margin-top:5px; color:var(--text3); }
 .amsg.ok { color:var(--teal); }
 .amsg.err { color:var(--red); }
+#bdResult { max-height:180px; overflow-y:auto; }
 
 /* MAIN */
 .main { flex:1; display:flex; flex-direction:column; overflow:hidden; }
