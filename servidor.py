@@ -499,31 +499,49 @@ _DBC_PROP_LINE_RE = re.compile(r'^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*"?([^\r\n]*?
 _VFP_QUALIFIER_RE = re.compile(r'\b\w+!(\w+)')
 
 
+def _cut_at_unbalanced_paren(text):
+    """Corta `text` en el primer ')' que DESBALANCEA el conteo de paréntesis
+    (no el primero ni el último: el SQL real puede tener sus propios
+    paréntesis balanceados, p.ej. TTOD(...), INT(VAL(SPACE(4)))). Ese ')'
+    desbalanceado es el delimitador del empaquetado VFP — confirmado con
+    datos reales del .dct: justo después sigue texto de la SIGUIENTE
+    propiedad empaquetada en la misma "línea", sin separador
+    («...ORDER BY Accesos.usuario, Accesos.hora     )       EXTD2 VACCESOS
+    GRILLA1»), que con un regex .+ (greedy) terminaba incluido en el SQL."""
+    depth = 0
+    for i, ch in enumerate(text):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            if depth == 0:
+                return text[:i]
+            depth -= 1
+    return text
+
+
 def _dbc_extract_view_sql(prop):
     """Las vistas SQL de VFP a veces guardan el SELECT completo como texto
     plano dentro de PROPERTY — pero el bloque es binario (strings con
-    prefijo de longitud empaquetados), no 'Clave = Valor'. Lo buscamos
-    directo: una línea que contenga "SELECT ...", cortada en el ')' suelto
-    final (delimitador del empaquetado — no aparece balanceado con un '('
-    real en el propio SELECT). Confirmado con datos reales:
-    "...FROM login!usuarios ORDER BY Usuarios.usuario)".
+    prefijo de longitud empaquetados), no 'Clave = Valor', y el SELECT
+    queda pegado SIN SEPARADOR a la siguiente propiedad empaquetada. Lo
+    buscamos directo: una línea que contenga "SELECT ...", cortada en el
+    ')' que desbalancea (delimitador del empaquetado — todo lo que sigue
+    es la PRÓXIMA propiedad, no parte de este SELECT). Confirmado con
+    datos reales (LOGIN.DCT): "...FROM login!usuarios ORDER BY
+    Usuarios.usuario     )       CAB.FEC_" — "CAB.FEC_" es basura de la
+    propiedad siguiente, no del SELECT.
     Devuelve (sql_limpio, tablas_de_FROM) o ("", "") si no encuentra nada."""
     for line in (prop or "").splitlines():
         m = re.search(r'SELECT\s.+', line, re.I)
         if not m:
             continue
-        sql = m.group(0)
+        sql = _cut_at_unbalanced_paren(m.group(0))
         # Bytes del empaquetado binario al final (de control 0-31 O bytes
-        # "altos" >126, como el 0xFF/'ÿ' que separa los strings empaquetados
-        # de VFP — se ve en el dump crudo: "'ÿÿÿÿ+login!usuarios"). No se ven
-        # al imprimir/copiar el texto, pero rompen el SQL: SQLite tira
-        # "unrecognized token". .strip() no alcanza porque no son espacios.
+        # "altos" >126, como el 0xFF/'ÿ') que puedan haber quedado pegados
+        # justo antes del ')' delimitador. No se ven al imprimir/copiar el
+        # texto, pero rompen el SQL: SQLite tira "unrecognized token".
+        # .strip() no alcanza porque no son espacios.
         sql = re.sub(r'[^\x20-\x7e]+$', '', sql).strip()
-        # ')' suelto(s) del empaquetado al final, sin '(' que los balancee.
-        opens, closes = sql.count("("), sql.count(")")
-        while sql.endswith(")") and closes > opens:
-            sql = sql[:-1].rstrip()
-            closes -= 1
         # "login!usuarios" -> "usuarios": VFP califica la tabla con la base
         # de origen; cada base ya es un archivo SQLite aparte, no hace falta.
         sql = _VFP_QUALIFIER_RE.sub(r'\1', sql)

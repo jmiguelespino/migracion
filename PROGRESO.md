@@ -277,6 +277,28 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       pierde al copiar/pegar) para diagnosticar con datos que sí sobreviven
       el copy-paste. Probado: recorta comillas, backtick, corchete y bytes de
       control colgando — todos casos donde mi limpieza por rango no alcanzaba.
+- [x] **Causa raíz real encontrada (con LOGIN.DBC/.DCT reales subidos por el
+      usuario): el regex de extracción era *greedy* y se comía la SIGUIENTE
+      propiedad empaquetada**. El SELECT real termina en un `)` correcto,
+      pero justo después sigue, SIN separador, la siguiente propiedad del
+      mismo bloque binario: `...ORDER BY Accesos.usuario, Accesos.hora
+      )       EXTD2 VACCESOS GRILLA1` — "EXTD2 VACCESOS GRILLA1" es basura
+      de OTRA propiedad, no del SELECT. Como `_dbc_extract_view_sql` usaba
+      `SELECT\s.+` (greedy, hasta el final de la "línea"), incluía esa cola
+      entera en el SQL. La limpieza por rango de bytes y el auto-recorte
+      ayudaban cuando la cola era corta, pero con colas largas (texto
+      legible, no basura binaria) no alcanzaban.
+      Arreglo real: `_cut_at_unbalanced_paren()` corta en el primer `)` que
+      DESBALANCEA el conteo de paréntesis (no el primero ni el último — el
+      SQL real puede tener los suyos, p.ej. `TTOD(Accesos.hora)`,
+      `INT(VAL(SPACE(4)))`), descartando todo lo que sigue. Probado con las
+      **6 vistas reales** de `LOGIN.DBC`/`LOGIN.DCT` (subidas por el
+      usuario): las 6 se extraen perfecto (`vusuario`, `vgrupos`,
+      `vusurgrp`, `vgrpmenp`, `vgrpmenu` parametrizadas correctamente,
+      `vaccesos` con `TTOD(...)` balanceado). Probado de punta a punta con
+      ZIP real (LOGIN.DBC + LOGIN.DCT + USUARIOS.DBF reales): `vusuario` se
+      crea de verdad y devuelve los 20 usuarios reales con acentos
+      correctos (`Sebastián`, `Zelarrayán`).
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
