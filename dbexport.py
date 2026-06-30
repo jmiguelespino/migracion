@@ -166,6 +166,20 @@ def _export_vistas(inventory, dest_dir, manifiesto):
                 lines.append("")
                 continue
 
+            # Vistas SQL "parametrizadas" de VFP: piden un valor en tiempo de
+            # ejecución (ej. "WHERE Grupo = ?ngrupo"). No son una VIEW válida
+            # de SQLite sin reemplazar el parámetro por un valor concreto —
+            # documentamos y NO intentamos crearla (daría un error críptico).
+            params = re.findall(r'\?([A-Za-z_]\w*)', sql)
+            if params:
+                lines.append("-- Vista PARAMETRIZADA de VFP (pide un valor en tiempo de "
+                              "ejecución: %s). No se puede crear como VIEW fija de SQLite "
+                              "sin ese valor — reemplazá '?%s' por uno concreto antes de "
+                              "correr este CREATE VIEW." % (", ".join(params), params[0]))
+                lines.append('-- CREATE VIEW IF NOT EXISTS "%s" AS %s;' % (slug, sql))
+                lines.append("")
+                continue
+
             tablas_slug = [scaffold._slug(t) for t in (v.get("tablas") or "").split(",") if t.strip()]
             archivos = {mapa.get(t) for t in tablas_slug}
             archivo = next(iter(archivos)) if len(archivos) == 1 and None not in archivos else None

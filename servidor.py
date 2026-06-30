@@ -512,9 +512,16 @@ def _dbc_extract_view_sql(prop):
         m = re.search(r'SELECT\s.+', line, re.I)
         if not m:
             continue
-        sql = m.group(0).strip()
-        if sql.endswith(")") and "(" not in sql:
-            sql = sql[:-1].strip()
+        sql = m.group(0)
+        # Bytes de control del empaquetado binario al final (no se ven al
+        # imprimir/copiar, pero rompen el SQL — SQLite tira "unrecognized
+        # token"). .strip() no alcanza porque no son espacios.
+        sql = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]+$', '', sql).strip()
+        # ')' suelto(s) del empaquetado al final, sin '(' que los balancee.
+        opens, closes = sql.count("("), sql.count(")")
+        while sql.endswith(")") and closes > opens:
+            sql = sql[:-1].rstrip()
+            closes -= 1
         # "login!usuarios" -> "usuarios": VFP califica la tabla con la base
         # de origen; cada base ya es un archivo SQLite aparte, no hace falta.
         sql = _VFP_QUALIFIER_RE.sub(r'\1', sql)

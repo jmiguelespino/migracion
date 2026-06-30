@@ -214,6 +214,21 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       `SELECT clientes.nombre, clientes.email FROM login!clientes ORDER BY
       clientes.nombre` → vista creada de verdad en SQLite y consultada con
       filas reales.
+- [x] **Vistas con `)` colgando y vistas parametrizadas**: con el `vistas.sql`
+      real del usuario, las vistas seguían sin crearse (`unrecognized token`).
+      Causa: el corte del `)` suelto del empaquetado comparaba con
+      `.endswith(")")`, pero el blob real trae bytes de control invisibles
+      DESPUÉS de ese paréntesis (no se ven al imprimir/copiar, pero
+      `.strip()` no los saca por no ser espacios) — el corte nunca se
+      disparaba. Ahora se sacan esos bytes de control con regex antes de
+      comparar, y se cortan TODOS los `)` finales sin `(` que los balancee
+      (antes solo uno). Además, algunas vistas son parametrizadas
+      (`WHERE Grupo = ?ngrupo`, valor que VFP pide en tiempo de ejecución):
+      eso no es una `VIEW` válida de SQLite sin el valor, así que ahora se
+      detectan y se documentan SIN intentar crearlas (antes tiraban un error
+      críptico de SQLite). Probado: vista normal con parámetro simulado →
+      `)` colgando se saca y la vista se crea/consulta bien; vista con
+      `?nactivo` → se documenta como parametrizada y NO se intenta crear.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
