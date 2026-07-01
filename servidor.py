@@ -814,24 +814,23 @@ def parse_mnx_menu(mnx_bytes, mnt_bytes=b""):
 def parse_vcx_methods(vcx_bytes, vct_bytes):
     """Extrae los métodos (código) de una biblioteca de clases VFP (.vcx + .vct).
 
-    Un .vcx es un DBF donde cada registro es un miembro de clase. El campo
-    OBJCODE (memo, en el .vct) contiene el código PRG del método.
+    Un .vcx es un DBF donde cada registro es un miembro de clase. El código
+    fuente PRG legible de los métodos vive en el campo memo METHODS —
+    OBJCODE (también memo) es el bytecode YA COMPILADO de esos mismos
+    métodos, binario, no texto: leerlo ahí siempre da basura no-ASCII y
+    nunca encuentra código real.
 
     Devuelve lista de {name, class_name, code} con los métodos no vacíos.
     """
     rows = read_dbf_records(vcx_bytes, vct_bytes, max_records=2000)
     methods = []
     for r in rows:
-        code = str(r.get("objcode") or "").strip()
+        # Filas "COMMENT RESERVED": memo reciclado de otro registro, no un
+        # miembro de clase real.
+        if str(r.get("platform") or "").strip().upper() != "WINDOWS":
+            continue
+        code = str(r.get("methods") or "").strip()
         if not code or len(code) < 15:
-            continue
-        # El campo OBJCODE puede contener código compilado (binario). Si el primer
-        # carácter es no-imprimible el bloque entero es código objeto → descartarlo.
-        if ord(code[0]) < 32:
-            continue
-        # Verificación adicional: descartar si más del 20 % son caracteres no-ASCII.
-        non_ascii = sum(1 for c in code[:200] if ord(c) > 127 or ord(c) < 9)
-        if non_ascii > len(code[:200]) * 0.20:
             continue
         objname  = str(r.get("objname")  or "").strip()
         baseclass = str(r.get("baseclass") or "").strip()
