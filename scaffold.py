@@ -270,16 +270,35 @@ def build_meta(inventory, title, enrich=None):
             if any(be["tabla"] == destino_key for be in origen["botones_extra"]):
                 continue
             origen["botones_extra"].append({"caption": caption[:40], "tabla": destino_key})
+    # Layout real de cada .frx (tabla/vista que usa + campos que imprime de
+    # verdad): mejora el match por nombre de archivo y evita mostrar TODAS
+    # las columnas de la tabla en la vista de consulta del reporte.
+    reports_by_name = {_norm(r.get("name")): r for r in (inventory.get("reports_detail") or [])}
+
     reportes = []
     for r in inventory.get("reports", []):
         stem = re.sub(r"\.\w+$", "", str(r))
         n = _norm(stem)
         match = None
-        for tn, tk in table_index.items():
-            if tn and (tn in n or n in tn):
-                match = tk
-                break
-        reportes.append({"name": stem, "tabla": match})
+        campos_reporte = None
+        detail = reports_by_name.get(n)
+        if detail and detail.get("tabla"):
+            # La tabla/alias del .frx (ej. "tplanmae") suele ser una vista o un
+            # cursor temporal creado por código, no siempre matchea una tabla
+            # real — probamos igual, y si matchea usamos los campos reales.
+            dt = _menu_to_tabla(detail["tabla"], "", table_index)
+            if dt:
+                match = dt
+                nombres_tabla = {c["name"] for c in tablas_by_key[dt]["campos"]}
+                campos_reales = [c for c in detail.get("campos", []) if c in nombres_tabla]
+                if campos_reales:
+                    campos_reporte = campos_reales
+        if not match:
+            for tn, tk in table_index.items():
+                if tn and (tn in n or n in tn):
+                    match = tk
+                    break
+        reportes.append({"name": stem, "tabla": match, "campos_reporte": campos_reporte})
 
     formularios = [re.sub(r"\.\w+$", "", str(f)) for f in inventory.get("forms", [])]
 
@@ -1010,10 +1029,15 @@ async function viewReport(i) {
   if (!r) { $('#main').innerHTML = '<p>Reporte no encontrado.</p>'; return; }
   if (!r.tabla) { $('#main').innerHTML = `<h2>Reporte: ${esc(r.name)}</h2><div class="card muted">Sin tabla asociada.</div>`; return; }
   const t = tableByKey(r.tabla);
+  // Si el .frx real nos dijo qué campos imprime, mostramos solo esos (en vez
+  // de todas las columnas de la tabla) — más parecido al reporte original.
+  const fields = (r.campos_reporte && r.campos_reporte.length)
+    ? r.campos_reporte.map(n => t.campos.find(f => f.name === n)).filter(Boolean)
+    : t.campos;
   const res = await (await fetch(`/api/t/${r.tabla}?size=500`).catch(()=>({json:()=>({rows:[]})}))).json();
   const rows = res.rows || [];
-  const head = '<tr>' + t.campos.map(f => `<th>${esc(f.label||f.name)}</th>`).join('') + '</tr>';
-  const body = rows.map(x => '<tr>' + t.campos.map(f => `<td>${cellHtml(f, x[f.name])}</td>`).join('') + '</tr>').join('');
+  const head = '<tr>' + fields.map(f => `<th>${esc(f.label||f.name)}</th>`).join('') + '</tr>';
+  const body = rows.map(x => '<tr>' + fields.map(f => `<td>${cellHtml(f, x[f.name])}</td>`).join('') + '</tr>').join('');
   $('#main').innerHTML = `<h2>📊 ${esc(r.name)}</h2>
     <p class="sub">Reporte sobre la tabla <b>${esc(t.name)}</b> · ${res.total||rows.length} filas</p>
     <div class="toolbar"><span class="sp"></span><button class="sec sm" onclick="window.open('/api/t/${r.tabla}/export.csv')">⬇ Exportar CSV</button></div>

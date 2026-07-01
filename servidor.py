@@ -99,6 +99,7 @@ MAX_NAME_LIST = 80       # cuántos nombres de forms/reportes listar
 MAX_SAMPLES = 40         # cuántos .prg pequeños incluir como muestra de código
 MAX_SAMPLE_BYTES = 6000  # tamaño máximo de cada muestra de código
 MAX_FORMS_PARSED = 50    # cuántos formularios .scx analizar (controles)
+MAX_REPORTS_PARSED = 50  # cuántos reportes .frx analizar (campos reales)
 
 # Extensiones típicas de sistemas legacy y su categoría.
 EXT_CATEGORY = {
@@ -791,6 +792,49 @@ def parse_scx_controls(scx, sct):
             "campos": campos, "tabla": tabla, "botones": botones}
 
 
+_FRX_FIELD_EXPR_RE = re.compile(r'^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$')
+
+
+def parse_frx_report(frx_bytes, frt_bytes):
+    """Extrae de un reporte VFP (.frx + memo .frt) qué tabla/vista usa y qué
+    campos imprime realmente. Un .frx es una tabla DBF: cada registro es un
+    objeto del reporte (campo, etiqueta, línea, rectángulo, banda...); el
+    campo OBJTYPE=8 son los "Field" (expresión que imprime, memo EXPR) y
+    OBJTYPE=5 son los "Label" (texto literal fijo).
+
+    Un reporte VFP tiene varias BANDAS (encabezado de página, de grupo,
+    detalle, pie de grupo, resumen) con coordenadas relativas a cada banda,
+    no una grilla simple como un formulario — por eso NO intentamos
+    emparejar cada campo con su etiqueta visual por proximidad (probado con
+    reportes reales: da falsos positivos, cruza campos de bandas distintas).
+    Nos quedamos con lo que sí es confiable: la tabla y la lista real de
+    campos impresos (no inventamos texto)."""
+    rows = read_dbf_records(frx_bytes, frt_bytes, max_records=3000)
+    if not rows:
+        return None
+    campos_raw = []  # (tabla, campo), en orden de aparición
+    for r in rows:
+        if r.get("objtype") != 8:
+            continue
+        expr = str(r.get("expr") or "").strip()
+        m = _FRX_FIELD_EXPR_RE.match(expr)
+        if m:
+            campos_raw.append((m.group(1).lower(), m.group(2).lower()))
+    if not campos_raw:
+        return None
+    tabla_freq = {}
+    for t, _ in campos_raw:
+        tabla_freq[t] = tabla_freq.get(t, 0) + 1
+    tabla = max(tabla_freq, key=tabla_freq.get)
+    seen, campos = set(), []
+    for t, campo in campos_raw:
+        if t != tabla or campo in seen:
+            continue
+        seen.add(campo)
+        campos.append(campo)
+    return {"tabla": tabla, "campos": campos}
+
+
 def _clean_prompt(s):
     """Limpia un PROMPT de menú VFP: saca el marcador de atajo \\< y espacios."""
     return s.replace("\\<", "").replace("\\", "").strip()
@@ -1040,6 +1084,7 @@ def analyze_zip(raw_bytes):
     tables = []
     seen_tables = set()  # evita tablas .dbf duplicadas (mismo nombre en varias carpetas)
     forms_detail = []    # controles reales de los formularios .scx
+    reports_detail = []  # tabla + campos reales de los reportes .frx
     samples = []
     menus = []           # estructura de menús (.mpr / .mnx)
     mnx_pending = []     # .mnx a parsear solo si no hubo .mpr
@@ -1100,6 +1145,26 @@ def analyze_zip(raw_bytes):
                         "tabla": info.get("tabla", ""),
                         "campos": info.get("campos", []),
                         "botones": info.get("botones", []),
+                    })
+            except Exception:
+                pass
+
+        # Tabla y campos reales de los reportes .frx (es una tabla DBF + memo .frt).
+        if ext == ".frx" and len(reports_detail) < MAX_REPORTS_PARSED:
+            try:
+                with zf.open(name) as fp:
+                    frx_bytes = fp.read()
+                frt_bytes = b""
+                frt_real = lower_map.get((os.path.splitext(name)[0] + ".frt").lower())
+                if frt_real:
+                    with zf.open(frt_real) as fp2:
+                        frt_bytes = fp2.read()
+                info = parse_frx_report(frx_bytes, frt_bytes)
+                if info:
+                    reports_detail.append({
+                        "name": os.path.splitext(base)[0],
+                        "tabla": info.get("tabla", ""),
+                        "campos": info.get("campos", []),
                     })
             except Exception:
                 pass
@@ -1209,6 +1274,7 @@ def analyze_zip(raw_bytes):
         "forms": forms,
         "forms_detail": forms_detail,
         "reports": reports,
+        "reports_detail": reports_detail,
         "programs": sorted(set(programs))[:MAX_NAME_LIST],
         "samples": samples,
         "menus": menus,
