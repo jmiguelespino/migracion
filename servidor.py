@@ -647,34 +647,42 @@ def parse_scx_controls(scx, sct):
         return raw.decode("latin-1", "replace").replace("\x00", "").strip()
 
     def parse_props(text):
-        """De un memo 'properties' saca ControlSource, Caption y Top del objeto
-        (ancladas a inicio de línea: si no, "Column1.ControlSource" de un grid
-        se confundiría con la propiedad propia del objeto)."""
+        """De un memo 'properties' saca ControlSource, Caption, Top y Left del
+        objeto (ancladas a inicio de línea: si no, "Column1.ControlSource" de
+        un grid se confundiría con la propiedad propia del objeto)."""
         cs = re.search(r'(?:^|\n)\s*ControlSource\s*=\s*([^\r\n]+)', text, re.I)
         cap = re.search(r'(?:^|\n)\s*Caption\s*=\s*([^\r\n]+)', text, re.I)
         top = re.search(r'(?:^|\n)\s*Top\s*=\s*([\d.]+)', text, re.I)
+        left = re.search(r'(?:^|\n)\s*Left\s*=\s*([\d.]+)', text, re.I)
         src = cs.group(1).strip().strip('"').strip() if cs else ""
         label = cap.group(1).strip().strip('"').strip() if cap else ""
         try:
             tval = float(top.group(1)) if top else 0.0
         except ValueError:
             tval = 0.0
-        return src, label, tval
+        try:
+            lval = float(left.group(1)) if left else 0.0
+        except ValueError:
+            lval = 0.0
+        return src, label, tval, lval
 
     def parse_grid_columns(text):
-        """De las propiedades propias de un grid saca "ColumnN.ControlSource".
-        En un grid nativo (sin clase de columna custom) es la ÚNICA copia del
-        ControlSource: el Textbox hijo de la columna no la repite."""
-        out = []
-        for cn, csrc in re.findall(r'Column(\d+)\.ControlSource\s*=\s*"?([^"\r\n]+)"?', text, re.I):
-            out.append((int(cn), csrc.strip().strip('"').strip()))
-        return out
+        """De las propiedades propias de un grid saca "ColumnN.ControlSource" y
+        "ColumnN.Header1.Caption". En un grid nativo (sin clase de columna
+        custom) suelen ser la ÚNICA copia: ni el Textbox ni el Header hijos
+        las repiten."""
+        srcs = [(int(cn), csrc.strip().strip('"').strip())
+                for cn, csrc in re.findall(r'Column(\d+)\.ControlSource\s*=\s*"?([^"\r\n]+)"?', text, re.I)]
+        caps = {int(cn): cap.strip().strip('"').strip()
+                for cn, cap in re.findall(r'Column(\d+)\.Header1\.Caption\s*=\s*"?([^"\r\n]+)"?', text, re.I)}
+        return srcs, caps
 
     counts = {}
     controls = []
     botones = []         # Caption de los commandbutton (Grabar, Cancelar, Salida...)
-    raw_fields = []      # (pref, fld, label, top, parent) de cada campo real detectado
+    raw_fields = []      # (pref, fld, label, top, left, parent) de cada campo real detectado
     header_caption = {}  # parent -> Caption, de objetos "header" (columnas de grid)
+    standalone_labels = []  # (top, left, caption) de Label sueltos (formularios de detalle)
     for r in range(num_records):
         start = header_len + r * rec_len
         rec = scx[start:start + rec_len]
@@ -696,15 +704,21 @@ def parse_scx_controls(scx, sct):
         if has_props:
             props_text = field_text(rec, po, pl, pt)
             try:
-                src, label, top = parse_props(props_text)
+                src, label, top, left = parse_props(props_text)
             except Exception:
-                src, label, top = "", "", 0.0
+                src, label, top, left = "", "", 0.0, 0.0
             parent = field_text(rec, pao, pal, pat) if has_parent else ""
             # En columnas de grid, el Caption vive en el "header" (objeto hermano
             # del textbox que trae el ControlSource): lo guardamos por parent para
             # asociarlo después. Sin esto, las columnas de grid quedan sin etiqueta.
             if baseclass == "header" and label:
                 header_caption[parent] = label
+            # Label suelto (formulario de detalle/alta): no ata un campo, pero su
+            # posición (Top/Left) está cerca del campo al que rotula. Sin esto,
+            # todos los campos de un formulario "alta" quedan sin etiqueta real,
+            # porque ahí el Caption vive en un objeto Label aparte, no en el campo.
+            if baseclass == "label" and label and ".column" not in parent.lower():
+                standalone_labels.append((top, left, label))
             if baseclass == "commandbutton" and len(botones) < 30:
                 # El Caption suele venir heredado de la clase (no se repite por
                 # instancia si no cambió): si no está acá, se resuelve después
@@ -716,31 +730,62 @@ def parse_scx_controls(scx, sct):
                 pref, _, fld = src.partition(".")
                 pref, fld = pref.strip().lower(), fld.strip()
                 if pref and fld and pref not in ("thisform", "this", "_screen"):
-                    raw_fields.append((pref, fld, label, top, parent))
-            # En grids, cada columna guarda su ControlSource como propiedad
-            # propia del grid ("ColumnN.ControlSource"); a veces es la única
-            # copia (el Textbox hijo no la repite), así que la leemos aparte.
+                    raw_fields.append((pref, fld, label, top, left, parent))
+            # En grids, cada columna guarda su ControlSource y el Caption de su
+            # Header como propiedades propias del grid ("ColumnN.ControlSource",
+            # "ColumnN.Header1.Caption"); a veces son la única copia (ni el
+            # Textbox ni el Header hijos las repiten), así que se leen aparte.
             if baseclass == "grid":
                 grid_path = f"{parent}.{objname}" if parent else objname
-                for cn, csrc in parse_grid_columns(props_text):
+                srcs, caps = parse_grid_columns(props_text)
+                for cn, cap in caps.items():
+                    if cap:
+                        header_caption[f"{grid_path}.Column{cn}"] = cap
+                for cn, csrc in srcs:
                     if "." not in csrc:
                         continue
                     pref, _, fld = csrc.partition(".")
                     pref, fld = pref.strip().lower(), fld.strip()
                     if pref and fld:
-                        raw_fields.append((pref, fld, "", float(cn), f"{grid_path}.Column{cn}"))
+                        raw_fields.append((pref, fld, "", float(cn), 0.0, f"{grid_path}.Column{cn}"))
     if not counts:
         return None
     tabla_freq = {}
     campos_by_key = {}   # (parent, fld) -> campo, para no duplicar entre Textbox y grid
-    for pref, fld, label, top, parent in raw_fields:
+    for pref, fld, label, top, left, parent in raw_fields:
         tabla_freq[pref] = tabla_freq.get(pref, 0) + 1
         resolved = label or header_caption.get(parent) or fld
         key = (parent, fld)
         prev = campos_by_key.get(key)
         if prev is None or (prev["label"] == fld and resolved != fld):
-            campos_by_key[key] = {"field": fld, "label": resolved, "top": top}
-    campos = list(campos_by_key.values())[:MAX_FIELDS_PER_TABLE]
+            campos_by_key[key] = {"field": fld, "label": resolved, "top": top, "left": left}
+    # Última pasada: los campos que siguen sin etiqueta real (formularios de
+    # detalle, sin header ni Caption propio) se resuelven contra el label suelto
+    # más cercano en posición — cada label se usa una sola vez.
+    used_labels = set()
+    for campo in campos_by_key.values():
+        if campo["label"] != campo["field"]:
+            continue
+        best_i, best_score = None, None
+        for i, (ltop, lleft, lcap) in enumerate(standalone_labels):
+            if i in used_labels:
+                continue
+            dtop = abs(ltop - campo["top"])
+            if dtop > 20:
+                continue
+            # Un label bien pareado queda justo a la izquierda del campo, a poca
+            # distancia (típico ~70-90). Uno a la derecha, o muy lejos a la
+            # izquierda (probablemente huérfano, de otro campo sin ControlSource
+            # propio), se penaliza fuerte para no ganarle al pareo correcto.
+            gap = (campo["left"] - lleft) if lleft <= campo["left"] else (lleft - campo["left"]) * 3
+            score = dtop * 3 + gap
+            if best_score is None or score < best_score:
+                best_i, best_score = i, score
+        if best_i is not None:
+            campo["label"] = standalone_labels[best_i][2]
+            used_labels.add(best_i)
+    campos = [{"field": c["field"], "label": c["label"], "top": c["top"]}
+              for c in list(campos_by_key.values())[:MAX_FIELDS_PER_TABLE]]
     tabla = max(tabla_freq, key=tabla_freq.get) if tabla_freq else ""
     return {"counts": counts, "controls": controls, "total": sum(counts.values()),
             "campos": campos, "tabla": tabla, "botones": botones}
