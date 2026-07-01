@@ -171,6 +171,16 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       sistema (nuevo `parse_vcx_captions`); si tampoco hay clase disponible,
       se descarta en vez de mostrar un badge vacío. Se muestra en la vista de
       revisión de pantallas.
+- [x] **Caption de botones vía herencia de clases + filas basura de `.vcx`**:
+      con `g_clases.vcx` real se comprobó que los botones de ABM
+      (Grabar/Cancelar/Editar/Agregar/Eliminar/Listar/Salida) no definen su
+      propio Caption — heredan de una clase ancestro (ej. "grabargb" hereda de
+      "grabar", que hereda de "command" en `m_clases.vcx`). Nuevo
+      `parse_vcx_class_defs` + `resolve_vcx_caption` suben la cadena hasta
+      encontrar el Caption, cruzando `.vcx` distintos si hace falta. De paso:
+      tanto `.vcx` como `.scx` (mismo formato base) tienen filas
+      `COMMENT RESERVED` con punteros de memo reciclados de otro registro que
+      pisaban entradas válidas — se filtran por `PLATFORM != WINDOWS`.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
