@@ -41,6 +41,15 @@ def _norm(s):
 
 _DO_FORM_RE = re.compile(r'\bDO\s+FORM\s+(\w+)', re.IGNORECASE)
 
+# Captions de los botones estándar del ABM VFP (Grabar/Cancelar/Editar/...):
+# ya los genera el ABM de la app nueva (Guardar/Cancelar/✎/🗑), así que no hay
+# que repetirlos. Todo botón con otro caption es navegación custom a otra
+# pantalla (ej. "Recetas", "Ingredientes") y sí se re-crea.
+_STANDARD_BUTTON_CAPTIONS = {
+    "grabar", "cancelar", "editar", "agregar", "eliminar", "borrar",
+    "listar", "salir", "salida",
+}
+
 
 def _menu_to_tabla(texto, accion, table_index):
     """Resuelve ítem de menú → key de tabla (o None).
@@ -204,6 +213,7 @@ def build_meta(inventory, title, enrich=None):
             "key": key, "name": t.get("name"), "registros": t.get("records", 0),
             "titulo": t.get("name"), "descripcion": "", "reglas": [], "validaciones": [],
             "enriquecido": False, "origen_formulario": False, "campos": campos,
+            "botones_extra": [],
         }
         # Layout real del formulario .scx: etiquetas (Caption) y orden (Top).
         fi = forms_index.get(key)
@@ -237,6 +247,29 @@ def build_meta(inventory, title, enrich=None):
 
     # Reportes -> intentamos asociarlos a una tabla por nombre.
     table_index = {_norm(x["name"]): x["key"] for x in tablas}
+
+    # Botones custom de cada .scx (navegación a otra pantalla, ej. "Recetas"
+    # desde Menúes, "Ingredientes" desde Presentaciones): se recrean como
+    # botones reales en el ABM de la tabla de origen, apuntando a la tabla
+    # destino resuelta por nombre (misma heurística que los ítems de menú).
+    # Los botones estándar del ABM (Grabar/Cancelar/...) se excluyen: esas
+    # acciones ya las da el ABM generado.
+    tablas_by_key = {t["key"]: t for t in tablas}
+    for f in inventory.get("forms_detail", []) or []:
+        origen_key = _slug(f.get("tabla"))
+        origen = tablas_by_key.get(origen_key)
+        if not origen:
+            continue
+        for b in f.get("botones") or []:
+            caption = str(b.get("caption") or "").strip()
+            if not caption or caption.lower() in _STANDARD_BUTTON_CAPTIONS:
+                continue
+            destino_key = _menu_to_tabla(caption, "", table_index)
+            if not destino_key or destino_key == origen_key:
+                continue
+            if any(be["tabla"] == destino_key for be in origen["botones_extra"]):
+                continue
+            origen["botones_extra"].append({"caption": caption[:40], "tabla": destino_key})
     reportes = []
     for r in inventory.get("reports", []):
         stem = re.sub(r"\.\w+$", "", str(r))
@@ -869,6 +902,7 @@ async function viewAbm(key) {
     <div class="toolbar">
       <input class="search" id="q" placeholder="🔎 Buscar..." value="${esc(st.q)}" oninput="onSearch('${key}',this.value)">
       <span class="sp"></span>
+      ${(t.botones_extra||[]).map(b => `<button class="sec sm" onclick="location.hash='#/abm/${b.tabla}'">${esc(b.caption)}</button>`).join('')}
       <button class="sec sm" onclick="window.open('/api/t/${key}/export.csv')">⬇ Exportar CSV</button>
     </div>
     <div class="tablewrap"><table><thead>${head}</thead><tbody>${body || '<tr><td class="muted" style="padding:16px">Sin registros.</td></tr>'}</tbody></table></div>
