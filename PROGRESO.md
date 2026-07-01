@@ -188,6 +188,17 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       vive en el campo memo `METHODS`. Verificado con `_BASE.vcx`/`_UI.vcx`
       (clases estándar VFP) y las clases del sistema del usuario: de 0
       muestras pasa a extraer código real y legible.
+- [x] **Labels sueltos por proximidad + `Header.Caption` punteado en grids**:
+      con un formulario de "alta" real (`1121_empalta`, patrón muy común:
+      campos individuales con `Label` aparte al lado) se vio que todos los
+      campos quedaban con la etiqueta igual al nombre — ahí el `Caption` vive
+      en un objeto `Label` suelto (sin `ControlSource`), posicionado cerca
+      (Top/Left). Ahora esos labels se capturan y se emparejan por proximidad
+      con el campo que les corresponde (pesando distancia vertical y que el
+      label quede a la izquierda, no a la derecha; cada label se usa una sola
+      vez). También: `ColumnN.Header1.Caption` puede venir como propiedad
+      punteada del propio grid (visto en `1121_empcons`), igual que
+      `ColumnN.ControlSource` — se lee de ahí también.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
