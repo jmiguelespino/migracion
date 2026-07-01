@@ -874,6 +874,10 @@ function renderScxReview(){
       </td>
     </tr>`).join('') : '<tr><td colspan="3" style="color:var(--text3)">Esta pantalla no tiene campos atados a una tabla (revisá solo la tabla asociada).</td></tr>';
   const badges = Object.entries(f.controles||{}).map(([k,v]) => `<span class="scxbadge">${esc(k)} × ${v}</span>`).join(' ');
+  const botones = (f.botones||[]).map(b => `<span class="scxbadge">${esc(b.caption)}</span>`).join(' ');
+  const botonesHtml = botones
+    ? `<div class="scxrow" style="align-items:flex-start"><label>Botones</label><div class="scxbadges" style="margin-top:0">${botones}</div></div>`
+    : '';
 
   document.getElementById('vs').innerHTML = `
     <div class="detail">
@@ -888,6 +892,7 @@ function renderScxReview(){
         <div class="scxrow"><label>Tabla asociada</label><input type="text" id="scxTabla" value="${esc(f.tabla||'')}"></div>
         <table class="scxtable"><thead><tr><th>Campo</th><th>Etiqueta</th><th>Orden</th></tr></thead>
           <tbody>${rows}</tbody></table>
+        ${botonesHtml}
         <div class="scxbadges">${badges}</div>
         <div class="scxchips">${chips}</div>
       </div>

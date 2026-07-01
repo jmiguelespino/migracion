@@ -633,6 +633,9 @@ def parse_scx_controls(scx, sct):
     has_parent = "parent" in fmap
     if has_parent:
         pao, pal, pat = fmap["parent"]
+    has_class = "class" in fmap
+    if has_class:
+        clo, cll, clt = fmap["class"]
 
     def field_text(rec, off, ln, typ):
         raw = rec[off:off + ln]
@@ -666,6 +669,7 @@ def parse_scx_controls(scx, sct):
 
     counts = {}
     controls = []
+    botones = []         # Caption de los commandbutton (Grabar, Cancelar, Salida...)
     raw_fields = []      # (pref, fld, label, top, parent) de cada campo real detectado
     header_caption = {}  # parent -> Caption, de objetos "header" (columnas de grid)
     for r in range(num_records):
@@ -693,6 +697,13 @@ def parse_scx_controls(scx, sct):
             # asociarlo después. Sin esto, las columnas de grid quedan sin etiqueta.
             if baseclass == "header" and label:
                 header_caption[parent] = label
+            if baseclass == "commandbutton" and len(botones) < 30:
+                # El Caption suele venir heredado de la clase (no se repite por
+                # instancia si no cambió): si no está acá, se resuelve después
+                # contra el .vcx con el nombre de clase (campo "class").
+                clase = field_text(rec, clo, cll, clt).lower() if has_class else ""
+                botones.append({"name": objname, "clase": clase,
+                                 "caption": _clean_prompt(label) if label else ""})
             if "." in src:
                 pref, _, fld = src.partition(".")
                 pref, fld = pref.strip().lower(), fld.strip()
@@ -724,7 +735,7 @@ def parse_scx_controls(scx, sct):
     campos = list(campos_by_key.values())[:MAX_FIELDS_PER_TABLE]
     tabla = max(tabla_freq, key=tabla_freq.get) if tabla_freq else ""
     return {"counts": counts, "controls": controls, "total": sum(counts.values()),
-            "campos": campos, "tabla": tabla}
+            "campos": campos, "tabla": tabla, "botones": botones}
 
 
 def _clean_prompt(s):
@@ -822,6 +833,30 @@ def parse_vcx_methods(vcx_bytes, vct_bytes):
             "code":       code[:MAX_SAMPLE_BYTES],
         })
     return methods
+
+
+def parse_vcx_captions(vcx_bytes, vct_bytes):
+    """Mapea nombre de clase (el que aparece en el campo CLASS de un .scx,
+    p.ej. "grabargb") -> su Caption por defecto, definido en la clase del .vcx.
+
+    En VFP, si una instancia no sobreescribe el Caption, el texto real vive
+    solo en la clase base (acá) y no en el .scx que la usa — sin esto, los
+    botones de un formulario ABM (Grabar/Cancelar/Editar/...) quedan sin
+    etiqueta aunque el usuario sí los vea así en pantalla."""
+    rows = read_dbf_records(vcx_bytes, vct_bytes, max_records=2000)
+    out = {}
+    for r in rows:
+        name = str(r.get("objname") or "").strip().lower()
+        props = str(r.get("properties") or "")
+        if not name or not props:
+            continue
+        m = re.search(r'(?:^|\n)\s*Caption\s*=\s*([^\r\n]+)', props, re.I)
+        if not m:
+            continue
+        cap = m.group(1).strip().strip('"').strip()
+        if cap:
+            out.setdefault(name, _clean_prompt(cap))
+    return out
 
 
 def _parse_programa_menu(prog_bytes, menues_bytes=b""):
@@ -993,6 +1028,7 @@ def analyze_zip(raw_bytes):
                         "total": info["total"],
                         "tabla": info.get("tabla", ""),
                         "campos": info.get("campos", []),
+                        "botones": info.get("botones", []),
                     })
             except Exception:
                 pass
@@ -1025,9 +1061,11 @@ def analyze_zip(raw_bytes):
             except Exception:
                 pass
 
-    # Clases VFP (.vcx + .vct): extraer métodos como muestras adicionales de código.
-    # Son reutilizables y contienen lógica de negocio en sus event handlers.
+    # Clases VFP (.vcx + .vct): extraer métodos como muestras adicionales de código,
+    # y el Caption por defecto de cada clase (p.ej. los botones de un ABM heredan
+    # "Grabar"/"Cancelar"/... de la clase y no lo repiten en cada .scx que los usa).
     vcx_names = [n for n in sorted(names) if n.lower().endswith(".vcx")]
+    vcx_captions = {}
     for vcx_name in vcx_names[:15]:  # máx 15 archivos de clase
         try:
             vcx_bytes = zf.read(vcx_name)
@@ -1042,8 +1080,20 @@ def analyze_zip(raw_bytes):
                     "name": f"{vcx_base}.{m['name']}",
                     "content": m["code"],
                 })
+            vcx_captions.update(parse_vcx_captions(vcx_bytes, vct_bytes))
         except Exception:
             pass
+
+    # Resolver los botones de cada formulario contra los Caption de clase
+    # recién leídos, y descartar los que quedaron sin etiqueta (ni propia ni
+    # heredada) para no mostrar badges vacíos en la revisión.
+    for f in forms_detail:
+        resueltos = []
+        for b in f.get("botones") or []:
+            cap = b.get("caption") or vcx_captions.get(b.get("clase", ""), "")
+            if cap:
+                resueltos.append({"name": b["name"], "caption": cap})
+        f["botones"] = resueltos
 
     # Si no hubo menús .mpr, intentamos con los .mnx (DBF + memo .mnt) como fallback.
     if not menus and mnx_pending:
