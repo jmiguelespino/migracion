@@ -630,6 +630,9 @@ def parse_scx_controls(scx, sct):
     has_props = "properties" in fmap
     if has_props:
         po, pl, pt = fmap["properties"]
+    has_parent = "parent" in fmap
+    if has_parent:
+        pao, pal, pat = fmap["parent"]
 
     def field_text(rec, off, ln, typ):
         raw = rec[off:off + ln]
@@ -652,8 +655,8 @@ def parse_scx_controls(scx, sct):
 
     counts = {}
     controls = []
-    campos = []          # controles atados a campos reales (ControlSource)
-    tabla_freq = {}      # frecuencia de tabla referenciada -> para inferir la tabla
+    raw_fields = []      # (baseclass, parent, src, label, top) de cada objeto con ControlSource
+    header_caption = {}  # parent -> Caption, de objetos "header" (columnas de grid)
     for r in range(num_records):
         start = header_len + r * rec_len
         rec = scx[start:start + rec_len]
@@ -672,15 +675,25 @@ def parse_scx_controls(scx, sct):
                 src, label, top = parse_props(field_text(rec, po, pl, pt))
             except Exception:
                 src, label, top = "", "", 0.0
+            parent = field_text(rec, pao, pal, pat) if has_parent else ""
+            # En columnas de grid, el Caption vive en el "header" (objeto hermano
+            # del textbox que trae el ControlSource): lo guardamos por parent para
+            # asociarlo después. Sin esto, las columnas de grid quedan sin etiqueta.
+            if baseclass == "header" and label:
+                header_caption[parent] = label
             if "." in src:
                 pref, _, fld = src.partition(".")
                 pref, fld = pref.strip().lower(), fld.strip()
                 if pref and fld and pref not in ("thisform", "this", "_screen"):
-                    tabla_freq[pref] = tabla_freq.get(pref, 0) + 1
-                    if len(campos) < MAX_FIELDS_PER_TABLE:
-                        campos.append({"field": fld, "label": label or fld, "top": top})
+                    raw_fields.append((pref, fld, label, top, parent))
     if not counts:
         return None
+    tabla_freq = {}
+    campos = []
+    for pref, fld, label, top, parent in raw_fields:
+        tabla_freq[pref] = tabla_freq.get(pref, 0) + 1
+        if len(campos) < MAX_FIELDS_PER_TABLE:
+            campos.append({"field": fld, "label": label or header_caption.get(parent) or fld, "top": top})
     tabla = max(tabla_freq, key=tabla_freq.get) if tabla_freq else ""
     return {"counts": counts, "controls": controls, "total": sum(counts.values()),
             "campos": campos, "tabla": tabla}
