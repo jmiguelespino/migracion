@@ -641,9 +641,11 @@ def parse_scx_controls(scx, sct):
         return raw.decode("latin-1", "replace").replace("\x00", "").strip()
 
     def parse_props(text):
-        """De un memo 'properties' saca ControlSource, Caption y Top."""
-        cs = re.search(r'ControlSource\s*=\s*([^\r\n]+)', text, re.I)
-        cap = re.search(r'Caption\s*=\s*([^\r\n]+)', text, re.I)
+        """De un memo 'properties' saca ControlSource, Caption y Top del objeto
+        (ancladas a inicio de línea: si no, "Column1.ControlSource" de un grid
+        se confundiría con la propiedad propia del objeto)."""
+        cs = re.search(r'(?:^|\n)\s*ControlSource\s*=\s*([^\r\n]+)', text, re.I)
+        cap = re.search(r'(?:^|\n)\s*Caption\s*=\s*([^\r\n]+)', text, re.I)
         top = re.search(r'(?:^|\n)\s*Top\s*=\s*([\d.]+)', text, re.I)
         src = cs.group(1).strip().strip('"').strip() if cs else ""
         label = cap.group(1).strip().strip('"').strip() if cap else ""
@@ -653,9 +655,18 @@ def parse_scx_controls(scx, sct):
             tval = 0.0
         return src, label, tval
 
+    def parse_grid_columns(text):
+        """De las propiedades propias de un grid saca "ColumnN.ControlSource".
+        En un grid nativo (sin clase de columna custom) es la ÚNICA copia del
+        ControlSource: el Textbox hijo de la columna no la repite."""
+        out = []
+        for cn, csrc in re.findall(r'Column(\d+)\.ControlSource\s*=\s*"?([^"\r\n]+)"?', text, re.I):
+            out.append((int(cn), csrc.strip().strip('"').strip()))
+        return out
+
     counts = {}
     controls = []
-    raw_fields = []      # (baseclass, parent, src, label, top) de cada objeto con ControlSource
+    raw_fields = []      # (pref, fld, label, top, parent) de cada campo real detectado
     header_caption = {}  # parent -> Caption, de objetos "header" (columnas de grid)
     for r in range(num_records):
         start = header_len + r * rec_len
@@ -671,8 +682,9 @@ def parse_scx_controls(scx, sct):
             controls.append({"name": objname, "type": baseclass})
         # Layout real: ControlSource (atadura a campo) y Caption (etiqueta).
         if has_props:
+            props_text = field_text(rec, po, pl, pt)
             try:
-                src, label, top = parse_props(field_text(rec, po, pl, pt))
+                src, label, top = parse_props(props_text)
             except Exception:
                 src, label, top = "", "", 0.0
             parent = field_text(rec, pao, pal, pat) if has_parent else ""
@@ -686,14 +698,30 @@ def parse_scx_controls(scx, sct):
                 pref, fld = pref.strip().lower(), fld.strip()
                 if pref and fld and pref not in ("thisform", "this", "_screen"):
                     raw_fields.append((pref, fld, label, top, parent))
+            # En grids, cada columna guarda su ControlSource como propiedad
+            # propia del grid ("ColumnN.ControlSource"); a veces es la única
+            # copia (el Textbox hijo no la repite), así que la leemos aparte.
+            if baseclass == "grid":
+                grid_path = f"{parent}.{objname}" if parent else objname
+                for cn, csrc in parse_grid_columns(props_text):
+                    if "." not in csrc:
+                        continue
+                    pref, _, fld = csrc.partition(".")
+                    pref, fld = pref.strip().lower(), fld.strip()
+                    if pref and fld:
+                        raw_fields.append((pref, fld, "", float(cn), f"{grid_path}.Column{cn}"))
     if not counts:
         return None
     tabla_freq = {}
-    campos = []
+    campos_by_key = {}   # (parent, fld) -> campo, para no duplicar entre Textbox y grid
     for pref, fld, label, top, parent in raw_fields:
         tabla_freq[pref] = tabla_freq.get(pref, 0) + 1
-        if len(campos) < MAX_FIELDS_PER_TABLE:
-            campos.append({"field": fld, "label": label or header_caption.get(parent) or fld, "top": top})
+        resolved = label or header_caption.get(parent) or fld
+        key = (parent, fld)
+        prev = campos_by_key.get(key)
+        if prev is None or (prev["label"] == fld and resolved != fld):
+            campos_by_key[key] = {"field": fld, "label": resolved, "top": top}
+    campos = list(campos_by_key.values())[:MAX_FIELDS_PER_TABLE]
     tabla = max(tabla_freq, key=tabla_freq.get) if tabla_freq else ""
     return {"counts": counts, "controls": controls, "total": sum(counts.values()),
             "campos": campos, "tabla": tabla}
