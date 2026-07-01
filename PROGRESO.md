@@ -135,6 +135,17 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       (p.ej. `ZZ_EJECUTABLES/` y `datos/`), se prefiere el de la ruta con "dato".
 - [x] **Deduplicación de `.dbf` en seed**: cuando hay dos copias del mismo DBF, se
       importa la **más grande** (más registros = datos de producción).
+- [x] **Revisión de pantallas `.scx` una por una**: nueva vista en `index.html`
+      (`openScxReview()` / `renderScxReview()`) que muestra cada formulario
+      parseado (`forms_detail`) de a uno — tabla asociada, etiquetas y orden de
+      campos (con ▲▼) — para que el usuario corrija y dé el visto bueno antes de
+      pasar al siguiente. El estado (`estado: 'pendiente'|'aprobado'`) se guarda
+      dentro de cada formulario en `S.zipInfo`, que ya se persiste en
+      `localStorage`; si se cierra el navegador y se vuelve, retoma en el primer
+      formulario sin aprobar. Las correcciones (label/orden/tabla) son las mismas
+      que ya usa `scaffold.py` (`_forms_index`) para generar el ABM, así que se
+      reflejan directo en la app final. Sin cambios de backend: todo vive en
+      `forms_detail`, que ya viaja completo en el payload de `/api/scaffold`.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
