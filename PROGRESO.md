@@ -153,6 +153,15 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       con la etiqueta igual al nombre del campo; ahora se asocian por
       `parent`. Verificado con `.scx`/`.sct` reales del sistema Recetas
       (`rececab`, `recedet`): "cod_rece" → "Código", "des_rece" → "Descripción", etc.
+- [x] **Columnas de grid perdidas/mal atribuidas (`parse_scx_controls`)**: dos
+      bugs encontrados con `.scx` reales (institu, convenio, tipomenu,
+      instrubr). (1) Las regex de `ControlSource`/`Caption` no estaban
+      ancladas a inicio de línea: `Column1.ControlSource` de un grid se
+      confundía con la propiedad propia del objeto. (2) En un grid nativo (sin
+      clase de columna custom) el `ControlSource` de cada columna vive **solo**
+      en `ColumnN.ControlSource` del propio grid — el Textbox hijo no lo
+      repite, así que esas columnas se perdían del todo (ej. `rzn_soc`, `iva`).
+      Ahora se leen ambas fuentes y se deduplican por `(parent, campo)`.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
