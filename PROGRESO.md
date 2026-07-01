@@ -146,6 +146,13 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       que ya usa `scaffold.py` (`_forms_index`) para generar el ABM, así que se
       reflejan directo en la app final. Sin cambios de backend: todo vive en
       `forms_detail`, que ya viaja completo en el payload de `/api/scaffold`.
+- [x] **Caption de columnas de grid (`parse_scx_controls`)**: en el patrón de
+      ABM por grilla (`g_clases.vcx`), el `Caption` de cada columna vive en el
+      objeto `Header`, no en el `Textbox` que trae el `ControlSource` — son
+      objetos hermanos (mismo `PARENT`). Antes las columnas de grid quedaban
+      con la etiqueta igual al nombre del campo; ahora se asocian por
+      `parent`. Verificado con `.scx`/`.sct` reales del sistema Recetas
+      (`rececab`, `recedet`): "cod_rece" → "Código", "des_rece" → "Descripción", etc.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
