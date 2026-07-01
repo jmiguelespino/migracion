@@ -162,6 +162,15 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       en `ColumnN.ControlSource` del propio grid — el Textbox hijo no lo
       repite, así que esas columnas se perdían del todo (ej. `rzn_soc`, `iva`).
       Ahora se leen ambas fuentes y se deduplican por `(parent, campo)`.
+- [x] **Caption de botones (`parse_vcx_captions` + `parse_scx_controls`)**: el
+      texto de los botones de un ABM (Grabar/Cancelar/Editar/Agregar/
+      Eliminar/Listar/Salida) casi nunca se repite por instancia en el `.scx`
+      — vive en la clase base (`g_clases.vcx`) y solo se sobreescribe si
+      cambió. Ahora `parse_scx_controls` lee el campo `CLASS` de cada
+      `commandbutton` y `analyze_zip` resuelve el Caption contra el `.vcx` del
+      sistema (nuevo `parse_vcx_captions`); si tampoco hay clase disponible,
+      se descarta en vez de mostrar un badge vacío. Se muestra en la vista de
+      revisión de pantallas.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
