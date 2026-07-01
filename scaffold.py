@@ -41,6 +41,15 @@ def _norm(s):
 
 _DO_FORM_RE = re.compile(r'\bDO\s+FORM\s+(\w+)', re.IGNORECASE)
 
+# Captions de los botones estándar del ABM VFP (Grabar/Cancelar/Editar/...):
+# ya los genera el ABM de la app nueva (Guardar/Cancelar/✎/🗑), así que no hay
+# que repetirlos. Todo botón con otro caption es navegación custom a otra
+# pantalla (ej. "Recetas", "Ingredientes") y sí se re-crea.
+_STANDARD_BUTTON_CAPTIONS = {
+    "grabar", "cancelar", "editar", "agregar", "eliminar", "borrar",
+    "listar", "salir", "salida",
+}
+
 
 def _menu_to_tabla(texto, accion, table_index):
     """Resuelve ítem de menú → key de tabla (o None).
@@ -204,6 +213,7 @@ def build_meta(inventory, title, enrich=None):
             "key": key, "name": t.get("name"), "registros": t.get("records", 0),
             "titulo": t.get("name"), "descripcion": "", "reglas": [], "validaciones": [],
             "enriquecido": False, "origen_formulario": False, "campos": campos,
+            "botones_extra": [],
         }
         # Layout real del formulario .scx: etiquetas (Caption) y orden (Top).
         fi = forms_index.get(key)
@@ -237,16 +247,58 @@ def build_meta(inventory, title, enrich=None):
 
     # Reportes -> intentamos asociarlos a una tabla por nombre.
     table_index = {_norm(x["name"]): x["key"] for x in tablas}
+
+    # Botones custom de cada .scx (navegación a otra pantalla, ej. "Recetas"
+    # desde Menúes, "Ingredientes" desde Presentaciones): se recrean como
+    # botones reales en el ABM de la tabla de origen, apuntando a la tabla
+    # destino resuelta por nombre (misma heurística que los ítems de menú).
+    # Los botones estándar del ABM (Grabar/Cancelar/...) se excluyen: esas
+    # acciones ya las da el ABM generado.
+    tablas_by_key = {t["key"]: t for t in tablas}
+    for f in inventory.get("forms_detail", []) or []:
+        origen_key = _slug(f.get("tabla"))
+        origen = tablas_by_key.get(origen_key)
+        if not origen:
+            continue
+        for b in f.get("botones") or []:
+            caption = str(b.get("caption") or "").strip()
+            if not caption or caption.lower() in _STANDARD_BUTTON_CAPTIONS:
+                continue
+            destino_key = _menu_to_tabla(caption, "", table_index)
+            if not destino_key or destino_key == origen_key:
+                continue
+            if any(be["tabla"] == destino_key for be in origen["botones_extra"]):
+                continue
+            origen["botones_extra"].append({"caption": caption[:40], "tabla": destino_key})
+    # Layout real de cada .frx (tabla/vista que usa + campos que imprime de
+    # verdad): mejora el match por nombre de archivo y evita mostrar TODAS
+    # las columnas de la tabla en la vista de consulta del reporte.
+    reports_by_name = {_norm(r.get("name")): r for r in (inventory.get("reports_detail") or [])}
+
     reportes = []
     for r in inventory.get("reports", []):
         stem = re.sub(r"\.\w+$", "", str(r))
         n = _norm(stem)
         match = None
-        for tn, tk in table_index.items():
-            if tn and (tn in n or n in tn):
-                match = tk
-                break
-        reportes.append({"name": stem, "tabla": match})
+        campos_reporte = None
+        detail = reports_by_name.get(n)
+        if detail and detail.get("tabla"):
+            # La tabla/alias del .frx (ej. "tplanmae") suele ser una vista o un
+            # cursor temporal creado por código, no siempre matchea una tabla
+            # real — probamos igual, y si matchea usamos los campos reales.
+            dt = _menu_to_tabla(detail["tabla"], "", table_index)
+            if dt:
+                match = dt
+                nombres_tabla = {c["name"] for c in tablas_by_key[dt]["campos"]}
+                campos_reales = [c for c in detail.get("campos", []) if c in nombres_tabla]
+                if campos_reales:
+                    campos_reporte = campos_reales
+        if not match:
+            for tn, tk in table_index.items():
+                if tn and (tn in n or n in tn):
+                    match = tk
+                    break
+        reportes.append({"name": stem, "tabla": match, "campos_reporte": campos_reporte})
 
     formularios = [re.sub(r"\.\w+$", "", str(f)) for f in inventory.get("forms", [])]
 
@@ -869,6 +921,7 @@ async function viewAbm(key) {
     <div class="toolbar">
       <input class="search" id="q" placeholder="🔎 Buscar..." value="${esc(st.q)}" oninput="onSearch('${key}',this.value)">
       <span class="sp"></span>
+      ${(t.botones_extra||[]).map(b => `<button class="sec sm" onclick="location.hash='#/abm/${b.tabla}'">${esc(b.caption)}</button>`).join('')}
       <button class="sec sm" onclick="window.open('/api/t/${key}/export.csv')">⬇ Exportar CSV</button>
     </div>
     <div class="tablewrap"><table><thead>${head}</thead><tbody>${body || '<tr><td class="muted" style="padding:16px">Sin registros.</td></tr>'}</tbody></table></div>
@@ -976,10 +1029,15 @@ async function viewReport(i) {
   if (!r) { $('#main').innerHTML = '<p>Reporte no encontrado.</p>'; return; }
   if (!r.tabla) { $('#main').innerHTML = `<h2>Reporte: ${esc(r.name)}</h2><div class="card muted">Sin tabla asociada.</div>`; return; }
   const t = tableByKey(r.tabla);
+  // Si el .frx real nos dijo qué campos imprime, mostramos solo esos (en vez
+  // de todas las columnas de la tabla) — más parecido al reporte original.
+  const fields = (r.campos_reporte && r.campos_reporte.length)
+    ? r.campos_reporte.map(n => t.campos.find(f => f.name === n)).filter(Boolean)
+    : t.campos;
   const res = await (await fetch(`/api/t/${r.tabla}?size=500`).catch(()=>({json:()=>({rows:[]})}))).json();
   const rows = res.rows || [];
-  const head = '<tr>' + t.campos.map(f => `<th>${esc(f.label||f.name)}</th>`).join('') + '</tr>';
-  const body = rows.map(x => '<tr>' + t.campos.map(f => `<td>${cellHtml(f, x[f.name])}</td>`).join('') + '</tr>').join('');
+  const head = '<tr>' + fields.map(f => `<th>${esc(f.label||f.name)}</th>`).join('') + '</tr>';
+  const body = rows.map(x => '<tr>' + fields.map(f => `<td>${cellHtml(f, x[f.name])}</td>`).join('') + '</tr>').join('');
   $('#main').innerHTML = `<h2>📊 ${esc(r.name)}</h2>
     <p class="sub">Reporte sobre la tabla <b>${esc(t.name)}</b> · ${res.total||rows.length} filas</p>
     <div class="toolbar"><span class="sp"></span><button class="sec sm" onclick="window.open('/api/t/${r.tabla}/export.csv')">⬇ Exportar CSV</button></div>

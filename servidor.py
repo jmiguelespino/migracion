@@ -99,6 +99,7 @@ MAX_NAME_LIST = 80       # cuántos nombres de forms/reportes listar
 MAX_SAMPLES = 40         # cuántos .prg pequeños incluir como muestra de código
 MAX_SAMPLE_BYTES = 6000  # tamaño máximo de cada muestra de código
 MAX_FORMS_PARSED = 50    # cuántos formularios .scx analizar (controles)
+MAX_REPORTS_PARSED = 50  # cuántos reportes .frx analizar (campos reales)
 
 # Extensiones típicas de sistemas legacy y su categoría.
 EXT_CATEGORY = {
@@ -630,6 +631,15 @@ def parse_scx_controls(scx, sct):
     has_props = "properties" in fmap
     if has_props:
         po, pl, pt = fmap["properties"]
+    has_parent = "parent" in fmap
+    if has_parent:
+        pao, pal, pat = fmap["parent"]
+    has_class = "class" in fmap
+    if has_class:
+        clo, cll, clt = fmap["class"]
+    has_platform = "platform" in fmap
+    if has_platform:
+        plo, pll, plt = fmap["platform"]
 
     def field_text(rec, off, ln, typ):
         raw = rec[off:off + ln]
@@ -638,27 +648,52 @@ def parse_scx_controls(scx, sct):
         return raw.decode("latin-1", "replace").replace("\x00", "").strip()
 
     def parse_props(text):
-        """De un memo 'properties' saca ControlSource, Caption y Top."""
-        cs = re.search(r'ControlSource\s*=\s*([^\r\n]+)', text, re.I)
-        cap = re.search(r'Caption\s*=\s*([^\r\n]+)', text, re.I)
+        """De un memo 'properties' saca ControlSource, Caption, Top y Left del
+        objeto (ancladas a inicio de línea: si no, "Column1.ControlSource" de
+        un grid se confundiría con la propiedad propia del objeto)."""
+        cs = re.search(r'(?:^|\n)\s*ControlSource\s*=\s*([^\r\n]+)', text, re.I)
+        cap = re.search(r'(?:^|\n)\s*Caption\s*=\s*([^\r\n]+)', text, re.I)
         top = re.search(r'(?:^|\n)\s*Top\s*=\s*([\d.]+)', text, re.I)
+        left = re.search(r'(?:^|\n)\s*Left\s*=\s*([\d.]+)', text, re.I)
         src = cs.group(1).strip().strip('"').strip() if cs else ""
         label = cap.group(1).strip().strip('"').strip() if cap else ""
         try:
             tval = float(top.group(1)) if top else 0.0
         except ValueError:
             tval = 0.0
-        return src, label, tval
+        try:
+            lval = float(left.group(1)) if left else 0.0
+        except ValueError:
+            lval = 0.0
+        return src, label, tval, lval
+
+    def parse_grid_columns(text):
+        """De las propiedades propias de un grid saca "ColumnN.ControlSource" y
+        "ColumnN.Header1.Caption". En un grid nativo (sin clase de columna
+        custom) suelen ser la ÚNICA copia: ni el Textbox ni el Header hijos
+        las repiten."""
+        srcs = [(int(cn), csrc.strip().strip('"').strip())
+                for cn, csrc in re.findall(r'Column(\d+)\.ControlSource\s*=\s*"?([^"\r\n]+)"?', text, re.I)]
+        caps = {int(cn): cap.strip().strip('"').strip()
+                for cn, cap in re.findall(r'Column(\d+)\.Header1\.Caption\s*=\s*"?([^"\r\n]+)"?', text, re.I)}
+        return srcs, caps
 
     counts = {}
     controls = []
-    campos = []          # controles atados a campos reales (ControlSource)
-    tabla_freq = {}      # frecuencia de tabla referenciada -> para inferir la tabla
+    botones = []         # Caption de los commandbutton (Grabar, Cancelar, Salida...)
+    raw_fields = []      # (pref, fld, label, top, left, parent) de cada campo real detectado
+    header_caption = {}  # parent -> Caption, de objetos "header" (columnas de grid)
+    standalone_labels = []  # (top, left, caption) de Label sueltos (formularios de detalle)
     for r in range(num_records):
         start = header_len + r * rec_len
         rec = scx[start:start + rec_len]
         if len(rec) < rec_len:
             break
+        # Filas "COMMENT RESERVED": basura de reciclado de bloques de memo (el
+        # puntero de un campo memo queda apuntando a un bloque viejo y decodifica
+        # texto de otro objeto); no son controles reales del formulario.
+        if has_platform and field_text(rec, plo, pll, plt).strip().upper() != "WINDOWS":
+            continue
         baseclass = field_text(rec, bo, bl, bt).lower()
         objname = field_text(rec, no, nl, nt)
         if not baseclass:
@@ -668,22 +703,136 @@ def parse_scx_controls(scx, sct):
             controls.append({"name": objname, "type": baseclass})
         # Layout real: ControlSource (atadura a campo) y Caption (etiqueta).
         if has_props:
+            props_text = field_text(rec, po, pl, pt)
             try:
-                src, label, top = parse_props(field_text(rec, po, pl, pt))
+                src, label, top, left = parse_props(props_text)
             except Exception:
-                src, label, top = "", "", 0.0
+                src, label, top, left = "", "", 0.0, 0.0
+            parent = field_text(rec, pao, pal, pat) if has_parent else ""
+            # En columnas de grid, el Caption vive en el "header" (objeto hermano
+            # del textbox que trae el ControlSource): lo guardamos por parent para
+            # asociarlo después. Sin esto, las columnas de grid quedan sin etiqueta.
+            if baseclass == "header" and label:
+                header_caption[parent] = label
+            # Label suelto (formulario de detalle/alta): no ata un campo, pero su
+            # posición (Top/Left) está cerca del campo al que rotula. Sin esto,
+            # todos los campos de un formulario "alta" quedan sin etiqueta real,
+            # porque ahí el Caption vive en un objeto Label aparte, no en el campo.
+            if baseclass == "label" and label and ".column" not in parent.lower():
+                standalone_labels.append((top, left, label))
+            if baseclass == "commandbutton" and len(botones) < 30:
+                # El Caption suele venir heredado de la clase (no se repite por
+                # instancia si no cambió): si no está acá, se resuelve después
+                # contra el .vcx con el nombre de clase (campo "class").
+                clase = field_text(rec, clo, cll, clt).lower() if has_class else ""
+                botones.append({"name": objname, "clase": clase,
+                                 "caption": _clean_prompt(label) if label else ""})
             if "." in src:
                 pref, _, fld = src.partition(".")
                 pref, fld = pref.strip().lower(), fld.strip()
                 if pref and fld and pref not in ("thisform", "this", "_screen"):
-                    tabla_freq[pref] = tabla_freq.get(pref, 0) + 1
-                    if len(campos) < MAX_FIELDS_PER_TABLE:
-                        campos.append({"field": fld, "label": label or fld, "top": top})
+                    raw_fields.append((pref, fld, label, top, left, parent))
+            # En grids, cada columna guarda su ControlSource y el Caption de su
+            # Header como propiedades propias del grid ("ColumnN.ControlSource",
+            # "ColumnN.Header1.Caption"); a veces son la única copia (ni el
+            # Textbox ni el Header hijos las repiten), así que se leen aparte.
+            if baseclass == "grid":
+                grid_path = f"{parent}.{objname}" if parent else objname
+                srcs, caps = parse_grid_columns(props_text)
+                for cn, cap in caps.items():
+                    if cap:
+                        header_caption[f"{grid_path}.Column{cn}"] = cap
+                for cn, csrc in srcs:
+                    if "." not in csrc:
+                        continue
+                    pref, _, fld = csrc.partition(".")
+                    pref, fld = pref.strip().lower(), fld.strip()
+                    if pref and fld:
+                        raw_fields.append((pref, fld, "", float(cn), 0.0, f"{grid_path}.Column{cn}"))
     if not counts:
         return None
+    tabla_freq = {}
+    campos_by_key = {}   # (parent, fld) -> campo, para no duplicar entre Textbox y grid
+    for pref, fld, label, top, left, parent in raw_fields:
+        tabla_freq[pref] = tabla_freq.get(pref, 0) + 1
+        resolved = label or header_caption.get(parent) or fld
+        key = (parent, fld)
+        prev = campos_by_key.get(key)
+        if prev is None or (prev["label"] == fld and resolved != fld):
+            campos_by_key[key] = {"field": fld, "label": resolved, "top": top, "left": left}
+    # Última pasada: los campos que siguen sin etiqueta real (formularios de
+    # detalle, sin header ni Caption propio) se resuelven contra el label suelto
+    # más cercano en posición — cada label se usa una sola vez.
+    used_labels = set()
+    for campo in campos_by_key.values():
+        if campo["label"] != campo["field"]:
+            continue
+        best_i, best_score = None, None
+        for i, (ltop, lleft, lcap) in enumerate(standalone_labels):
+            if i in used_labels:
+                continue
+            dtop = abs(ltop - campo["top"])
+            if dtop > 20:
+                continue
+            # Un label bien pareado queda justo a la izquierda del campo, a poca
+            # distancia (típico ~70-90). Uno a la derecha, o muy lejos a la
+            # izquierda (probablemente huérfano, de otro campo sin ControlSource
+            # propio), se penaliza fuerte para no ganarle al pareo correcto.
+            gap = (campo["left"] - lleft) if lleft <= campo["left"] else (lleft - campo["left"]) * 3
+            score = dtop * 3 + gap
+            if best_score is None or score < best_score:
+                best_i, best_score = i, score
+        if best_i is not None:
+            campo["label"] = standalone_labels[best_i][2]
+            used_labels.add(best_i)
+    campos = [{"field": c["field"], "label": c["label"], "top": c["top"]}
+              for c in list(campos_by_key.values())[:MAX_FIELDS_PER_TABLE]]
     tabla = max(tabla_freq, key=tabla_freq.get) if tabla_freq else ""
     return {"counts": counts, "controls": controls, "total": sum(counts.values()),
-            "campos": campos, "tabla": tabla}
+            "campos": campos, "tabla": tabla, "botones": botones}
+
+
+_FRX_FIELD_EXPR_RE = re.compile(r'^([A-Za-z_]\w*)\.([A-Za-z_]\w*)$')
+
+
+def parse_frx_report(frx_bytes, frt_bytes):
+    """Extrae de un reporte VFP (.frx + memo .frt) qué tabla/vista usa y qué
+    campos imprime realmente. Un .frx es una tabla DBF: cada registro es un
+    objeto del reporte (campo, etiqueta, línea, rectángulo, banda...); el
+    campo OBJTYPE=8 son los "Field" (expresión que imprime, memo EXPR) y
+    OBJTYPE=5 son los "Label" (texto literal fijo).
+
+    Un reporte VFP tiene varias BANDAS (encabezado de página, de grupo,
+    detalle, pie de grupo, resumen) con coordenadas relativas a cada banda,
+    no una grilla simple como un formulario — por eso NO intentamos
+    emparejar cada campo con su etiqueta visual por proximidad (probado con
+    reportes reales: da falsos positivos, cruza campos de bandas distintas).
+    Nos quedamos con lo que sí es confiable: la tabla y la lista real de
+    campos impresos (no inventamos texto)."""
+    rows = read_dbf_records(frx_bytes, frt_bytes, max_records=3000)
+    if not rows:
+        return None
+    campos_raw = []  # (tabla, campo), en orden de aparición
+    for r in rows:
+        if r.get("objtype") != 8:
+            continue
+        expr = str(r.get("expr") or "").strip()
+        m = _FRX_FIELD_EXPR_RE.match(expr)
+        if m:
+            campos_raw.append((m.group(1).lower(), m.group(2).lower()))
+    if not campos_raw:
+        return None
+    tabla_freq = {}
+    for t, _ in campos_raw:
+        tabla_freq[t] = tabla_freq.get(t, 0) + 1
+    tabla = max(tabla_freq, key=tabla_freq.get)
+    seen, campos = set(), []
+    for t, campo in campos_raw:
+        if t != tabla or campo in seen:
+            continue
+        seen.add(campo)
+        campos.append(campo)
+    return {"tabla": tabla, "campos": campos}
 
 
 def _clean_prompt(s):
@@ -754,24 +903,23 @@ def parse_mnx_menu(mnx_bytes, mnt_bytes=b""):
 def parse_vcx_methods(vcx_bytes, vct_bytes):
     """Extrae los métodos (código) de una biblioteca de clases VFP (.vcx + .vct).
 
-    Un .vcx es un DBF donde cada registro es un miembro de clase. El campo
-    OBJCODE (memo, en el .vct) contiene el código PRG del método.
+    Un .vcx es un DBF donde cada registro es un miembro de clase. El código
+    fuente PRG legible de los métodos vive en el campo memo METHODS —
+    OBJCODE (también memo) es el bytecode YA COMPILADO de esos mismos
+    métodos, binario, no texto: leerlo ahí siempre da basura no-ASCII y
+    nunca encuentra código real.
 
     Devuelve lista de {name, class_name, code} con los métodos no vacíos.
     """
     rows = read_dbf_records(vcx_bytes, vct_bytes, max_records=2000)
     methods = []
     for r in rows:
-        code = str(r.get("objcode") or "").strip()
+        # Filas "COMMENT RESERVED": memo reciclado de otro registro, no un
+        # miembro de clase real.
+        if str(r.get("platform") or "").strip().upper() != "WINDOWS":
+            continue
+        code = str(r.get("methods") or "").strip()
         if not code or len(code) < 15:
-            continue
-        # El campo OBJCODE puede contener código compilado (binario). Si el primer
-        # carácter es no-imprimible el bloque entero es código objeto → descartarlo.
-        if ord(code[0]) < 32:
-            continue
-        # Verificación adicional: descartar si más del 20 % son caracteres no-ASCII.
-        non_ascii = sum(1 for c in code[:200] if ord(c) > 127 or ord(c) < 9)
-        if non_ascii > len(code[:200]) * 0.20:
             continue
         objname  = str(r.get("objname")  or "").strip()
         baseclass = str(r.get("baseclass") or "").strip()
@@ -781,6 +929,49 @@ def parse_vcx_methods(vcx_bytes, vct_bytes):
             "code":       code[:MAX_SAMPLE_BYTES],
         })
     return methods
+
+
+def parse_vcx_class_defs(vcx_bytes, vct_bytes):
+    """Lee las definiciones de clase (no instancias en formularios) de un
+    .vcx: para cada clase de primer nivel devuelve su propio Caption (si lo
+    sobreescribe) y el nombre de la clase de la que hereda (campo CLASS).
+
+    Una clase VFP (p.ej. "grabargb", usada en el CLASS de un .scx) suele
+    heredar el Caption de una clase ancestro (acá "grabar", que a su vez
+    hereda de "command") en vez de definirlo ella misma — hace falta subir
+    la cadena de herencia para encontrar el texto real."""
+    rows = read_dbf_records(vcx_bytes, vct_bytes, max_records=2000)
+    out = {}
+    for r in rows:
+        # Filas "COMMENT RESERVED": basura de reciclado de bloques de memo (el
+        # puntero queda apuntando a un bloque viejo); no son objetos reales.
+        if str(r.get("platform") or "").strip().upper() != "WINDOWS":
+            continue
+        if str(r.get("parent") or "").strip():
+            continue  # es un control contenido dentro de la clase, no la clase en sí
+        name = str(r.get("objname") or "").strip().lower()
+        if not name:
+            continue
+        props = str(r.get("properties") or "")
+        m = re.search(r'(?:^|\n)\s*Caption\s*=\s*([^\r\n]+)', props, re.I)
+        cap = m.group(1).strip().strip('"').strip() if m else ""
+        out[name] = {
+            "caption": _clean_prompt(cap) if cap else "",
+            "parent_class": str(r.get("class") or "").strip().lower(),
+        }
+    return out
+
+
+def resolve_vcx_caption(class_defs, class_name, _depth=0):
+    """Resuelve el Caption de una clase subiendo la cadena de herencia
+    (una clase puede heredar de otra, definida en el mismo u otro .vcx del
+    sistema, hasta encontrar la que sí define el Caption)."""
+    if _depth > 8 or not class_name:
+        return ""
+    d = class_defs.get(class_name.lower())
+    if not d:
+        return ""
+    return d["caption"] or resolve_vcx_caption(class_defs, d["parent_class"], _depth + 1)
 
 
 def _parse_programa_menu(prog_bytes, menues_bytes=b""):
@@ -893,6 +1084,7 @@ def analyze_zip(raw_bytes):
     tables = []
     seen_tables = set()  # evita tablas .dbf duplicadas (mismo nombre en varias carpetas)
     forms_detail = []    # controles reales de los formularios .scx
+    reports_detail = []  # tabla + campos reales de los reportes .frx
     samples = []
     menus = []           # estructura de menús (.mpr / .mnx)
     mnx_pending = []     # .mnx a parsear solo si no hubo .mpr
@@ -952,6 +1144,27 @@ def analyze_zip(raw_bytes):
                         "total": info["total"],
                         "tabla": info.get("tabla", ""),
                         "campos": info.get("campos", []),
+                        "botones": info.get("botones", []),
+                    })
+            except Exception:
+                pass
+
+        # Tabla y campos reales de los reportes .frx (es una tabla DBF + memo .frt).
+        if ext == ".frx" and len(reports_detail) < MAX_REPORTS_PARSED:
+            try:
+                with zf.open(name) as fp:
+                    frx_bytes = fp.read()
+                frt_bytes = b""
+                frt_real = lower_map.get((os.path.splitext(name)[0] + ".frt").lower())
+                if frt_real:
+                    with zf.open(frt_real) as fp2:
+                        frt_bytes = fp2.read()
+                info = parse_frx_report(frx_bytes, frt_bytes)
+                if info:
+                    reports_detail.append({
+                        "name": os.path.splitext(base)[0],
+                        "tabla": info.get("tabla", ""),
+                        "campos": info.get("campos", []),
                     })
             except Exception:
                 pass
@@ -984,9 +1197,11 @@ def analyze_zip(raw_bytes):
             except Exception:
                 pass
 
-    # Clases VFP (.vcx + .vct): extraer métodos como muestras adicionales de código.
-    # Son reutilizables y contienen lógica de negocio en sus event handlers.
+    # Clases VFP (.vcx + .vct): extraer métodos como muestras adicionales de código,
+    # y el Caption por defecto de cada clase (p.ej. los botones de un ABM heredan
+    # "Grabar"/"Cancelar"/... de la clase y no lo repiten en cada .scx que los usa).
     vcx_names = [n for n in sorted(names) if n.lower().endswith(".vcx")]
+    class_defs = {}  # nombre de clase -> {caption, parent_class}, de TODOS los .vcx
     for vcx_name in vcx_names[:15]:  # máx 15 archivos de clase
         try:
             vcx_bytes = zf.read(vcx_name)
@@ -1001,8 +1216,20 @@ def analyze_zip(raw_bytes):
                     "name": f"{vcx_base}.{m['name']}",
                     "content": m["code"],
                 })
+            class_defs.update(parse_vcx_class_defs(vcx_bytes, vct_bytes))
         except Exception:
             pass
+
+    # Resolver los botones de cada formulario subiendo la cadena de herencia
+    # de clases recién leída, y descartar los que quedaron sin etiqueta (ni
+    # propia ni heredada) para no mostrar badges vacíos en la revisión.
+    for f in forms_detail:
+        resueltos = []
+        for b in f.get("botones") or []:
+            cap = b.get("caption") or resolve_vcx_caption(class_defs, b.get("clase", ""))
+            if cap:
+                resueltos.append({"name": b["name"], "caption": cap})
+        f["botones"] = resueltos
 
     # Si no hubo menús .mpr, intentamos con los .mnx (DBF + memo .mnt) como fallback.
     if not menus and mnx_pending:
@@ -1047,6 +1274,7 @@ def analyze_zip(raw_bytes):
         "forms": forms,
         "forms_detail": forms_detail,
         "reports": reports,
+        "reports_detail": reports_detail,
         "programs": sorted(set(programs))[:MAX_NAME_LIST],
         "samples": samples,
         "menus": menus,

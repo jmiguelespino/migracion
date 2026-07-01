@@ -135,6 +135,95 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       (p.ej. `ZZ_EJECUTABLES/` y `datos/`), se prefiere el de la ruta con "dato".
 - [x] **Deduplicación de `.dbf` en seed**: cuando hay dos copias del mismo DBF, se
       importa la **más grande** (más registros = datos de producción).
+- [x] **Revisión de pantallas `.scx` una por una**: nueva vista en `index.html`
+      (`openScxReview()` / `renderScxReview()`) que muestra cada formulario
+      parseado (`forms_detail`) de a uno — tabla asociada, etiquetas y orden de
+      campos (con ▲▼) — para que el usuario corrija y dé el visto bueno antes de
+      pasar al siguiente. El estado (`estado: 'pendiente'|'aprobado'`) se guarda
+      dentro de cada formulario en `S.zipInfo`, que ya se persiste en
+      `localStorage`; si se cierra el navegador y se vuelve, retoma en el primer
+      formulario sin aprobar. Las correcciones (label/orden/tabla) son las mismas
+      que ya usa `scaffold.py` (`_forms_index`) para generar el ABM, así que se
+      reflejan directo en la app final. Sin cambios de backend: todo vive en
+      `forms_detail`, que ya viaja completo en el payload de `/api/scaffold`.
+- [x] **Caption de columnas de grid (`parse_scx_controls`)**: en el patrón de
+      ABM por grilla (`g_clases.vcx`), el `Caption` de cada columna vive en el
+      objeto `Header`, no en el `Textbox` que trae el `ControlSource` — son
+      objetos hermanos (mismo `PARENT`). Antes las columnas de grid quedaban
+      con la etiqueta igual al nombre del campo; ahora se asocian por
+      `parent`. Verificado con `.scx`/`.sct` reales del sistema Recetas
+      (`rececab`, `recedet`): "cod_rece" → "Código", "des_rece" → "Descripción", etc.
+- [x] **Columnas de grid perdidas/mal atribuidas (`parse_scx_controls`)**: dos
+      bugs encontrados con `.scx` reales (institu, convenio, tipomenu,
+      instrubr). (1) Las regex de `ControlSource`/`Caption` no estaban
+      ancladas a inicio de línea: `Column1.ControlSource` de un grid se
+      confundía con la propiedad propia del objeto. (2) En un grid nativo (sin
+      clase de columna custom) el `ControlSource` de cada columna vive **solo**
+      en `ColumnN.ControlSource` del propio grid — el Textbox hijo no lo
+      repite, así que esas columnas se perdían del todo (ej. `rzn_soc`, `iva`).
+      Ahora se leen ambas fuentes y se deduplican por `(parent, campo)`.
+- [x] **Caption de botones (`parse_vcx_captions` + `parse_scx_controls`)**: el
+      texto de los botones de un ABM (Grabar/Cancelar/Editar/Agregar/
+      Eliminar/Listar/Salida) casi nunca se repite por instancia en el `.scx`
+      — vive en la clase base (`g_clases.vcx`) y solo se sobreescribe si
+      cambió. Ahora `parse_scx_controls` lee el campo `CLASS` de cada
+      `commandbutton` y `analyze_zip` resuelve el Caption contra el `.vcx` del
+      sistema (nuevo `parse_vcx_captions`); si tampoco hay clase disponible,
+      se descarta en vez de mostrar un badge vacío. Se muestra en la vista de
+      revisión de pantallas.
+- [x] **Caption de botones vía herencia de clases + filas basura de `.vcx`**:
+      con `g_clases.vcx` real se comprobó que los botones de ABM
+      (Grabar/Cancelar/Editar/Agregar/Eliminar/Listar/Salida) no definen su
+      propio Caption — heredan de una clase ancestro (ej. "grabargb" hereda de
+      "grabar", que hereda de "command" en `m_clases.vcx`). Nuevo
+      `parse_vcx_class_defs` + `resolve_vcx_caption` suben la cadena hasta
+      encontrar el Caption, cruzando `.vcx` distintos si hace falta. De paso:
+      tanto `.vcx` como `.scx` (mismo formato base) tienen filas
+      `COMMENT RESERVED` con punteros de memo reciclados de otro registro que
+      pisaban entradas válidas — se filtran por `PLATFORM != WINDOWS`.
+- [x] **Muestras de código de `.vcx` vacías (`parse_vcx_methods`)**: leía el
+      campo `OBJCODE`, que es el bytecode YA COMPILADO del método (binario) —
+      el filtro anti-binario lo descartaba siempre, así que nunca devolvía
+      código real (0 muestras con cualquier sistema). El fuente PRG legible
+      vive en el campo memo `METHODS`. Verificado con `_BASE.vcx`/`_UI.vcx`
+      (clases estándar VFP) y las clases del sistema del usuario: de 0
+      muestras pasa a extraer código real y legible.
+- [x] **Labels sueltos por proximidad + `Header.Caption` punteado en grids**:
+      con un formulario de "alta" real (`1121_empalta`, patrón muy común:
+      campos individuales con `Label` aparte al lado) se vio que todos los
+      campos quedaban con la etiqueta igual al nombre — ahí el `Caption` vive
+      en un objeto `Label` suelto (sin `ControlSource`), posicionado cerca
+      (Top/Left). Ahora esos labels se capturan y se emparejan por proximidad
+      con el campo que les corresponde (pesando distancia vertical y que el
+      label quede a la izquierda, no a la derecha; cada label se usa una sola
+      vez). También: `ColumnN.Header1.Caption` puede venir como propiedad
+      punteada del propio grid (visto en `1121_empcons`), igual que
+      `ColumnN.ControlSource` — se lee de ahí también.
+- [x] **Botones custom de los `.scx` → botones reales en el ABM generado**: los
+      botones no estándar detectados (ej. "Recetas", "Ingredientes",
+      "Convenios") ahora se generan en la pantalla ABM de la tabla de origen y
+      navegan a la tabla destino, resuelta por nombre (misma heurística que
+      `_menu_to_tabla`, usada para los ítems de menú). Los botones estándar
+      del ABM (Grabar/Cancelar/Editar/Agregar/Eliminar/Listar/Salida) se
+      excluyen a propósito. Verificado de punta a punta con una app generada
+      real corrida con `uvicorn` + Playwright. Limitación conocida: el
+      matcheo por nombre puede fallar en casos con palabras de más en el
+      medio (ej. "Tipos de menú" vs tabla `tipomenu`) — mismo comportamiento
+      ya aceptado para los ítems de menú.
+- [x] **Agente de exportación de `.frx` (reportes)**: nuevo `parse_frx_report`
+      en `servidor.py`, análogo a `parse_scx_controls`/`parse_dbc` — el `.frx`
+      es una tabla DBF con memo `.frt` (mismo formato base que `.scx`/`.vcx`).
+      Extrae la tabla/alias real y los campos que imprime de verdad (objetos
+      `OBJTYPE=8` "Field"). Se probó el emparejamiento de etiqueta por
+      proximidad (como en los `.scx`) contra reportes reales y dio falsos
+      positivos — un reporte tiene varias BANDAS (header de página/grupo,
+      detalle, pie, resumen) con coordenadas relativas a cada banda, no una
+      grilla simple — así que se descartó esa parte; queda solo lo confiable
+      (tabla + lista de campos). `analyze_zip` arma `reports_detail`
+      (mismo patrón que `forms_detail`). En `scaffold.py`, la vista de
+      consulta del reporte generado ahora muestra solo esos campos reales
+      (antes mostraba TODAS las columnas de la tabla adivinada por nombre de
+      archivo). Verificado de punta a punta con una app generada real.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 

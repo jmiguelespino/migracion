@@ -129,6 +129,27 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 .ebox.show { display:block; }
 .wbox { background:var(--abg); border:1px solid #E0B872; border-radius:var(--r); padding:11px 15px; margin-bottom:14px; font-size:13px; color:var(--amber); display:none; }
 .wbox.show { display:block; }
+
+/* REVISIÓN DE PANTALLAS (.scx) */
+.scxrow { display:flex; align-items:center; gap:10px; margin:14px 0; }
+.scxrow label { font-weight:700; font-size:14px; min-width:120px; }
+.scxrow input { flex:1; padding:8px 10px; font-size:14px; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg2); color:var(--text); }
+.scxtable { width:100%; border-collapse:collapse; margin-top:10px; }
+.scxtable th { text-align:left; font-size:12px; color:var(--text3); text-transform:uppercase; letter-spacing:.03em; padding:6px 8px; border-bottom:1px solid var(--border); }
+.scxtable td { padding:6px 8px; border-bottom:1px solid var(--border); vertical-align:middle; }
+.scxtable td.scxfield { font-family:monospace; font-size:13px; color:var(--text2); white-space:nowrap; }
+.scxtable input[type=text] { width:100%; padding:6px 9px; font-size:13px; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg); color:var(--text); }
+.scxorder { white-space:nowrap; }
+.bmini { padding:3px 8px; font-size:12px; border:1px solid var(--border); border-radius:var(--rs); background:var(--bg2); cursor:pointer; color:var(--text2); }
+.bmini:hover:not(:disabled) { background:var(--bg3); }
+.bmini:disabled { opacity:.35; cursor:not-allowed; }
+.scxbadges { margin-top:14px; display:flex; flex-wrap:wrap; gap:6px; }
+.scxbadge { font-size:11px; padding:4px 9px; border-radius:20px; background:var(--bg3); color:var(--text2); font-weight:600; }
+.scxchips { margin-top:16px; display:flex; flex-wrap:wrap; gap:6px; }
+.scxchip { font-size:12px; padding:5px 10px; border-radius:20px; background:var(--bg3); color:var(--text2); cursor:pointer; border:1px solid transparent; }
+.scxchip:hover { border-color:var(--border2); }
+.scxchip.cur { border-color:var(--purple); background:var(--pbg); color:var(--ptxt); font-weight:700; }
+.scxchip.done { background:var(--tbg); color:var(--ttxt); }
 </style>
 </head>
 <body>
@@ -220,6 +241,9 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
       <!-- DETALLE DEL PASO ACTUAL -->
       <div id="vp"></div>
 
+      <!-- REVISIÓN DE PANTALLAS (.scx), una por una -->
+      <div id="vs" style="display:none"></div>
+
     </div>
   </main>
 </div>
@@ -227,7 +251,7 @@ select { width:100%; padding:7px 10px; font-size:12px; border:1px solid var(--bo
 <script>
 const S = { apiKey:'', file:null, savedFileName:'', engine:'claude', ollamaModel:'',
   sourceLang:'Visual FoxPro', targetLang:'Python + FastAPI + React',
-  zipInfo:null, systemInfo:null, reviewed:[], step:0 };
+  zipInfo:null, systemInfo:null, reviewed:[], step:0, scxIdx:null };
 let ollamaAvailable = false;
 
 // ======================= RECORRIDO DEL PROYECTO =======================
@@ -322,9 +346,18 @@ function stepInfo(key, z){
   }
   if (key === 'pantallas') {
     const f = extCount(z,'.scx') || (z.forms||[]).length;
+    const detail = z.forms_detail || [];
+    const revisadas = detail.filter(x=>x.estado==='aprobado').length;
+    const revision = detail.length
+      ? `<p>Puedo mostrarte <b>cada pantalla, una por una</b>, para que revises sus etiquetas y el orden
+         de los campos y me des el visto bueno antes de pasar a la siguiente.
+         Llevás <b>${fmt(revisadas)} de ${fmt(detail.length)}</b> revisadas.</p>
+         <button class="bsec" onclick="openScxReview()">🔍 Revisar pantallas una por una</button>`
+      : '';
     return { countLabel:`${fmt(f)} pantallas`, html:
       `<p>Las <b>pantallas (.scx)</b> son los formularios donde el usuario carga y consulta datos.</p>
        <p>Encontré <b>${fmt(f)} pantallas</b>.</p>
+       ${revision}
        <p class="tip">💡 Cada una se recrea como una <b>pantalla web moderna</b>, con los mismos campos.</p>` };
   }
   if (key === 'reportes') {
@@ -747,11 +780,139 @@ async function readZip(){
   return r.json();
 }
 
+// ======================= REVISIÓN DE PANTALLAS (.scx), una por una =======================
+function scxForms(){ return (S.zipInfo && S.zipInfo.forms_detail) || []; }
+
+// Abre la revisión en el primer formulario todavía no aprobado (retoma donde quedó).
+function openScxReview(){
+  const forms = scxForms();
+  if (!forms.length) { showWarn('No encontré formularios .scx con controles para revisar.'); return; }
+  let i = forms.findIndex(f => f.estado !== 'aprobado');
+  S.scxIdx = i < 0 ? 0 : i;
+  hideErr(); hideWarn();
+  showView('scxreview');
+  renderScxReview();
+}
+
+// Vuelca al formulario en memoria lo que el usuario tipeó en los inputs (antes de navegar/guardar).
+function scxCollectEdits(){
+  const f = scxForms()[S.scxIdx];
+  if (!f) return;
+  const tablaEl = document.getElementById('scxTabla');
+  if (tablaEl) f.tabla = tablaEl.value.trim();
+  const campos = (f.campos||[]).slice().sort((a,b)=>(a.top||0)-(b.top||0));
+  campos.forEach((c,idx) => {
+    const el = document.getElementById('scxLabel_'+idx);
+    if (el) c.label = el.value;
+  });
+}
+
+// Sube/baja un campo en el orden mostrado (reasigna "top" = rango, que es lo que usa el scaffold).
+function scxMove(idx, dir){
+  scxCollectEdits();
+  const f = scxForms()[S.scxIdx];
+  const campos = (f.campos||[]).slice().sort((a,b)=>(a.top||0)-(b.top||0));
+  const j = idx + dir;
+  if (j < 0 || j >= campos.length) return;
+  [campos[idx], campos[j]] = [campos[j], campos[idx]];
+  campos.forEach((c,i) => c.top = i);
+  f.campos = campos;
+  saveState();
+  renderScxReview();
+}
+
+function scxGoto(i){ scxCollectEdits(); saveState(); S.scxIdx = i; renderScxReview(); }
+function scxPrev(){ scxCollectEdits(); saveState(); if (S.scxIdx > 0) S.scxIdx--; renderScxReview(); }
+
+// Guarda las correcciones; si aprobar=true, marca el formulario y avanza al próximo pendiente.
+function scxSave(aprobar){
+  scxCollectEdits();
+  const forms = scxForms();
+  const f = forms[S.scxIdx];
+  if (!f) return;
+  if (aprobar) f.estado = 'aprobado';
+  saveState();
+  if (aprobar) {
+    let nxt = forms.findIndex((x,i) => i > S.scxIdx && x.estado !== 'aprobado');
+    if (nxt < 0) nxt = forms.findIndex(x => x.estado !== 'aprobado');
+    S.scxIdx = nxt;
+  }
+  renderScxReview();
+}
+
+function renderScxReview(){
+  const forms = scxForms();
+  const total = forms.length, done = forms.filter(f=>f.estado==='aprobado').length;
+  const chips = forms.map((f,i) => {
+    const cls = f.estado==='aprobado' ? 'scxchip done' : (i===S.scxIdx ? 'scxchip cur' : 'scxchip');
+    return `<span class="${cls}" onclick="scxGoto(${i})">${f.estado==='aprobado'?'✓':'⏳'} ${esc(f.name)}</span>`;
+  }).join('');
+
+  if (S.scxIdx == null || S.scxIdx < 0 || !forms[S.scxIdx]) {
+    document.getElementById('vs').innerHTML = `
+      <div class="detail">
+        <div class="dhead"><div class="dicon">🎉</div>
+          <div><div class="dnum">Pantallas</div><h2>Revisaste las ${fmt(total)} pantallas</h2></div></div>
+        <div class="dbody"><p>Ya diste el visto bueno a todas. Podés seguir editando cualquiera haciendo clic abajo,
+          o volver al proyecto para generar la app.</p>
+        <div class="scxchips">${chips}</div></div>
+        <div class="dnav"><button class="bsec" onclick="showView('project')">← Volver al proyecto</button><span></span></div>
+      </div>`;
+    renderWalk();
+    return;
+  }
+
+  const f = forms[S.scxIdx];
+  const campos = (f.campos||[]).slice().sort((a,b)=>(a.top||0)-(b.top||0));
+  const rows = campos.length ? campos.map((c,idx) => `
+    <tr>
+      <td class="scxfield">${esc(c.field)}</td>
+      <td><input type="text" id="scxLabel_${idx}" value="${esc(c.label||'')}"></td>
+      <td class="scxorder">
+        <button class="bmini" onclick="scxMove(${idx},-1)" ${idx===0?'disabled':''}>▲</button>
+        <button class="bmini" onclick="scxMove(${idx},1)" ${idx===campos.length-1?'disabled':''}>▼</button>
+      </td>
+    </tr>`).join('') : '<tr><td colspan="3" style="color:var(--text3)">Esta pantalla no tiene campos atados a una tabla (revisá solo la tabla asociada).</td></tr>';
+  const badges = Object.entries(f.controles||{}).map(([k,v]) => `<span class="scxbadge">${esc(k)} × ${v}</span>`).join(' ');
+  const botones = (f.botones||[]).map(b => `<span class="scxbadge">${esc(b.caption)}</span>`).join(' ');
+  const botonesHtml = botones
+    ? `<div class="scxrow" style="align-items:flex-start"><label>Botones</label><div class="scxbadges" style="margin-top:0">${botones}</div></div>`
+    : '';
+
+  document.getElementById('vs').innerHTML = `
+    <div class="detail">
+      <div class="dhead">
+        <div class="dicon">🖼️</div>
+        <div><div class="dnum">Pantalla ${S.scxIdx+1} de ${total} · ${done} aprobadas</div><h2>${esc(f.name)}</h2></div>
+        <div class="dbadge">${fmt(f.total||0)} controles</div>
+      </div>
+      <div class="dbody">
+        <p>Así quedó parseada esta pantalla del sistema viejo. Corregí las etiquetas y el orden de los
+        campos si hace falta, y la tabla a la que corresponde si la inferí mal.</p>
+        <div class="scxrow"><label>Tabla asociada</label><input type="text" id="scxTabla" value="${esc(f.tabla||'')}"></div>
+        <table class="scxtable"><thead><tr><th>Campo</th><th>Etiqueta</th><th>Orden</th></tr></thead>
+          <tbody>${rows}</tbody></table>
+        ${botonesHtml}
+        <div class="scxbadges">${badges}</div>
+        <div class="scxchips">${chips}</div>
+      </div>
+      <div class="dnav">
+        <button class="bsec" onclick="scxPrev()" ${S.scxIdx===0?'disabled':''}>← Anterior</button>
+        <div style="display:flex;gap:10px">
+          <button class="bsec" onclick="scxSave(false)">Guardar</button>
+          <button class="bbig" onclick="scxSave(true)">✅ Aprobar y seguir →</button>
+        </div>
+      </div>
+    </div>`;
+  renderWalk();
+}
+
 // ======================= VISTAS Y AVISOS =======================
 function showView(mode){
   const sb = document.getElementById('sidebar');
   document.getElementById('vw').style.display = 'none';
   document.getElementById('vp').style.display = 'none';
+  document.getElementById('vs').style.display = 'none';
   document.getElementById('vl').classList.remove('show');
   if (mode === 'welcome') {
     sb.style.display = 'none';
@@ -761,6 +922,9 @@ function showView(mode){
   } else if (mode === 'project') {
     sb.style.display = 'flex';
     document.getElementById('vp').style.display = 'block';
+  } else if (mode === 'scxreview') {
+    sb.style.display = 'flex';
+    document.getElementById('vs').style.display = 'block';
   }
   const have = !!(S.zipInfo || S.file);
   document.getElementById('bnew').style.display = have ? 'inline-flex' : 'none';
