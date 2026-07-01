@@ -181,6 +181,13 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       tanto `.vcx` como `.scx` (mismo formato base) tienen filas
       `COMMENT RESERVED` con punteros de memo reciclados de otro registro que
       pisaban entradas válidas — se filtran por `PLATFORM != WINDOWS`.
+- [x] **Muestras de código de `.vcx` vacías (`parse_vcx_methods`)**: leía el
+      campo `OBJCODE`, que es el bytecode YA COMPILADO del método (binario) —
+      el filtro anti-binario lo descartaba siempre, así que nunca devolvía
+      código real (0 muestras con cualquier sistema). El fuente PRG legible
+      vive en el campo memo `METHODS`. Verificado con `_BASE.vcx`/`_UI.vcx`
+      (clases estándar VFP) y las clases del sistema del usuario: de 0
+      muestras pasa a extraer código real y legible.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
