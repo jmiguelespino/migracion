@@ -210,6 +210,20 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       matcheo por nombre puede fallar en casos con palabras de más en el
       medio (ej. "Tipos de menú" vs tabla `tipomenu`) — mismo comportamiento
       ya aceptado para los ítems de menú.
+- [x] **Agente de exportación de `.frx` (reportes)**: nuevo `parse_frx_report`
+      en `servidor.py`, análogo a `parse_scx_controls`/`parse_dbc` — el `.frx`
+      es una tabla DBF con memo `.frt` (mismo formato base que `.scx`/`.vcx`).
+      Extrae la tabla/alias real y los campos que imprime de verdad (objetos
+      `OBJTYPE=8` "Field"). Se probó el emparejamiento de etiqueta por
+      proximidad (como en los `.scx`) contra reportes reales y dio falsos
+      positivos — un reporte tiene varias BANDAS (header de página/grupo,
+      detalle, pie, resumen) con coordenadas relativas a cada banda, no una
+      grilla simple — así que se descartó esa parte; queda solo lo confiable
+      (tabla + lista de campos). `analyze_zip` arma `reports_detail`
+      (mismo patrón que `forms_detail`). En `scaffold.py`, la vista de
+      consulta del reporte generado ahora muestra solo esos campos reales
+      (antes mostraba TODAS las columnas de la tabla adivinada por nombre de
+      archivo). Verificado de punta a punta con una app generada real.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
