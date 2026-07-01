@@ -199,6 +199,17 @@ Flujo recomendado: subir ZIP → **📦 Generar app completa** (instantáneo) o
       vez). También: `ColumnN.Header1.Caption` puede venir como propiedad
       punteada del propio grid (visto en `1121_empcons`), igual que
       `ColumnN.ControlSource` — se lee de ahí también.
+- [x] **Botones custom de los `.scx` → botones reales en el ABM generado**: los
+      botones no estándar detectados (ej. "Recetas", "Ingredientes",
+      "Convenios") ahora se generan en la pantalla ABM de la tabla de origen y
+      navegan a la tabla destino, resuelta por nombre (misma heurística que
+      `_menu_to_tabla`, usada para los ítems de menú). Los botones estándar
+      del ABM (Grabar/Cancelar/Editar/Agregar/Eliminar/Listar/Salida) se
+      excluyen a propósito. Verificado de punta a punta con una app generada
+      real corrida con `uvicorn` + Playwright. Limitación conocida: el
+      matcheo por nombre puede fallar en casos con palabras de más en el
+      medio (ej. "Tipos de menú" vs tabla `tipomenu`) — mismo comportamiento
+      ya aceptado para los ítems de menú.
 - [ ] Soportar otras tecnologías destino en el scaffold (hoy: FastAPI + SPA).
 - [ ] Wirear los ítems de menú a la pantalla exacta del formulario (hoy por nombre).
 
