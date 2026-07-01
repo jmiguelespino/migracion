@@ -636,6 +636,9 @@ def parse_scx_controls(scx, sct):
     has_class = "class" in fmap
     if has_class:
         clo, cll, clt = fmap["class"]
+    has_platform = "platform" in fmap
+    if has_platform:
+        plo, pll, plt = fmap["platform"]
 
     def field_text(rec, off, ln, typ):
         raw = rec[off:off + ln]
@@ -677,6 +680,11 @@ def parse_scx_controls(scx, sct):
         rec = scx[start:start + rec_len]
         if len(rec) < rec_len:
             break
+        # Filas "COMMENT RESERVED": basura de reciclado de bloques de memo (el
+        # puntero de un campo memo queda apuntando a un bloque viejo y decodifica
+        # texto de otro objeto); no son controles reales del formulario.
+        if has_platform and field_text(rec, plo, pll, plt).strip().upper() != "WINDOWS":
+            continue
         baseclass = field_text(rec, bo, bl, bt).lower()
         objname = field_text(rec, no, nl, nt)
         if not baseclass:
@@ -835,28 +843,47 @@ def parse_vcx_methods(vcx_bytes, vct_bytes):
     return methods
 
 
-def parse_vcx_captions(vcx_bytes, vct_bytes):
-    """Mapea nombre de clase (el que aparece en el campo CLASS de un .scx,
-    p.ej. "grabargb") -> su Caption por defecto, definido en la clase del .vcx.
+def parse_vcx_class_defs(vcx_bytes, vct_bytes):
+    """Lee las definiciones de clase (no instancias en formularios) de un
+    .vcx: para cada clase de primer nivel devuelve su propio Caption (si lo
+    sobreescribe) y el nombre de la clase de la que hereda (campo CLASS).
 
-    En VFP, si una instancia no sobreescribe el Caption, el texto real vive
-    solo en la clase base (acá) y no en el .scx que la usa — sin esto, los
-    botones de un formulario ABM (Grabar/Cancelar/Editar/...) quedan sin
-    etiqueta aunque el usuario sí los vea así en pantalla."""
+    Una clase VFP (p.ej. "grabargb", usada en el CLASS de un .scx) suele
+    heredar el Caption de una clase ancestro (acá "grabar", que a su vez
+    hereda de "command") en vez de definirlo ella misma — hace falta subir
+    la cadena de herencia para encontrar el texto real."""
     rows = read_dbf_records(vcx_bytes, vct_bytes, max_records=2000)
     out = {}
     for r in rows:
+        # Filas "COMMENT RESERVED": basura de reciclado de bloques de memo (el
+        # puntero queda apuntando a un bloque viejo); no son objetos reales.
+        if str(r.get("platform") or "").strip().upper() != "WINDOWS":
+            continue
+        if str(r.get("parent") or "").strip():
+            continue  # es un control contenido dentro de la clase, no la clase en sí
         name = str(r.get("objname") or "").strip().lower()
+        if not name:
+            continue
         props = str(r.get("properties") or "")
-        if not name or not props:
-            continue
         m = re.search(r'(?:^|\n)\s*Caption\s*=\s*([^\r\n]+)', props, re.I)
-        if not m:
-            continue
-        cap = m.group(1).strip().strip('"').strip()
-        if cap:
-            out.setdefault(name, _clean_prompt(cap))
+        cap = m.group(1).strip().strip('"').strip() if m else ""
+        out[name] = {
+            "caption": _clean_prompt(cap) if cap else "",
+            "parent_class": str(r.get("class") or "").strip().lower(),
+        }
     return out
+
+
+def resolve_vcx_caption(class_defs, class_name, _depth=0):
+    """Resuelve el Caption de una clase subiendo la cadena de herencia
+    (una clase puede heredar de otra, definida en el mismo u otro .vcx del
+    sistema, hasta encontrar la que sí define el Caption)."""
+    if _depth > 8 or not class_name:
+        return ""
+    d = class_defs.get(class_name.lower())
+    if not d:
+        return ""
+    return d["caption"] or resolve_vcx_caption(class_defs, d["parent_class"], _depth + 1)
 
 
 def _parse_programa_menu(prog_bytes, menues_bytes=b""):
@@ -1065,7 +1092,7 @@ def analyze_zip(raw_bytes):
     # y el Caption por defecto de cada clase (p.ej. los botones de un ABM heredan
     # "Grabar"/"Cancelar"/... de la clase y no lo repiten en cada .scx que los usa).
     vcx_names = [n for n in sorted(names) if n.lower().endswith(".vcx")]
-    vcx_captions = {}
+    class_defs = {}  # nombre de clase -> {caption, parent_class}, de TODOS los .vcx
     for vcx_name in vcx_names[:15]:  # máx 15 archivos de clase
         try:
             vcx_bytes = zf.read(vcx_name)
@@ -1080,17 +1107,17 @@ def analyze_zip(raw_bytes):
                     "name": f"{vcx_base}.{m['name']}",
                     "content": m["code"],
                 })
-            vcx_captions.update(parse_vcx_captions(vcx_bytes, vct_bytes))
+            class_defs.update(parse_vcx_class_defs(vcx_bytes, vct_bytes))
         except Exception:
             pass
 
-    # Resolver los botones de cada formulario contra los Caption de clase
-    # recién leídos, y descartar los que quedaron sin etiqueta (ni propia ni
-    # heredada) para no mostrar badges vacíos en la revisión.
+    # Resolver los botones de cada formulario subiendo la cadena de herencia
+    # de clases recién leída, y descartar los que quedaron sin etiqueta (ni
+    # propia ni heredada) para no mostrar badges vacíos en la revisión.
     for f in forms_detail:
         resueltos = []
         for b in f.get("botones") or []:
-            cap = b.get("caption") or vcx_captions.get(b.get("clase", ""), "")
+            cap = b.get("caption") or resolve_vcx_caption(class_defs, b.get("clase", ""))
             if cap:
                 resueltos.append({"name": b["name"], "caption": cap})
         f["botones"] = resueltos
